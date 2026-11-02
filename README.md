@@ -7,7 +7,7 @@ Electron and without a runtime.
 ![Query results](docs/screenshots/query-results.png)
 
 - **Native and light.** About 2.3 MB of binary, drawn on the GPU through SDL3 (Metal, Vulkan,
-  Direct3D), HiDPI aware, idle at ~0% CPU (the loop sleeps until something happens).
+  Direct3D), HiDPI aware, about 1% CPU when idle (the loop sleeps until something happens).
 - **Six databases.** SQLite built in; PostgreSQL, Oracle, MySQL, MariaDB and SQL Server through the
   client libraries already installed on the machine, loaded at run time.
 - **AI that asks first.** Lume Intelligence is off until you turn it on. The structure of a database
@@ -63,10 +63,10 @@ world.**
 - Environments (DEV / HML / PROD) and a **Read-only in Lume** switch; choosing PROD suggests it.
 - Passwords and AI keys live in the operating system's secret store (macOS Keychain, Windows
   Credential Manager, Secret Service on Linux).
-- Schema explorer built for large catalogs (tested with 170,000 schemas and 36,000 tables): names
+- Schema explorer built for large catalogs (tested with a server of 170,009 schemas): names
   first, details on demand, server-side search, pinned schemas.
 
-![New connection](docs/screenshots/new-connection.png)
+![Schema explorer](docs/screenshots/schema-explorer.png)
 
 ### SQL editor and results
 - Query tabs bound to a connection, syntax highlighting, autocomplete from the cached schema
@@ -129,6 +129,29 @@ world.**
 - Source Control: Git status, staging by hunk, commit, pull strategies, push, with an optional AI
   review of the staged change.
 - Command palette (`⇧⌘P`), dockable panels with saved layouts, Settings (`⌘,`), keyboard first.
+
+## Performance
+
+Measured by the test suite (`tests/run_all.sh`) on an Apple M4 with 16 GB, macOS 15.5. Every number
+below has a bar the suite enforces, so a regression fails the build.
+
+| What | Result | Bar |
+|---|---|---|
+| Schema explorer on a server with **170,009 schemas** | opens one page of 100 names; no node per schema until asked | no query per listed schema |
+| Idle CPU (toolbar, panels, About open, 170k-schema tree) | **0.7 % to 1.3 %** | 2 % |
+| UI frames after toolbar / panel changes | p95 **0.66 to 0.76 ms** | 16 ms |
+| Result grid scrolling **800,000 rows** | median frame **0.45 ms** | 16 ms |
+| Memory with an 800,000-row result open | **145 MB** RSS | 150 MB |
+| Load 100,000 rows x 4 columns into the grid model | **32 ms**, 6 MB | 250 ms |
+| Sort 100,000 rows (numeric / text / two keys) | **29 / 28 / 55 ms** | 250 ms |
+| Search 400,000 cells / filter 100,000 rows | **7.7 / 16 ms** | 250 ms |
+| Export 100,000 rows to TSV / JSON | **5.9 / 20 ms** | 250 ms |
+| Assistant: index a **15,008-table** catalog | **48 ms** (reloaded from disk: 34 ms) | |
+| Assistant: pick the tables for a question among 15,008 | **55 ms** | 1.5 s |
+| Execution Output with a full log, scrolled | frame **4 ms**, 124 MB RSS | 16 ms, 150 MB |
+
+Long work never blocks the window: queries, connects, connection tests, plans, exports and AI
+requests run off the UI thread, with a cancel that reaches the server.
 
 ## Install
 
