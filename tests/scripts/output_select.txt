@@ -1,0 +1,17 @@
+# Output text view: a line selected with a triple click is what Cmd+C copies
+wait 300
+click 600 300
+key cmd+a
+type SELECT 'linha um' AS a UNION ALL SELECT 'linha dois';
+key cmd+Return
+wait 400
+key cmd+shift+o
+wait 60
+button "Text"
+wait 60
+clickon "output:text" 3
+wait 30
+key cmd+c
+wait 30
+clipboard
+quit

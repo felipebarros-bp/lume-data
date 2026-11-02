@@ -1,0 +1,28 @@
+# workspaces (TBR-004 / 042): new one, its tab text, close with unsaved changes (Save), reopen
+wait 600
+invoke workspace.new
+wait 200
+type "Proj X"
+key Return
+wait 300
+tbstate
+button "edtab:query.sql"
+key cmd+a
+type "SELECT 42 AS answer;"
+wait 100
+invoke workspace.close
+wait 200
+tbstate
+shot build/ui/tb_ws_unsaved.bmp
+button "Save and close"
+wait 300
+tbstate
+invoke workspace.open
+wait 200
+type "Proj"
+wait 100
+key Return
+wait 400
+tbstate
+shot build/ui/tb_ws_restored.bmp
+quit

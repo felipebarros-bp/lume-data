@@ -1,0 +1,58 @@
+# The assistant builds a report from the database structure (no catalog metrics): consent, the AI's SQL
+# checked locally (no rows read), one correction round, read-only policy, not-certified marks.
+wait 300
+rpt new Vendas
+wait 100
+invoke report.assistant
+wait 200
+rpt ai ask SQLREPORT monte um relatório de vendas
+rptstate
+rpt ai payload
+rpt ai schema conn Shop
+rpt ai schema allow
+rpt await 20000
+rptstate
+rpt ai approve
+rpt await 20000
+wait 300
+rptstate
+rpt save
+wait 200
+rpt select
+rpt ai ask BADSQL relatório de vendas por mês
+rpt await 20000
+rptstate
+rpt ai refuse
+rpt ai ask DELETESQL limpe as vendas
+rpt await 20000
+rptstate
+rpt ai payload
+rpt ai ctx 7 on
+rpt select
+rpt ai ask SQLREPORT de novo, com os valores
+rpt await 20000
+rptstate
+rpt ai refuse
+rpt select v1
+rpt ai ask SQLREPORT mais cards
+rpt await 20000
+rptstate
+rpt ai scope allow
+rpt await 20000
+rptstate
+rpt ai selectall
+rpt ai seltext
+rpt ai type rascunho
+rpt ai recall up
+rpt ai recall up
+rpt ai recall down
+rpt ai recall down
+rpt zoom in
+rpt zoom in
+wait 200
+rptstate
+rpt zoom reset
+invoke demo.shop
+awaitconn "Shop Demo (e-commerce)"
+wait 300
+quit

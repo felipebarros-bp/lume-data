@@ -1,0 +1,30 @@
+# the assistant as a designer: theme changes (checked for contrast), card styles, shapes
+wait 300
+rpt new Executivo
+wait 100
+rpt asof 2026-10-31
+rpt add kpi net_revenue
+rpt await
+invoke report.assistant
+wait 200
+rpt select
+rpt ai ask DESIGN deixe com cara de dashboard executivo
+rpt await 20000
+rptstate
+rpt ai steps
+rpt ai approve
+rpt await 20000
+wait 400
+rpt theme state
+shot __OUT__/design.bmp
+rpt ai ask DESIGNBAD tudo branco
+rpt await 20000
+rptstate
+rpt undo
+wait 200
+rpt theme state
+rpt ai review
+rpt await 20000
+rptstate
+rpt ai chat
+quit

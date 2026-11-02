@@ -1,0 +1,11 @@
+# a connect that fails is said in a dialog (Retry / Edit connection... / Close)
+wait 300
+dnode "nowhere"
+awaitconn "nowhere" 15000
+wait 60
+tbmodal
+shot __OUT__/connect_fail.bmp
+button "Close"
+wait 30
+tbmodal
+quit

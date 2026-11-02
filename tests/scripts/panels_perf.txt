@@ -1,0 +1,44 @@
+# PNL-041 / NFR-01 / NFR-02: real frames right after panel operations (collapse / expand / hide /
+# show) on the main window, 20 rounds; and a resize of the bottom region by its splitter
+wait 500
+button "collapse:Results"
+stat op
+button "strip:Results"
+stat op
+key cmd+3
+stat op
+key cmd+3
+stat op
+button "collapse:Results"
+stat op
+button "strip:Results"
+stat op
+key cmd+3
+stat op
+key cmd+3
+stat op
+button "collapse:Results"
+stat op
+button "strip:Results"
+stat op
+key cmd+3
+stat op
+key cmd+3
+stat op
+button "collapse:Results"
+stat op
+button "strip:Results"
+stat op
+key cmd+3
+stat op
+key cmd+3
+stat op
+button "collapse:Results"
+stat op
+button "strip:Results"
+stat op
+key cmd+3
+stat op
+key cmd+3
+stat op
+quit

@@ -1,0 +1,21 @@
+# Output rendering benchmark (OUT-024): 100,000 events in 2,000 executions, scrolled and searched on screen
+wait 400
+key cmd+shift+o
+wait 200
+outfill 2000 50
+wait 300
+stat filled
+wheel 700 700 300
+wait 100
+stat scrolled
+wheel 700 700 -20
+wait 100
+stat scrolled-again
+key cmd+f
+type execution 1999
+wait 300
+stat searched
+key Escape
+shot build/ui/output_100k.bmp
+stat after-shot
+quit

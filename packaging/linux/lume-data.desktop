@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Lume Data
+Comment=Database IDE
+Exec=lume %f
+Icon=lume-data
+Terminal=false
+Categories=Development;Database;

@@ -1,0 +1,156 @@
+# Main toolbar, part PG (PostgreSQL container): schema selector (TBR-010), Explain (022),
+# parameters (024), two sessions in parallel and Stop on one only (020 / 021, Gherkin 2),
+# manual transaction, switching with a pending transaction cancelled (016 / 028, Gherkin 5),
+# rollback (027), reconnect losing the transaction (012), PROD confirmation (014 / 029),
+# a failed connect (011)
+wait 600
+button "tb:datasource"
+wait 150
+type "syn A"
+key Return
+wait 3000
+tbstate
+button "tb:schema"
+wait 200
+shot build/ui/tb_pg_schema.bmp
+menu "syn_fat"
+wait 1000
+tbstate
+button "edtab:query.sql"
+key cmd+a
+type "SELECT 1 AS one"
+invoke sql.explain
+wait 1000
+key cmd+a
+type "SELECT :v::int + 1 AS r"
+invoke sql.run_params
+wait 300
+tbstate
+type "41"
+key Return
+wait 1000
+key cmd+a
+type "SELECT pg_sleep(20)"
+invoke sql.run
+wait 400
+invoke sql.new
+wait 200
+button "tb:datasource"
+wait 150
+type "syn B"
+key Return
+wait 3000
+button "edtab:query 2.sql"
+key cmd+a
+type "SELECT pg_sleep(4)"
+invoke sql.run
+wait 400
+tbstate
+button "tb:menu:stop"
+wait 300
+shot build/ui/tb_pg_stop_menu.bmp
+key escape
+button "edtab:query.sql"
+wait 300
+invoke sql.cancel
+wait 5000
+tbstate
+invoke tx.manual
+wait 1200
+tbstate
+key cmd+a
+type "CREATE TEMP TABLE lume_tb_tmp(a int)"
+invoke sql.run
+wait 1000
+button "tb:datasource"
+wait 150
+type "Demo"
+key Return
+wait 400
+tbstate
+shot build/ui/tb_pg_switch_confirm.bmp
+button "Cancel"
+wait 300
+tbstate
+invoke tx.rollback
+wait 300
+button "Rollback"
+wait 1200
+tbstate
+invoke tx.auto
+wait 300
+tbstate
+invoke tx.manual
+wait 1200
+invoke ds.reconnect
+wait 300
+button "Reconnect"
+wait 3500
+tbstate
+button "tb:datasource"
+wait 150
+type "PROD"
+key Return
+wait 3000
+button "edtab:query.sql"
+key cmd+a
+type "UPDATE pg_catalog.pg_class SET relname = relname WHERE false"
+invoke sql.run
+wait 400
+tbstate
+shot build/ui/tb_pg_prod_confirm.bmp
+button "Cancel"
+wait 300
+key cmd+a
+type "SELECT 1 AS prod_read"
+invoke sql.run
+wait 1000
+button "tb:datasource"
+wait 150
+type "bad port"
+key Return
+wait 3000
+tbstate
+tbmodal
+button "Close"
+wait 60
+button "tb:datasource"
+wait 150
+type "slow host"
+key Return
+wait 400
+tbstate
+stat connecting
+invoke ds.cancel_connect
+wait 300
+tbstate
+button "tb:datasource"
+wait 150
+type "syn A"
+key Return
+wait 600
+button "edtab:query.sql"
+key cmd+a
+type "SELECT 1 AS analyzed"
+invoke sql.explain_analyze
+wait 300
+tbmodal
+button "Cancel"
+wait 200
+key cmd+a
+type "SELECT pg_sleep(3)"
+invoke sql.run
+wait 300
+invoke ds.disconnect
+wait 3500
+button "tb:datasource"
+wait 150
+type "PROD"
+key Return
+wait 600
+invoke sql.rerun_last
+wait 300
+tbmodal
+button "Re-run"
+wait 1000
+quit

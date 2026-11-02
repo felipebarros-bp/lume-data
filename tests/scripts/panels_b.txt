@@ -1,0 +1,51 @@
+# part B: focus mode with an overlay (PNL-035 / scenario 4), auto-hide (PNL-017), palette (PNL-036),
+# Inspector as the record view (spec 4.1), presets (PNL-031 / 034), undo (PNL-045), small window
+# (PNL-038), compact headers
+wait 500
+key cmd+shift+F12
+wait 150
+shot build/ui/pnl_focus.bmp
+key cmd+2
+wait 150
+shot build/ui/pnl_focus_overlay.bmp
+key Escape
+wait 100
+key cmd+shift+F12
+wait 150
+shot build/ui/pnl_focus_restored.bmp
+rbutton "tab:Explorer"
+wait 100
+menu "Mode"
+wait 100
+menu "Auto-hide"
+wait 150
+shot build/ui/pnl_autohide_off.bmp
+button "bar:Explorer"
+wait 150
+shot build/ui/pnl_autohide_overlay.bmp
+key Escape
+wait 100
+key cmd+shift+p
+wait 100
+type data exploration
+wait 100
+shot build/ui/pnl_palette.bmp
+key Return
+wait 200
+cell 1 1
+wait 200
+shot build/ui/pnl_data_exploration.bmp
+rcell 1 1
+wait 100
+shot build/ui/pnl_record_label.bmp
+key Escape
+key cmd+alt+shift+z
+wait 150
+shot build/ui/pnl_undo.bmp
+resize 720 520
+wait 300
+shot build/ui/pnl_small_window.bmp
+resize 1280 820
+wait 300
+shot build/ui/pnl_big_again.bmp
+quit

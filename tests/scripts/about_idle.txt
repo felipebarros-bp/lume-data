@@ -1,0 +1,5 @@
+wait 300
+invoke app.about.open
+wait 5500
+aboutstate
+quit

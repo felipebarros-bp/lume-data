@@ -1,0 +1,26 @@
+# AT-08 / OBJ-079: a large definition (about 6000 lines): typing, diagnostics, diff and format stay responsive
+wait 500
+dnode "Shop"
+wait 400
+objopen "Shop" view main v_big
+wait 1500
+objstate
+stat open
+key cmd+End
+type " "
+wait 400
+stat typing
+button "obj:diff"
+wait 100
+stat diff-requested
+wait 1500
+shot build/ui/obj_big_diff.bmp
+button "diff:close"
+wait 100
+button "obj:format"
+wait 100
+menu "Format Document"
+wait 600
+stat formatted
+objstate
+quit

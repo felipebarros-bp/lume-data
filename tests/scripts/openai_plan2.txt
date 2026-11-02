@@ -1,0 +1,8 @@
+wait 300
+invoke report.assistant
+rpt ai setup
+wait 200
+rpt ai test
+rpt await 20000
+rpt ai setupstate
+quit

@@ -1,0 +1,16 @@
+# second launch: the "open on errors: off" preference was restored, so a failing statement
+# leaves the result tab in front and only badges the Output tab; then Reset Output layout
+wait 400
+click 600 300
+key cmd+a
+type SELECT * FROM table_that_does_not_exist;
+key cmd+Return
+wait 400
+shot build/ui/output_no_autoopen.bmp
+key cmd+shift+o
+wait 200
+rclick 900 700
+wait 100
+menu "Reset Output layout"
+wait 100
+quit

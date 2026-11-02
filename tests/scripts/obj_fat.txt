@@ -1,0 +1,20 @@
+# AT-09: publishing a view in a schema of ~16 000 tables refreshes that object only
+wait 500
+dnode "syn A"
+wait 4000
+objopen "syn A" view syn_fat lume_v_fat
+wait 1500
+key cmd+a
+type "CREATE OR REPLACE VIEW syn_fat.lume_v_fat AS SELECT 2 AS a"
+wait 300
+button "obj:apply"
+wait 2000
+button "review:apply"
+wait 2500
+objstate
+stat after-apply
+key cmd+End
+type " "
+wait 300
+stat typing
+quit

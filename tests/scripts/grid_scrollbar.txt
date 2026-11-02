@@ -1,0 +1,20 @@
+# the result grid's scroll bar takes a press and a drag (the grid's focus click must not swallow it)
+wait 300
+click 700 400
+key cmd+a
+type WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x<200000) SELECT x, x*2 AS y FROM c;
+key cmd+Return
+wait 600
+move 1000 740
+wait 20
+resstate
+mdown 1272 698
+wait 5
+move 1272 720
+wait 5
+move 1272 760
+wait 5
+mup 1272 760
+wait 30
+resstate
+quit

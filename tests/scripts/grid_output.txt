@@ -1,0 +1,58 @@
+# Execution Output (OUT-001..024): script with a failure, running banner with Cancel, search, filters, Go to SQL
+wait 400
+click 600 300
+key cmd+a
+type SELECT count(*) AS n FROM orders;\nUPDATE orders SET status = 'paid' WHERE id = 99;\nSELECT * FROM nope;\nSELECT 1;
+key cmd+shift+Return
+wait 600
+shot build/ui/output_script.bmp
+click 600 300
+key cmd+a
+type WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c LIMIT 400000000) SELECT count(*) FROM c;
+key cmd+Return
+wait 500
+shot build/ui/output_running.bmp
+key cmd+.
+wait 600
+shot build/ui/output_cancelled.bmp
+click 600 300
+key cmd+a
+type SELECT c.name, COUNT(o.id) AS orders FROM customers c LEFT JOIN orders o ON o.customer_id = c.id GROUP BY c.id;
+key cmd+Return
+wait 400
+key cmd+shift+o
+wait 200
+key cmd+f
+type nope
+wait 200
+shot build/ui/output_search.bmp
+key Escape
+key cmd+f
+type row
+key Return
+key Return
+wait 150
+shot build/ui/output_search_next.bmp
+key Escape
+key Home
+key shift+Down
+key shift+Down
+key shift+Down
+key cmd+c
+wait 150
+shot build/ui/output_range.bmp
+key Escape
+button Info
+button Success
+wait 200
+shot build/ui/output_errors.bmp
+button Info
+button Success
+wait 200
+rclick 700 720
+wait 100
+shot build/ui/output_menu.bmp
+key Escape
+export build/ui/output_export.json
+wait 200
+quit

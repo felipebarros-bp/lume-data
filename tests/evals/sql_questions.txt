@@ -1,0 +1,5 @@
+# One question per line, asked on the e-commerce demo database (Shop Demo). Mock runs use the
+# mock's keywords (SQLREPORT passes first time, BADSQL needs one correction); real runs use the text.
+SQLREPORT receita paga por mês e por região
+BADSQL receita líquida por mês
+SQLREPORT ticket médio por canal de venda

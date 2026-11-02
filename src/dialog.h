@@ -1,0 +1,26 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+#pragma once
+#include "lume.h"
+#include "conn.h"
+
+/* Modal "New / Edit connection" dialog, drawn in-app.
+ *
+ * Edits a draft copy of a Connection (driver picker, name, the driver's fields from the
+ * registry in conn.h) and only writes to the ConnStore on Save. Also offers Test (a
+ * blocking connect + close) and Delete (two clicks). UI thread only. */
+/* Modal "New / Edit connection" dialog, drawn in-app. */
+/* Allocates a closed dialog; free with dialog_destroy. */
+Dialog *dialog_create(void);
+/* Frees the dialog (the connections it edited belong to the store). */
+void dialog_destroy(Dialog *d);
+/* Opens the dialog on a copy of `existing` (which must stay in the store while the dialog
+ * is open), or on SQLite defaults for a new connection. */
+void dialog_open(Dialog *d, App *a, Connection *existing);   /* NULL = new */
+/* True while the dialog is shown. */
+bool dialog_is_open(Dialog *d);
+void dialog_update(Dialog *d, App *a);     /* handles input; call before every other panel */
+void dialog_draw(Dialog *d, App *a);       /* overlay; call last */
+/* Result of the Browse file picker: fills the driver's file field and, when the name is
+ * still empty, names the connection after the file. */
+void dialog_file_chosen(Dialog *d, const char *path);
+void dialog_dump(Dialog *d);   /* harness: "dialogstate open=.. step=.. driver=.. ..." */

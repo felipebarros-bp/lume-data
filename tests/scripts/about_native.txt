@@ -1,0 +1,8 @@
+wait 500
+nativeabout
+wait 300
+aboutstate
+nativeabout
+wait 300
+aboutstate
+quit

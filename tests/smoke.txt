@@ -1,0 +1,25 @@
+# Smoke test driven through the built-in event harness (LUME_SCRIPT).
+# Coordinates are UI points for a 1280x820 window with the demo database open.
+wait 400
+click 44 120                       # expand "customers"
+click 600 160                      # focus editor, line 3
+shot build/shot_main.bmp
+dblclick 95 230                    # preview "orders"
+wait 200
+shot build/shot_preview.bmp
+drag 250 400 330 400               # widen the explorer
+click 600 300
+key cmd+a
+type SELECT * FROM customers c WHERE c.
+wait 150
+shot build/shot_complete.bmp       # completion popup: columns of the aliased table
+key Return                         # accept "id"
+type " = 1;"
+key cmd+z
+key cmd+z
+key cmd+a
+type SELEC x FROM nope;
+key cmd+Return                     # on Linux/Windows use ctrl+Return
+wait 400                           # the statement runs on the executor thread; the Output tab opens on the error
+shot build/shot_error.bmp
+quit

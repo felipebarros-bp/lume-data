@@ -1,0 +1,13 @@
+# TBR-051: captures at several window sizes (the UI scale varies with LUME_UI_SCALE)
+wait 600
+tbstate
+shot build/ui/tb_size_1280.bmp
+resize 1000 720
+wait 400
+tbstate
+shot build/ui/tb_size_1000.bmp
+resize 720 640
+wait 400
+tbstate
+shot build/ui/tb_size_720.bmp
+quit

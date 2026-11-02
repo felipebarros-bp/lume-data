@@ -1,0 +1,258 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Release builds of Lume Data, started by hand (Actions > Release builds > Run workflow).
+#   macOS   one universal DMG (Apple Silicon + Intel), signed and notarized when the secrets exist
+#   Linux   portable .tar.gz for x86_64 and arm64
+#   Windows portable .zip for x64 (experimental: the Windows port is not validated yet, BL-058)
+# Tests: tests/run_ci.sh, the suites that need no database server (those stay on a developer machine).
+# Secrets (Settings > Secrets and variables > Actions), all optional; without them the DMG is ad-hoc signed:
+#   MACOS_CERT_P12        base64 of the exported "Developer ID Application" certificate + key (.p12)
+#   MACOS_CERT_PASSWORD   the .p12's password
+#   NOTARY_KEY_P8         base64 of an App Store Connect API key (.p8), for notarization
+#   NOTARY_KEY_ID         that key's id
+#   NOTARY_ISSUER         the issuer id shown with the key
+name: Release builds
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_tests:
+        description: Run the CI test suites before packaging
+        type: boolean
+        default: true
+      channel:
+        description: Release channel shown in About
+        type: choice
+        options: [Development, Early Preview, Beta, Stable]
+        default: Early Preview
+      notarize:
+        description: Notarize the DMG (needs the NOTARY_* secrets)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SDL_TAG: release-3.4.16   # the SDL3 every platform builds against (same as the developer machine)
+
+jobs:
+  macos:
+    name: macOS (universal DMG)
+    runs-on: macos-15
+    env:
+      HAS_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
+      HAS_NOTARY: ${{ secrets.NOTARY_KEY_P8 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the build id in About comes from git
+
+      - name: SDL3 (universal, cached)
+        id: sdl-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/sdl3
+          key: sdl3-${{ env.SDL_TAG }}-macos-universal-11.0
+      - name: Build SDL3
+        if: steps.sdl-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$SDL_TAG" https://github.com/libsdl-org/SDL.git "$RUNNER_TEMP/sdl-src"
+          cmake -S "$RUNNER_TEMP/sdl-src" -B "$RUNNER_TEMP/sdl-build" -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+            -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sdl3"
+          cmake --build "$RUNNER_TEMP/sdl-build" -j "$(sysctl -n hw.ncpu)"
+          cmake --install "$RUNNER_TEMP/sdl-build"
+
+      - name: Build Lume (universal)
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/sdl3" -DLUME_CHANNEL="${{ inputs.channel }}"
+          cmake --build build -j "$(sysctl -n hw.ncpu)"
+          lipo -archs build/lume
+
+      - name: Tests
+        if: inputs.run_tests
+        env:
+          DYLD_FALLBACK_LIBRARY_PATH: ${{ runner.temp }}/sdl3/lib
+        run: sh tests/run_ci.sh
+
+      - name: Import the signing certificate
+        if: env.HAS_CERT == 'true'
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KC="$RUNNER_TEMP/lume-sign.keychain-db"
+          KCPW=$(openssl rand -hex 24)
+          security create-keychain -p "$KCPW" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KCPW" "$KC"
+          printf '%s' "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KCPW" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" login.keychain-db   # the signing keychain first, the login one kept
+          ID=$(security find-identity -v -p codesigning "$KC" | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)
+          [ -n "$ID" ] || { echo "no Developer ID Application identity in the .p12"; exit 1; }
+          echo "LUME_SIGN_IDENTITY=$ID" >> "$GITHUB_ENV"
+
+      - name: Notarization key
+        if: env.HAS_CERT == 'true' && env.HAS_NOTARY == 'true' && inputs.notarize
+        env:
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+        run: |
+          printf '%s' "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          {
+            echo "LUME_NOTARY_KEY=$RUNNER_TEMP/AuthKey.p8"
+            echo "LUME_NOTARY_KEY_ID=$NOTARY_KEY_ID"
+            echo "LUME_NOTARY_ISSUER=$NOTARY_ISSUER"
+          } >> "$GITHUB_ENV"
+
+      - name: Package the DMG
+        env:
+          SDL3_PREFIX: ${{ runner.temp }}/sdl3
+        run: |
+          cmake --build build --target lume_app
+          sh scripts/package_macos.sh build
+
+      - name: Clean up signing material
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/AuthKey.p8"
+          security delete-keychain "$RUNNER_TEMP/lume-sign.keychain-db" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lume-macos-universal
+          path: build/Lume-Data-*.dmg
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.run_tests
+        with:
+          name: test-report-macos
+          path: |
+            build/test-report-ci.md
+            build/test-logs/
+
+  linux:
+    name: Linux (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04       # glibc 2.35: runs on the distributions of the last few years
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build tools and SDL3 dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config patchelf xvfb xauth \
+            libsqlite3-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev \
+            libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev libdecor-0-dev libegl1-mesa-dev \
+            libgl1-mesa-dev libgles2-mesa-dev libdrm-dev libgbm-dev libasound2-dev libpulse-dev \
+            libpipewire-0.3-dev libdbus-1-dev libudev-dev libibus-1.0-dev
+      - name: SDL3 (cached)
+        id: sdl-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/sdl3
+          key: sdl3-${{ env.SDL_TAG }}-${{ matrix.runner }}
+      - name: Build SDL3
+        if: steps.sdl-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$SDL_TAG" https://github.com/libsdl-org/SDL.git "$RUNNER_TEMP/sdl-src"
+          cmake -S "$RUNNER_TEMP/sdl-src" -B "$RUNNER_TEMP/sdl-build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sdl3"
+          cmake --build "$RUNNER_TEMP/sdl-build"
+          cmake --install "$RUNNER_TEMP/sdl-build"
+      - name: Build Lume
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/sdl3" \
+            -DLUME_CHANNEL="${{ inputs.channel }}"
+          cmake --build build
+      - name: Tests
+        if: inputs.run_tests
+        env:
+          LD_LIBRARY_PATH: ${{ runner.temp }}/sdl3/lib
+        run: |
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg"; mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+          xvfb-run -a sh tests/run_ci.sh
+      - name: Package
+        run: sh scripts/package_linux.sh build "$RUNNER_TEMP/sdl3"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lume-linux-${{ matrix.arch }}
+          path: build/lume-data-*.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.run_tests
+        with:
+          name: test-report-linux-${{ matrix.arch }}
+          path: |
+            build/test-report-ci.md
+            build/test-logs/
+
+  windows:
+    name: Windows (x64, experimental)
+    runs-on: windows-2022
+    continue-on-error: true   # until the Windows port is validated (BL-058): never blocks the other platforms
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: SDL3 (cached)
+        id: sdl-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\sdl3
+          key: sdl3-${{ env.SDL_TAG }}-windows-x64
+      - name: Build SDL3
+        if: steps.sdl-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch $env:SDL_TAG https://github.com/libsdl-org/SDL.git "$env:RUNNER_TEMP\sdl-src"
+          cmake -S "$env:RUNNER_TEMP\sdl-src" -B "$env:RUNNER_TEMP\sdl-build" -A x64 -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DCMAKE_INSTALL_PREFIX="$env:RUNNER_TEMP\sdl3"
+          cmake --build "$env:RUNNER_TEMP\sdl-build" --config Release
+          cmake --install "$env:RUNNER_TEMP\sdl-build" --config Release
+      - name: SQLite (vcpkg)
+        shell: pwsh
+        run: vcpkg install sqlite3:x64-windows
+      - name: Build Lume
+        shell: pwsh
+        run: |
+          cmake -S . -B build -A x64 -DCMAKE_PREFIX_PATH="$env:RUNNER_TEMP\sdl3" `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            -DLUME_CHANNEL="${{ inputs.channel }}"
+          cmake --build build --config Release
+      - name: Package
+        shell: pwsh
+        run: |
+          $ver = (Select-String -Path CMakeLists.txt -Pattern 'project\(lume VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          $name = "lume-data-$ver-windows-x64"
+          $out = "build\$name"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item build\Release\lume.exe $out
+          Copy-Item "$env:RUNNER_TEMP\sdl3\bin\SDL3.dll" $out
+          Copy-Item build\Release\*.dll $out -ErrorAction SilentlyContinue
+          Copy-Item -Recurse assets "$out\assets"
+          Copy-Item LICENSE "$out\LICENSE.txt"
+          Compress-Archive -Path $out -DestinationPath "build\$name.zip" -Force
+          Get-FileHash "build\$name.zip" -Algorithm SHA256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lume-windows-x64
+          path: build/lume-data-*.zip
+          if-no-files-found: error

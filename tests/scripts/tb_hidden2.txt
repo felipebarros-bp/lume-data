@@ -1,0 +1,6 @@
+wait 600
+tbstate
+invoke toolbar.toggle
+wait 200
+tbstate
+quit

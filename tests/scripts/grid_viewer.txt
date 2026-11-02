@@ -1,0 +1,30 @@
+# value viewer with the JSON tree, display formats, export dialog, history, columns panel
+wait 400
+click 600 300
+key cmd+a
+type SELECT json_object('id',7,'tags',json_array('a','b'),'meta',json_object('ok',json('true'),'n',null)) AS doc, 1234567.891 AS amount, '2024-05-01 23:45:10+02:00' AS ts, 'two words and a long sentence that wraps around' AS note;
+key cmd+Return
+wait 200
+dcell 0 0
+wait 100
+shot build/ui/json.bmp
+key Escape
+click 220 15
+click 300 47
+click 220 15
+click 300 99
+click 220 15
+click 300 186
+click 220 15
+click 300 299
+shot build/ui/formats.bmp
+key cmd+shift+e
+shot build/ui/export.bmp
+key Escape
+key cmd+y
+shot build/ui/history.bmp
+key Escape
+key cmd+shift+c
+shot build/ui/colpanel.bmp
+key Escape
+quit

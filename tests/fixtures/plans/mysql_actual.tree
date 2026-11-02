@@ -1,0 +1,8 @@
+-> Sort: `COUNT(*)` DESC  (actual time=3.55..3.55 rows=5 loops=1)
+    -> Table scan on <temporary>  (actual time=3.52..3.52 rows=5 loops=1)
+        -> Aggregate using temporary table  (actual time=3.52..3.52 rows=5 loops=1)
+            -> Nested loop inner join  (cost=2285 rows=675) (actual time=0.235..3.24 rows=1788 loops=1)
+                -> Filter: ((o.`status` = 'open') and (o.total > 100.00) and (o.customer_id is not null))  (cost=2049 rows=675) (actual time=0.223..2.42 rows=1788 loops=1)
+                    -> Table scan on o  (cost=2049 rows=20250) (actual time=0.196..1.65 rows=20000 loops=1)
+                -> Single-row index lookup on c using PRIMARY (id=o.customer_id)  (cost=0.25 rows=1) (actual time=352e-6..367e-6 rows=1 loops=1788)
+

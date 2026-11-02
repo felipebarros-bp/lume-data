@@ -1,0 +1,15 @@
+# PNL-047, second launch: the module's panel comes back where it was left (the module registered
+# before the layout file was read); then the module's panel is unregistered at run time (its view
+# is destroyed, the tree keeps no reference) and a Lume Data panel refuses to be unregistered
+wait 600
+shot build/ui/pnl_ext_restored.bmp
+unregister lume.md.outline
+wait 300
+unregister lume.data.results
+wait 300
+shot build/ui/pnl_ext_unregistered.bmp
+key cmd+shift+p
+type "show and focus markdown stats"
+key Return
+wait 300
+quit

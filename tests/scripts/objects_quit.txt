@@ -1,0 +1,14 @@
+# Crash 31/10/2026 20:11: quitting with the Objects list loaded freed it twice (objed_shutdown,
+# then the connection-close hook from conns_free). Also: an object tab with an unsaved edit and a
+# disconnect while it is open.
+wait 500
+dnode "Second"
+wait 400
+node "Objects"
+wait 600
+objopen "Second" view main v1
+wait 800
+key cmd+a
+type "CREATE VIEW v1 AS SELECT id FROM t1 WHERE id > 0"
+wait 300
+quit

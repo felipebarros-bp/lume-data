@@ -1,0 +1,26 @@
+wait 400
+# Results Memory: 1 GB, through the palette (menu positions change as commands are added)
+key cmd+shift+p
+type "results memory: 1 gb"
+key Return
+wait 200
+click 600 300
+key cmd+a
+type WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c LIMIT 800000) SELECT x, x*2 AS y, 'row '||x AS label, 'abcdefghijklmnop' AS pad FROM c;
+key cmd+Return
+wait 1500
+button "Fetch all"
+wait 500
+wheel 700 700 -200
+wait 100
+stat grid-scrolled-800k
+shot build/ui/big1.bmp
+key cmd+alt+Return
+wait 1500
+button "Fetch all"
+wait 500
+shot build/ui/big2.bmp
+button "rtab:#2"
+wait 100
+shot build/ui/discarded.bmp
+quit

@@ -1,0 +1,9 @@
+# reopened: pins and mode persist; Reset for this connection
+wait 500
+dnode "scale"
+nsx "scale" await
+nsx "scale" state
+nsx "scale" reset
+nsx "scale" await
+nsx "scale" state
+quit

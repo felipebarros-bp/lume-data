@@ -1,0 +1,11 @@
+# OBJ-009: an unsaved edit survives quitting (kept as a draft)
+wait 500
+dnode "Shop"
+wait 400
+objopen "Shop" view main v_top
+wait 800
+key cmd+a
+type "CREATE VIEW v_top AS SELECT id FROM v_revenue WHERE amount > 30"
+wait 300
+objstate
+quit

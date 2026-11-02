@@ -1,0 +1,12 @@
+# Scenario 3: connections with user, password and host exist; Copy Info carries none of it
+wait 500
+invoke app.about.open
+wait 400
+invoke app.about.copy_info
+wait 200
+clipboard
+button "about:btn:Copy Version"
+wait 200
+clipboard
+aboutstate
+quit

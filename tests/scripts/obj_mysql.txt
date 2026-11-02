@@ -1,0 +1,22 @@
+# AT-06 in the UI (MySQL): a procedure body change needs DROP + CREATE with explicit consent
+wait 500
+dnode "shop MySQL"
+wait 1500
+objopen "shop MySQL" procedure shop p_bump
+wait 1200
+objstate
+key cmd+a
+type "CREATE PROCEDURE p_bump(IN x INT) BEGIN UPDATE sales SET amount = amount * x WHERE id = 1; END"
+wait 400
+button "obj:apply"
+wait 1500
+objstate
+shot build/ui/obj_mysql_review.bmp
+button "review:destructive"
+wait 300
+button "review:consent"
+wait 200
+button "review:apply"
+wait 1500
+objstate
+quit

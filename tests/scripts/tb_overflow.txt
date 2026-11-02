@@ -1,0 +1,20 @@
+# TBR-040 / 051: a narrow toolbar (720 points wide, UI scale 1.6): labels go first, then the
+# lowest-priority items move into "...", whose menu keeps their labels, state and shortcuts;
+# the datasource and Run stay on the bar
+wait 600
+invoke toolbar.labels
+invoke toolbar.customize
+wait 300
+button "Advanced"
+wait 100
+button "Save"
+wait 300
+resize 720 640
+wait 500
+tbstate
+button "tb:more"
+wait 300
+shot build/ui/tb_overflow_more.bmp
+tbstate
+key escape
+quit

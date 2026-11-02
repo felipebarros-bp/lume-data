@@ -1,0 +1,24 @@
+wait 300
+invoke report.assistant
+rpt ai setup
+rpt ai provider chatgpt
+rpt ai signout
+wait 200
+rpt ai setupstate
+rpt ai signin
+rpt await 20000
+rpt ai setupstate
+rpt ai pickmodel 0
+rpt ai test
+rpt await 20000
+rpt ai setupstate
+rpt ai save
+wait 300
+rpt ai setupstate
+rpt ai gotit
+rpt ai setup
+wait 200
+rpt ai test
+rpt await 20000
+rpt ai setupstate
+quit

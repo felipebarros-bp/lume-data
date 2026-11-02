@@ -1,0 +1,46 @@
+# report filters as SQL parameters: manual, period, and created by the assistant
+wait 300
+rpt new Filtros
+wait 100
+rpt asof 2026-10-31
+rpt period all
+rpt addsql shop1 SELECT region AS label, SUM(net_total) AS value FROM rpt_sales WHERE status = 'paid' AND (:reg IS NULL OR region = :reg) AND ordered_at >= COALESCE(:period_start, '0000') AND ordered_at < COALESCE(:period_end, '9999') GROUP BY region
+rpt param add reg select shop1 Região|SELECT DISTINCT region FROM rpt_sales ORDER BY 1
+rpt await
+wait 300
+rptstate
+rpt param options reg
+rpt await
+wait 200
+rpt param state
+rpt param set reg Norte
+rpt await
+wait 300
+rptstate
+rpt param all reg
+rpt period last_12_months
+rpt await
+wait 300
+rptstate
+rpt uisave
+wait 200
+rpt new Filtros IA
+wait 100
+rpt asof 2026-10-31
+invoke report.assistant
+wait 200
+rpt ai ask FILTRO vendas por região com filtro
+rpt ai schema conn Shop
+rpt ai schema allow
+rpt await 20000
+rptstate
+rpt ai steps
+rpt ai approve
+rpt await 20000
+wait 300
+rpt param state
+rpt param set regiao Sul
+rpt await
+wait 300
+rptstate
+quit

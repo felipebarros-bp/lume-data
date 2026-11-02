@@ -1,0 +1,9 @@
+# Third-party components of Lume Data (ABOUT-020): reviewed manifest, one per line.
+# name | license | license file (relative to this folder, "-" = not distributed) | how it is used | runtime version key
+SDL3 | zlib License | SDL3-LICENSE.txt | dynamic library: windows, input, rendering, clipboard, dialogs | sdl
+SQLite | Public domain | SQLite-PUBLIC-DOMAIN.txt | library of the operating system: SQLite connections | sqlite
+stb_truetype 1.26 | MIT License or Public Domain (Unlicense), at the user's choice | stb_truetype-LICENSE.txt | compiled in: font rasterizer | -
+Inter (variable) | SIL Open Font License 1.1 | ../fonts/OFL-Inter.txt | bundled font: interface text | -
+JetBrains Mono | SIL Open Font License 1.1 | ../fonts/OFL-JetBrainsMono.txt | bundled font: editor and grid | -
+libpq | PostgreSQL License | - | not distributed: loaded at run time from the user's PostgreSQL client installation, when present | libpq
+Oracle Instant Client | Oracle license (from the user's installation) | - | not distributed: loaded at run time when present | oci

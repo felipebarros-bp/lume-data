@@ -1,0 +1,44 @@
+# Text field inside the connection dialog (the database search), whose fields are drawn in a second pass: Shift+arrows
+# and Shift+Option select, a mouse drag selects, and the selection is visible (screenshot)
+wait 500
+key cmd+shift+n
+wait 200
+type minha conexao local
+key cmd+left
+key shift+right
+key shift+right
+key shift+right
+wait 150
+fieldstate
+key cmd+right
+key shift+alt+left
+key shift+alt+left
+wait 150
+shot build/ui/tf_dialog_keys.bmp
+fieldstate
+drag 389 262 480 262
+wait 300
+shot build/ui/tf_dialog_drag.bmp
+fieldstate
+type rede
+fieldstate
+key shift+alt+left
+key backspace
+fieldstate
+type "abc def"
+key shift+alt+left
+key cmd+c
+key cmd+left
+key shift+alt+right
+key cmd+v
+fieldstate
+key shift+cmd+right
+key delete
+fieldstate
+key shift+cmd+left
+key cmd+x
+fieldstate
+key cmd+v
+fieldstate
+key escape
+quit

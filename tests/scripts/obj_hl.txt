@@ -1,0 +1,11 @@
+# OBJ-011: dialect-aware highlighting (PostgreSQL $$ body as code, a multi-line string, nested comment)
+wait 500
+dnode "syn A"
+wait 1500
+objopen "syn A" function lume_ui calculate integer
+wait 1200
+key cmd+a
+type "CREATE OR REPLACE FUNCTION lume_ui.calculate(p integer) RETURNS numeric LANGUAGE plpgsql AS $body$\nDECLARE msg text := 'a string\nthat spans lines';\nBEGIN /* outer /* nested */ still comment */\n  RETURN p * 3.0;\nEND;\n$body$"
+wait 400
+shot build/ui/obj_highlight.bmp
+quit

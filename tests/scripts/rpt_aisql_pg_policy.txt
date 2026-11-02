@@ -1,0 +1,15 @@
+# require_readonly_ai_sql=1 without a read-only login: nothing is shared
+wait 300
+dnode "pg main"
+awaitconn "pg main" 30000
+rpt new Politica
+wait 100
+invoke report.assistant
+wait 200
+rpt ai ask PGREPORT vendas por região
+rpt ai schema conn pg main
+rpt ai schema aiconn none
+rpt ai schema allow
+rpt await 10000
+rptstate
+quit

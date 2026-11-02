@@ -1,0 +1,70 @@
+# part E: scenario 1 (collapse Results while a long query runs, expand: same tabs + the new
+# result), PNL-029 / scenario 5 (unsaved edits survive collapse; the strip shows them), named
+# layouts (PNL-033), a layout bound to a connection (PNL-034), export / import (PNL-046)
+wait 500
+click 600 300
+key cmd+a
+type WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c LIMIT 20000000) SELECT count(*) AS n FROM c;
+key cmd+Return
+wait 150
+button "collapse:Results"
+wait 150
+shot build/ui/pnl_collapsed_running.bmp
+wait 4000
+shot build/ui/pnl_expanded_after_run.bmp
+button "collapse:Results"
+wait 100
+button "strip:Results"
+wait 100
+dnode orders
+wait 300
+dcell 0 3
+type shipped
+key Return
+wait 100
+button "collapse:Results"
+wait 150
+shot build/ui/pnl_unsaved_strip.bmp
+button "strip:Results"
+wait 150
+shot build/ui/pnl_unsaved_kept.bmp
+key cmd+4
+wait 150
+key cmd+shift+p
+type save layout
+key Return
+wait 100
+type Reviewing
+key Return
+wait 150
+key cmd+shift+p
+type manage layouts
+key Return
+wait 150
+menu "Reviewing"
+wait 100
+menu "Use for the current"
+wait 150
+key cmd+shift+p
+type layout default
+key Return
+wait 200
+shot build/ui/pnl_reset_default.bmp
+dnode Second
+wait 300
+button "edtab:query.sql"
+wait 300
+shot build/ui/pnl_bound_layout.bmp
+exportlayout build/ui/exported-layout.json
+wait 100
+key cmd+shift+p
+type layout default
+key Return
+wait 200
+importlayout build/ui/exported-layout.json
+wait 150
+shot build/ui/pnl_import_confirm.bmp
+key Return
+wait 200
+shot build/ui/pnl_imported.bmp
+quit

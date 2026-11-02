@@ -1,0 +1,45 @@
+# Oracle in the UI (OBJ-030 / 050 / 051 / 057, AT-05)
+wait 500
+dnode "ora DEV"
+awaitconn "ora DEV" 60000
+objopen "ora DEV" package SYSTEM LUME_UIPKG
+objawait 30000
+wait 300
+objstate
+button "obj:more"
+wait 150
+menu "Open Body"
+wait 1500
+objstate
+key cmd+a
+type "CREATE OR REPLACE PACKAGE BODY lume_uipkg AS\nFUNCTION f(x NUMBER) RETURN NUMBER IS\nBEGIN\n  RETURN x * undefined_thing;\nEND;\nEND lume_uipkg;"
+wait 400
+button "obj:apply"
+wait 2000
+button "review:apply"
+wait 3000
+objstate
+shot build/ui/obj_ora_invalid.bmp
+key cmd+a
+type "CREATE OR REPLACE PACKAGE BODY lume_uipkg AS\nFUNCTION f(x NUMBER) RETURN NUMBER IS\nBEGIN\n  RETURN x * 3;\nEND;\nEND lume_uipkg;"
+wait 400
+button "obj:apply"
+wait 2000
+button "review:apply"
+wait 3000
+objstate
+button "obj:validate"
+wait 150
+menu "Compile"
+wait 400
+objstate
+button "review:apply"
+wait 3000
+objstate
+objopen "ora DEV" type SYSTEM LUME_UITYPE
+wait 1500
+objstate
+objopen "ora DEV" type-body SYSTEM LUME_UITYPE
+wait 1500
+objstate
+quit

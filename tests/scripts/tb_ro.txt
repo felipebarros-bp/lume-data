@@ -1,0 +1,18 @@
+# TBR-013: a SQLite connection read-only in Lume (engine-enforced): the write fails, the
+# datasource shows the pill and the tooltip names the real protection
+wait 600
+button "tb:datasource"
+wait 150
+type "RO file"
+key Return
+wait 600
+button "edtab:query.sql"
+key cmd+a
+type "CREATE TABLE should_fail(a int)"
+invoke sql.run
+wait 600
+hover "tb:datasource"
+wait 800
+tbstate
+shot build/ui/tb_ro.bmp
+quit

@@ -1,0 +1,22 @@
+# part C: query tabs, a second connection per tab and the editor split (PNL-027 / 028)
+wait 500
+dnode Second
+wait 300
+type SELECT * FROM t1;
+wait 100
+shot build/ui/pnl_two_tabs.bmp
+button "edtab:query.sql"
+wait 150
+shot build/ui/pnl_tab_back_to_demo.bmp
+key cmd+\
+wait 200
+shot build/ui/pnl_split_right.bmp
+dragto "edtab:query 2.sql" "edtab:query.sql"
+wait 200
+shot build/ui/pnl_tab_moved.bmp
+button "edtab:query 2.sql"
+wait 100
+key cmd+Return
+wait 400
+shot build/ui/pnl_run_on_tab_connection.bmp
+quit

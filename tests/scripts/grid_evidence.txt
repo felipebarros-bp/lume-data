@@ -1,0 +1,24 @@
+# Evidence captures for US-051 (compare with a partial side) and US-045 (extractor approval).
+wait 400
+click 600 300
+key cmd+a
+type WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 1200) SELECT x AS id, x * 2 AS v FROM c; SELECT 3 AS id, 6 AS v UNION ALL SELECT 4, 99 UNION ALL SELECT 5000, 1;
+key cmd+shift+Return
+wait 800
+rcell 0 0
+wait 100
+menu "Chart, Transpose"
+wait 100
+menu "Compare with Another"
+wait 100
+menu "#2"
+wait 300
+shot build/ui/compare_partial.bmp
+key cmd+shift+e
+wait 200
+shot build/ui/extractor_pick.bmp
+button copy
+wait 200
+shot build/ui/extractor_approval.bmp
+key Escape
+quit

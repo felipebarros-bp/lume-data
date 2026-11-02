@@ -1,0 +1,27 @@
+# OUT-023 Pause view + OUT-014 / OUT-005 preferences (first launch; output_prefs2.txt checks the restart)
+wait 400
+click 600 300
+key cmd+a
+type SELECT 1 AS first_run;
+key cmd+Return
+wait 300
+key cmd+shift+o
+wait 200
+button "Pause view"
+wait 100
+click 600 300
+key cmd+a
+type SELECT 2 AS while_paused;
+key cmd+Return
+wait 300
+key cmd+shift+o
+wait 200
+shot build/ui/output_paused.bmp
+button "Resume view"
+wait 150
+shot build/ui/output_resumed.bmp
+rclick 900 700
+wait 100
+menu "Open Output on statement errors"
+wait 100
+quit

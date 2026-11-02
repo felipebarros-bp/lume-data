@@ -1,0 +1,28 @@
+# a large database (3,000 tables): indexed in the background, the model searches before it proposes
+wait 300
+dnode "pg big"
+awaitconn "pg big" 30000
+rpt new Honorarios
+wait 100
+invoke report.assistant
+wait 200
+rpt ai ask BIGDB quanto pagamos de honorários
+rpt ai schema conn pg big
+rpt ai schema allow
+rptstate
+rpt await 60000
+rptstate
+rpt ai steps
+rpt ai approve
+rpt await 30000
+wait 300
+rptstate
+rpt ai sxscope schemas lume_big
+rpt await 60000
+rpt ai index state
+rpt select
+rpt ai sxscope block lume_big.zz_rp_med
+rpt ai ask BIGDB quanto pagamos de honorários
+rpt await 60000
+rptstate
+quit

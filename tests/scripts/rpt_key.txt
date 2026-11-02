@@ -1,0 +1,21 @@
+wait 300
+invoke report.assistant
+rpt ai removekey
+rpt ai setup
+wait 200
+rpt ai setupstate
+rpt ai key sk-test-not-a-real-key
+rpt ai test
+wait 2000
+rpt ai setupstate
+rpt ai save
+wait 300
+rpt ai setupstate
+rpt ai setup
+wait 200
+rpt ai test
+wait 2000
+rpt ai setupstate
+rpt ai removekey
+rpt ai setupstate
+quit

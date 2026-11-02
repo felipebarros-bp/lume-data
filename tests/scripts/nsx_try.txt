@@ -1,0 +1,14 @@
+wait 500
+dnode "scale"
+wait 3000
+nsx "scale" state
+shot build/ui/nsx_compact.bmp
+nsx "scale" expand
+wait 1500
+nsx "scale" state
+shot build/ui/nsx_others.bmp
+nsx "scale" search usr_165000
+wait 1500
+nsx "scale" state
+shot build/ui/nsx_search.bmp
+quit

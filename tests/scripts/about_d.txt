@@ -1,0 +1,6 @@
+wait 400
+invoke app.about.open
+wait 400
+aboutstate
+shot build/ui/about_fallback.bmp
+quit

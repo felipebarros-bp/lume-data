@@ -1,0 +1,89 @@
+# PostgreSQL in the UI: AT-02 view contract, AT-03 overloads, PROD typed confirmation
+wait 500
+dnode "syn A"
+wait 1500
+objopen "syn A" view lume_ui v_sales
+wait 1200
+objstate
+key cmd+a
+type "CREATE OR REPLACE VIEW lume_ui.v_sales AS SELECT id, amount::text AS amount FROM lume_ui.sales"
+wait 400
+button "obj:apply"
+wait 1500
+objstate
+shot build/ui/obj_pg_contract.bmp
+button "review:destructive"
+wait 300
+button "review:apply"
+wait 300
+objstate
+button "review:consent"
+wait 200
+button "review:apply"
+wait 1500
+objstate
+objopen "syn A" function lume_ui calculate integer
+wait 1200
+key cmd+a
+type "CREATE OR REPLACE FUNCTION lume_ui.calculate(p integer) RETURNS numeric LANGUAGE sql AS $f$ SELECT p * 3.0 $f$"
+wait 300
+button "obj:apply"
+wait 1500
+objstate
+button "review:apply"
+wait 1500
+objstate
+dnode "syn PROD"
+wait 1500
+objopen "syn PROD" view lume_ui v_prod
+wait 1200
+key cmd+a
+type "CREATE OR REPLACE VIEW lume_ui.v_prod AS SELECT 1 AS a, 2 AS b"
+wait 300
+button "obj:apply"
+wait 1500
+button "review:apply"
+wait 300
+objstate
+shot build/ui/obj_pg_prod.bmp
+button "review:confirm"
+wait 100
+type "v_prod"
+wait 200
+button "review:apply"
+wait 1500
+objstate
+objopen "syn A" matview lume_ui mv_total
+wait 1200
+button "obj:more"
+wait 150
+menu "Refresh Materialized View Data"
+wait 400
+objstate
+button "review:apply"
+wait 1500
+objstate
+objopen "syn A" view lume_ui v_sales
+wait 1200
+key cmd+End
+type " -- uses lume_ui.calculate("
+wait 400
+shot build/ui/obj_signature.bmp
+button "obj:signature"
+objstate
+objopen "syn A" function lume_ui f_vars integer, text
+wait 1200
+objstate
+objopen "syn A" function lume_ui f_pos integer
+wait 1200
+button "obj:more"
+wait 150
+menu "Use Parameter Names"
+wait 300
+button "refactor:apply"
+wait 300
+edtext
+objopen "syn A" function public pg_stat_statements_reset oid, oid, bigint
+wait 1200
+objstate
+quit

@@ -1,0 +1,7 @@
+# PNL-011: the first lane splitter of the left region (Explorer | Inspector) dragged 40 points
+# to the left: Explorer has room above its minimum, the Inspector takes it
+wait 600
+dragto "split:left-lanes:0" "-40 0"
+wait 300
+shot build/ui/pnl_lane_resized.bmp
+quit

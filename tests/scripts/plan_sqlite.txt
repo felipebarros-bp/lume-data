@@ -1,0 +1,28 @@
+# Execution plan on SQLite: estimated only, no invented numbers; import of every fixture
+wait 500
+dnode "Shop"
+wait 800
+type SELECT c.city, count(*) FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.status = 'open' GROUP BY c.city ORDER BY 2 DESC
+wait 200
+invoke sql.explain
+wait 1500
+planstate
+plan import tests/fixtures/plans/mssql_actual.sqlplan
+wait 200
+planstate
+plan import tests/fixtures/plans/oracle_actual.txt
+wait 200
+planstate
+plan import tests/fixtures/plans/mariadb_actual.json
+wait 200
+planstate
+plan view ops
+wait 200
+shot build/ui/plan_ops.bmp
+plan view ai
+wait 300
+planstate
+plan ai send why is this slow?
+wait 300
+planstate
+quit

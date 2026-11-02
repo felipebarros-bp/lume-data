@@ -1,0 +1,54 @@
+# Schema Explorer v2 on PostgreSQL with 170,009 namespaces (lume_scale)
+wait 500
+dnode "scale"
+nsx "scale" await
+nsx "scale" state
+shot build/ui/nsx_compact.bmp
+nsx "scale" menu Schemas
+nsx "scale" expand
+nsx "scale" await
+nsx "scale" state
+shot build/ui/nsx_others.bmp
+nsx "scale" menu Others
+nsx "scale" more
+nsx "scale" await
+nsx "scale" state
+nsx "scale" search usr_165000
+wait 400
+nsx "scale" await
+nsx "scale" state
+shot build/ui/nsx_search.bmp
+nsx "scale" close-search
+nsx "scale" pin usr_000050
+nsx "scale" await
+nsx "scale" state
+nsx "scale" menu usr_000050
+nsx "scale" unpin usr_000050
+nsx "scale" await
+nsx "scale" state
+nsx "scale" menu public
+nsx "scale" probe usr_000001
+nsx "scale" await
+nsx "scale" props usr_000001
+nsx "scale" probe abc
+nsx "scale" await
+nsx "scale" props abc
+nsx "scale" props
+nsx "scale" mode all
+nsx "scale" await
+nsx "scale" state
+shot build/ui/nsx_all.bmp
+nsx "scale" mode compact
+nsx "scale" pin usr_000077
+nsx "scale" await
+nsx "scale" objects vw_cli
+wait 400
+nsx "scale" await
+nsx "scale" state
+nsx "scale" close-search
+nsx "scale" menu Schemas
+wait 300
+shot build/ui/nsx_menu.bmp
+key escape
+wait 3500
+quit

@@ -1,0 +1,35 @@
+# results belong to the query tab that ran them; a re-run replaces them; another tab shows its own
+wait 300
+click 600 300
+key cmd+a
+type SELECT 1 AS a;\nSELECT 2 AS b;
+key cmd+shift+Return
+wait 400
+resstate
+click 600 300
+key cmd+a
+type SELECT 3 AS c;
+key cmd+shift+Return
+wait 400
+resstate
+key cmd+t
+wait 100
+click 600 300
+type SELECT 4 AS d UNION ALL SELECT 5;
+key cmd+shift+Return
+wait 400
+resstate
+clickon "edtab:query.sql"
+wait 100
+resstate
+click 600 300
+key cmd+a
+type WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c LIMIT 5000) SELECT x FROM c;
+key cmd+shift+Return
+wait 400
+key cmd+shift+Return
+wait 400
+key cmd+shift+Return
+wait 400
+resstate
+quit

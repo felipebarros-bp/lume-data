@@ -1,0 +1,7 @@
+# PNL-010: a tab dropped on a tab row lands at that position
+wait 500
+dragto "tab:Output" "tab:Results"
+wait 300
+shot build/ui/pnl_tab_reorder.bmp
+wait 300
+quit

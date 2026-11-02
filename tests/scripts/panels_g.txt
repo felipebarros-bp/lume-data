@@ -1,0 +1,39 @@
+# part G (V2): Output in a separate native window (PNL-020), its content is the same (the run
+# that lands while it is outside shows there), the window comes back on screen when its monitor
+# disappears, and closing it docks the panel back (PNL-021); then a floating window (PNL-019)
+wait 500
+rbutton "tab:Output"
+wait 100
+menu "Mode"
+wait 100
+menu "Separate window"
+wait 400
+click 600 300
+key cmd+a
+type SELECT 42 AS answer;
+key cmd+Return
+wait 400
+shotfloat build/ui/pnl_separate_window.bmp
+wait 300
+shot build/ui/pnl_main_without_output.bmp
+checkfloat
+movefloat -30000 -30000
+wait 200
+displaychanged
+wait 300
+checkfloat
+closefloat
+wait 400
+shot build/ui/pnl_docked_back.bmp
+rbutton "tab:Results"
+wait 100
+menu "Mode"
+wait 100
+menu "Floating window"
+wait 400
+shotfloat build/ui/pnl_floating_results.bmp
+wait 300
+checkfloat
+closefloat
+wait 300
+quit

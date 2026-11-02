@@ -1,0 +1,27 @@
+# Save As and exports through the save-dialog path (LUME_TEST_SAVE_DIR stands in for the dialog)
+wait 300
+rpt new Painel Vendas: Q4/2026
+wait 100
+rpt asof 2026-10-31
+rpt add kpi net_revenue
+rpt add line net_revenue month
+rpt add bar net_revenue region
+rpt add table orders region
+rpt add text Notas|- só texto
+rpt await
+wait 400
+rpt uisave
+wait 200
+rpt exportas pdf
+rpt exportas png
+rpt select v3
+rpt exportas csv v3
+rpt exportas xlsx
+rpt exportas html
+wait 100
+aboutstate
+rpt exportas cardpng v3
+rpt set title Painel alterado
+rpt uisave
+wait 200
+quit

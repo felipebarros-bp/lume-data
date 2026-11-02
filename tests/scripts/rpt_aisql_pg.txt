@@ -1,0 +1,22 @@
+# The assistant's SQL on PostgreSQL through a SELECT-only login (BL-051)
+wait 300
+dnode "pg main"
+awaitconn "pg main" 30000
+rpt new Vendas PG
+wait 100
+invoke report.assistant
+wait 200
+rpt ai ask PGREPORT vendas por região
+rpt ai schema conn pg main
+rpt ai schema state
+rpt ai schema aiconn pg ai-ro
+rpt ai schema allow
+rpt await 30000
+rpt ai schema state
+rptstate
+rpt ai steps
+rpt ai approve
+rpt await 30000
+wait 300
+rptstate
+quit

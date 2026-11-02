@@ -1,0 +1,21 @@
+# OUT-017: a table-editor batch that fails on the server (duplicate primary key): the Output
+# shows the statement failure and the rollback as separate, linked events
+wait 400
+dnode orders
+wait 200
+dcell 0 0
+wait 100
+type 2
+key Return
+wait 100
+button "Review and apply"
+wait 200
+button "Apply "
+wait 300
+shot build/ui/edit_tx_failed.bmp
+button Close
+wait 100
+key cmd+shift+o
+wait 200
+shot build/ui/output_tx_rollback.bmp
+quit

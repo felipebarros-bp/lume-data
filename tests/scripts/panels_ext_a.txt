@@ -1,0 +1,30 @@
+# PNL-047, first launch: a module for a non-SQL language (Markdown) adds panels through the
+# extension API; they are shown from the palette, use their own context-menu items, move like
+# any panel, and report visibility through the lifecycle hook
+wait 500
+key cmd+shift+p
+type "show and focus outline"
+key Return
+wait 300
+key cmd+shift+p
+type "show and focus markdown stats"
+key Return
+wait 300
+shot build/ui/pnl_ext_shown.bmp
+rbutton "tab:Outline"
+wait 150
+shot build/ui/pnl_ext_menu.bmp
+menu "Copy outline"
+wait 150
+rbutton "tab:Outline"
+wait 100
+menu "Move to"
+wait 100
+menu "Left"
+wait 300
+key cmd+shift+p
+type "hide markdown stats"
+key Return
+wait 300
+shot build/ui/pnl_ext_moved.bmp
+quit

@@ -1,0 +1,6 @@
+# a corrupt toolbar.json: set aside, defaults in use, queries still run (TBR-052)
+wait 600
+tbstate
+invoke sql.run
+wait 500
+quit

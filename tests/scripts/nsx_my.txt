@@ -1,0 +1,9 @@
+# MySQL: Databases as namespaces; SQLite keeps its tree
+wait 500
+dnode "shop MySQL"
+nsx "shop MySQL" await
+nsx "shop MySQL" state
+nsx "shop MySQL" menu Databases
+nsx "Demo (in-memory)" state
+shot build/ui/nsx_mysql.bmp
+quit

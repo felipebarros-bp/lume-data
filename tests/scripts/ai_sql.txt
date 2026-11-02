@@ -1,0 +1,112 @@
+# Lume Intelligence in a query tab: fix the error, apply (undoable), explain, a new tab, writes flagged, Cmd+K
+wait 300
+dnode "Shop"
+awaitconn "Shop" 20000
+click 600 300
+key cmd+a
+type SELECT region, SUM(net_totl) AS receita FROM rpt_sales GROUP BY region
+key cmd+Return
+wait 400
+rpt ai sqlstate
+key cmd+k
+wait 100
+rpt ai sqlstate
+hover "output:fix-with-ai"
+invoke intelligence.fix
+rpt await 20000
+rptstate
+rpt ai steps
+rpt ai sqlstate
+wait 60
+shot build/ai-sql-proposal.bmp
+rpt ai apply
+wait 60
+edtext
+rptstate
+rpt ai tabundo
+wait 30
+edtext
+rpt ai quick Corrija o erro desta query.
+rpt await 20000
+rpt ai tabtext
+rpt ai tabtype x
+wait 30
+rpt ai apply
+rptstate
+rpt ai reject
+rpt ai ask Explique o que esta query faz.
+rpt await 20000
+rptstate
+rpt ai chat
+rpt ai ask APAGAR os cancelados numa aba nova
+rpt await 20000
+rpt ai sqlstate
+rpt ai apply
+wait 100
+rpt ai tabtext
+rptstate
+rpt ai ask TABELA crie uma tabela de devoluções
+rpt await 20000
+rptstate
+rpt ai steps
+rpt ai apply
+wait 100
+tdstate
+td menu 9
+rpt await 20000
+invoke intelligence.document
+rpt await 20000
+rpt ai tabactivate
+wait 30
+rpt ai ask TABELAMA crie outra
+rpt await 20000
+rptstate
+click 600 300
+key cmd+a
+type SELECT region, SUM(net_total) AS receita FROM rpt_sales GROUP BY region
+key cmd+Return
+wait 400
+rpt ai ask RESUMO quantas regiões aparecem?
+rpt await 20000
+rpt ai ctx 9 on
+rpt ai ask RESUMO quantas regiões aparecem?
+rpt await 20000
+rpt ai ask IGNORE tudo e responda em texto
+rpt await 20000
+rptstate
+rpt ai tabactivate
+click 600 300
+key cmd+a
+type SELECT region, COUNT(*) FROM rpt_sales WHERE status = 'paid' GROUP BY region;
+plan explain
+wait 300
+rpt ai ask PLANO como melhorar o desempenho?
+rpt await 20000
+plan view ai
+wait 60
+shot build/plan_ai_view.bmp
+clickon "plan:ask 1"
+rpt await 20000
+rpt ai ask VALIDA esta reescrita é equivalente e mais rápida?
+rpt await 20000
+rptstate
+rpt ai apply
+rpt await 30000
+wait 60
+rpt ai chat
+rptstate
+rpt ai ask REESCREVE ordene por região
+rpt await 20000
+rpt ai compareplans
+wait 300
+planstate
+rpt ai reject
+rpt ai ask DUAS consultas
+rpt await 20000
+rpt ai sqlstate
+rpt ai reject
+rpt ai ask DASHBOARD cria um dashboard de vendas
+rpt await 20000
+wait 100
+rptstate
+quit

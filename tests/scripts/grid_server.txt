@@ -1,0 +1,34 @@
+# table preview: header menu with captions, server-side sort and filter, freeze + wrap
+wait 400
+dnode orders
+wait 200
+rhead 2
+shot build/ui/headmenu.bmp
+wait 100
+menu "Sort on Server, Desc"
+wait 300
+shot build/ui/srvsort.bmp
+rcell 0 2
+wait 100
+menu "Sort & Filter"
+wait 100
+menu "Filter on Server"
+wait 100
+type 1200
+key Return
+wait 300
+shot build/ui/srvfilter.bmp
+rcell 0 0
+wait 100
+menu "View  "
+wait 100
+menu "Freeze Columns"
+wait 100
+rcell 0 0
+wait 100
+menu "View  "
+wait 100
+menu "Wrap Text"
+wait 100
+shot build/ui/layout.bmp
+quit

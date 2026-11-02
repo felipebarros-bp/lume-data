@@ -1,0 +1,61 @@
+# context menu on a query result (read-only reason), keyboard-opened menu, toolbar overflow in a narrow panel
+# (720 pt window with Output split beside Results (PNL-011): the narrow Results folds Columns behind "More")
+wait 400
+click 600 300
+key cmd+a
+type SELECT 1 AS a, 'x' AS b, 2.5 AS c;
+key cmd+Return
+wait 400
+rcell 0 1
+wait 100
+shot build/ui/menu_readonly.bmp
+key Escape
+wait 100
+cell 0 0
+key shift+F10
+wait 100
+shot build/ui/menu_keyboard.bmp
+key Down
+key Down
+key Right
+wait 150
+shot build/ui/submenu_keyboard.bmp
+key Left
+key Escape
+wait 100
+rcell 0 1
+wait 100
+menu "Sort & Filter"
+wait 150
+shot build/ui/submenu_cascade.bmp
+key Escape
+key Escape
+wait 100
+resize 760 700
+wait 300
+rcell 0 2
+wait 100
+menu "Chart, Transpose"
+wait 150
+shot build/ui/submenu_left.bmp
+key Escape
+key Escape
+wait 100
+resize 720 700
+wait 300
+rbutton "tab:Output"
+wait 100
+menu "Split"
+wait 100
+menu "New group on the right"
+wait 200
+button "tab:Results"
+wait 150
+shot build/ui/toolbar_narrow.bmp
+button More
+wait 150
+shot build/ui/toolbar_more.bmp
+key Escape
+resize 1280 820
+wait 300
+quit

@@ -1,0 +1,119 @@
+# Source Control on screen (GIT-*): uses tests/git_setup.sh; WORK = "<dir>/work repo"
+wait 300
+git open WORK
+git show
+git await
+gitstate
+git openfile sql/v_revenue.sql
+git type -- reviewed|
+gitstate
+git save
+git refresh
+git await
+gitstate
+git openfile notes.md
+git type a new first line|
+git save
+git stage sql/v_revenue.sql
+git await
+git message feat: review the revenue view|Adds a header comment.
+git commit
+git await
+gitstate
+git diff work notes.md
+git await
+gitstate
+git stagehunk 0
+git await
+gitstate
+git openfile notes.md
+git type unsaved edit|
+gitstate
+git pull
+gitstate
+git cancel
+gitstate
+git save
+git refresh
+git await
+git stageall
+git await
+git message docs: notes
+git commit
+git await
+git push
+git await
+gitstate
+git fetch
+git await
+gitstate
+git pull
+git await
+gitstate
+git pullmode merge
+git pull
+git await
+gitstate
+git push
+git await
+gitstate
+git branch feature/relatório
+git await
+gitstate
+git switch main
+git await
+git openfile notes.md
+git switch feature-x
+git await
+wait 1200
+edtext
+gitstate
+git switch main
+git await
+wait 1200
+git merge conflict-a
+git await
+gitstate
+git abortmerge
+git confirm
+git await
+gitstate
+git openfile notes.md
+git type discard me|
+git save
+git refresh
+git await
+git discard notes.md
+gitstate
+git confirm
+git await
+wait 1000
+gitstate
+git openfile notes.md
+git type stash me|
+git save
+git refresh
+git await
+git stash
+git await
+git view stash
+git await
+gitstate
+git stashpop
+git await
+gitstate
+git remoteadd corp https://isa:ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345@git.example.invalid/team/repo.git
+git confirm
+git await
+gitstate
+git fetch
+git await
+gitstate
+git view history
+git await
+gitstate
+git init NEWPROJ
+git confirm
+git await
+gitstate
+quit

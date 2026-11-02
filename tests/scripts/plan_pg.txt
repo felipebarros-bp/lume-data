@@ -1,0 +1,51 @@
+# Execution plan on PostgreSQL: estimated, actual after confirmation, PROD refuses an actual plan of an UPDATE, AI through a loopback mock, index -> designer
+wait 500
+dnode "syn A"
+wait 1500
+type SELECT c.city, count(*) FROM lume_pl.orders o JOIN lume_pl.customers c ON c.id = o.customer_id WHERE o.status = 'open' AND o.total > 100 GROUP BY c.city ORDER BY 2 DESC
+wait 200
+invoke sql.explain
+wait 2000
+planstate
+invoke sql.explain_analyze
+wait 400
+tbmodal
+button "Analyze"
+wait 2500
+planstate
+plan compare 1
+wait 300
+shot build/ui/plan_compare.bmp
+planstate
+plan view findings
+wait 300
+shot build/ui/plan_findings.bmp
+plan view ai
+plan ai preview
+plan ai share sql
+plan ai preview
+plan ai send which operator dominates?
+wait 2500
+planstate
+shot build/ui/plan_ai.bmp
+plan ai open 1
+wait 300
+plan index 1
+wait 2500
+tdstate
+dnode "syn PROD"
+wait 1500
+key cmd+a
+type UPDATE lume_pl.orders SET total = total WHERE id = 1
+wait 200
+invoke sql.explain_analyze
+wait 800
+planstate
+plan ai compare 1
+wait 2500
+planstate
+plan current cmp
+plan hypo 1
+wait 2500
+planstate
+quit

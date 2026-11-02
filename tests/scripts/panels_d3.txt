@@ -1,0 +1,4 @@
+# part D, third launch on a corrupt layout.json: default layout, file kept as .bad-*
+wait 600
+shot build/ui/pnl_corrupt_recovered.bmp
+quit

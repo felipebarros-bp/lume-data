@@ -1,0 +1,31 @@
+SQL_ID  a069tbs5s4xd0, child number 1
+-------------------------------------
+SELECT /*+ gather_plan_statistics */ c.city, COUNT(*) FROM pl_orders o
+JOIN pl_customers c ON c.id = o.customer_id WHERE o.status = 'open' AND
+o.total > 100 GROUP BY c.city ORDER BY 2 DESC
+
+Plan hash value: 2983321892
+
+---------------------------------------------------------------------------------------------------------------------------
+| Id  | Operation             | Name         | Starts | E-Rows | A-Rows |   A-Time   | Buffers |  OMem |  1Mem | Used-Mem |
+---------------------------------------------------------------------------------------------------------------------------
+|   0 | SELECT STATEMENT      |              |      1 |        |      5 |00:00:00.01 |      71 |       |       |          |
+|   1 |  SORT ORDER BY        |              |      1 |   1788 |      5 |00:00:00.01 |      71 |  2048 |  2048 | 2048  (0)|
+|   2 |   HASH GROUP BY       |              |      1 |   1788 |      5 |00:00:00.01 |      71 |  1004K|  1004K|          |
+|*  3 |    HASH JOIN          |              |      1 |   1788 |   1788 |00:00:00.01 |      71 |  2546K|  2546K| 1737K (0)|
+|*  4 |     TABLE ACCESS FULL | PL_ORDERS    |      1 |   1788 |   1788 |00:00:00.01 |      65 |       |       |          |
+|   5 |     VIEW              | VW_GBF_7     |      1 |   2000 |   2000 |00:00:00.01 |       6 |       |       |          |
+|   6 |      TABLE ACCESS FULL| PL_CUSTOMERS |      1 |   2000 |   2000 |00:00:00.01 |       6 |       |       |          |
+---------------------------------------------------------------------------------------------------------------------------
+
+Predicate Information (identified by operation id):
+---------------------------------------------------
+
+   3 - access("ITEM_1"="O"."CUSTOMER_ID")
+   4 - filter(("O"."STATUS"='open' AND "O"."TOTAL">100))
+
+Note
+-----
+   - dynamic statistics used: dynamic sampling (level=2)
+   - statistics feedback used for this statement
+

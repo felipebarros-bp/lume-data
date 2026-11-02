@@ -1,0 +1,46 @@
+# OBJ-021 rename, OBJ-066 compare with another connection, OBJ-043 several objects in one plan
+wait 500
+dnode "Shop"
+wait 300
+dnode "RO copy"
+wait 400
+objopen "Shop" view main v_top
+wait 800
+key cmd+a
+type "CREATE VIEW v_top AS SELECT r.id, r.amount, 'r' AS tag FROM v_revenue r"
+wait 300
+key cmd+End
+button "obj:more"
+wait 150
+menu "Rename Symbol"
+wait 200
+key cmd+a
+type "rev"
+wait 200
+shot build/ui/obj_rename.bmp
+button "rename:apply"
+wait 300
+objstate
+button "obj:more"
+wait 150
+menu "Compare With RO copy"
+wait 900
+objstate
+shot build/ui/obj_compare_other.bmp
+button "diff:close"
+wait 200
+objopen "Shop" view main v_revenue
+wait 800
+key cmd+a
+type "CREATE VIEW v_revenue AS SELECT id, amount + 1 AS amount FROM sales"
+wait 300
+button "obj:more"
+wait 150
+menu "Review All Changes"
+wait 400
+objstate
+shot build/ui/obj_batch.bmp
+button "batch:apply"
+wait 2000
+objstate
+quit

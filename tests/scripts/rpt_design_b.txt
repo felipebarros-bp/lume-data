@@ -1,0 +1,17 @@
+# run 2: the team's theme is locked, so the assistant may not restyle the report
+wait 300
+rpt new Marca
+wait 100
+rpt asof 2026-10-31
+rpt add kpi net_revenue
+rpt await
+rpt theme open __OUT__/brand.lrtheme
+rpt theme state
+invoke report.assistant
+wait 200
+rpt select
+rpt ai ask DESIGN deixe com cara de dashboard executivo
+rpt await 20000
+rptstate
+rpt theme state
+quit

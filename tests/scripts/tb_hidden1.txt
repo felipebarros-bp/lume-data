@@ -1,0 +1,8 @@
+# TBR-006: hidden toolbar: menus and shortcuts keep working; the preference survives a restart
+wait 600
+invoke toolbar.toggle
+wait 200
+tbstate
+key cmd+Return
+wait 500
+quit

@@ -1,0 +1,44 @@
+# table editing (US-032..035): edit a cell, delete a row, add a row, review the SQL, apply in a transaction
+wait 400
+dnode orders
+wait 200
+dcell 0 3
+wait 100
+type shipped
+key Return
+wait 100
+cell 1 0
+key cmd+BackSpace
+wait 100
+rcell 2 1
+wait 100
+shot build/ui/edit_menu.bmp
+menu "Add Row"
+wait 300
+key Right
+key Return
+type 2
+key Tab
+type 50
+key Tab
+type new
+key Return
+wait 100
+shot build/ui/edit_pending.bmp
+export build/ui/pending_export.csv
+wait 100
+key cmd+w
+wait 100
+shot build/ui/close_confirm.bmp
+button "Keep open"
+wait 100
+button "Review and apply"
+wait 200
+shot build/ui/edit_review.bmp
+button "Apply "
+wait 400
+shot build/ui/edit_applied.bmp
+key cmd+shift+o
+wait 200
+shot build/ui/output_tx_commit.bmp
+quit

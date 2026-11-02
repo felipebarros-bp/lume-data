@@ -1,0 +1,26 @@
+wait 300
+invoke report.assistant
+rpt ai setup
+rpt ai provider openai
+rpt ai removekey
+wait 200
+rpt ai setupstate
+rpt ai key sk-oa-test
+rpt ai models
+rpt await 15000
+rpt ai setupstate
+rpt ai pickmodel 1
+rpt ai test
+rpt await 15000
+rpt ai setupstate
+rpt ai save
+wait 300
+rpt ai setupstate
+rpt ai setup
+wait 200
+rpt ai test
+rpt await 15000
+rpt ai setupstate
+rpt ai removekey
+rpt ai setupstate
+quit

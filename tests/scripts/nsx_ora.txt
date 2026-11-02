@@ -1,0 +1,32 @@
+# Oracle: ALL_USERS pages (page size 10, system accounts shown), search, filter, probe
+wait 500
+dnode "ora DEV"
+wait 2000
+nsx "ora DEV" await 40000
+nsx "ora DEV" state
+nsx "ora DEV" option page_size 10
+nsx "ora DEV" system 1
+nsx "ora DEV" await
+nsx "ora DEV" expand
+nsx "ora DEV" await
+nsx "ora DEV" state
+nsx "ora DEV" more
+nsx "ora DEV" await
+nsx "ora DEV" state
+nsx "ora DEV" search SYS
+wait 400
+nsx "ora DEV" await
+nsx "ora DEV" state
+nsx "ora DEV" close-search
+nsx "ora DEV" system 0
+nsx "ora DEV" await
+nsx "ora DEV" expand
+nsx "ora DEV" await
+nsx "ora DEV" state
+nsx "ora DEV" probe SYSTEM
+nsx "ora DEV" await
+nsx "ora DEV" props SYSTEM
+nsx "ora DEV" props
+shot build/ui/nsx_ora.bmp
+nsx "ora DEV" option page_size 100
+quit

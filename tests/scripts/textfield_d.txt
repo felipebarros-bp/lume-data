@@ -1,0 +1,36 @@
+# Right-click menu of a text field (connection dialog: its database search): Select All, Copy, Paste, Undo, Delete,
+# and a click outside the selection moving the caret first
+wait 500
+key cmd+shift+n
+wait 200
+type minha conexao local
+rclick 420 262
+wait 150
+shot build/ui/tf_menu.bmp
+menu "Select All"
+wait 100
+fieldstate
+rclick 420 262
+wait 150
+menu "Copy"
+wait 100
+key cmd+right
+type " "
+rclick 600 262
+wait 150
+menu "Paste"
+wait 100
+fieldstate
+rclick 600 262
+wait 150
+menu "Undo"
+wait 100
+fieldstate
+key cmd+a
+rclick 420 262
+wait 150
+menu "Delete"
+wait 100
+fieldstate
+key escape
+quit

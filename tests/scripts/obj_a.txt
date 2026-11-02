@@ -1,0 +1,40 @@
+# Object editor, SQLite (AT-01): Explorer objects, open a view definition, edit, draft, format, review, apply
+wait 600
+dnode "Shop"
+wait 400
+node "Objects"
+wait 600
+shot build/ui/obj_explorer.bmp
+rnode "v_revenue"
+wait 200
+shot build/ui/obj_menu.bmp
+menu "Open Definition"
+wait 800
+objstate
+shot build/ui/obj_opened.bmp
+key cmd+a
+type "CREATE VIEW v_revenue AS select id, amount * 2 as amount from sales"
+wait 400
+objstate
+button "obj:save-draft"
+wait 200
+objstate
+key cmd+Return
+wait 200
+button "obj:format"
+wait 150
+menu "Format Document"
+wait 300
+objstate
+shot build/ui/obj_edited.bmp
+invoke obj.submit_review
+wait 300
+button "obj:apply"
+wait 800
+objstate
+shot build/ui/obj_review.bmp
+button "review:apply"
+wait 1000
+objstate
+shot build/ui/obj_applied.bmp
+quit

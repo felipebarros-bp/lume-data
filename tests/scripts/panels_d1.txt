@@ -1,0 +1,14 @@
+# part D, first launch: rearrange and save a named layout (PNL-030 / 033)
+wait 500
+rbutton "tab:Output"
+wait 100
+menu "Move to"
+wait 100
+menu "Right"
+wait 150
+button "collapse:Explorer"
+wait 150
+key cmd+4
+wait 150
+shot build/ui/pnl_before_restart.bmp
+quit

@@ -1,0 +1,31 @@
+# Scenarios 1 and 5, ABOUT-027: no duplicate, keyboard, Esc, the SQL tab untouched and focused again
+wait 500
+key cmd+a
+type "SELECT 42"
+wait 200
+edtext
+button "menubar:brand"
+wait 300
+invoke app.about.open
+wait 300
+aboutstate
+key Tab
+wait 100
+aboutstate
+key Tab
+key Return
+wait 200
+aboutstate
+hover "about:Release Notes"
+wait 200
+aboutstate
+shot build/ui/about_kb.bmp
+key Escape
+wait 200
+aboutstate
+edtext
+type "1"
+wait 200
+edtext
+palettedump "about"
+quit

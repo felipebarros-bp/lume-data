@@ -1,0 +1,10 @@
+# PNL-011, second launch: the three lanes come back from layout.json; then Output leaves its
+# lane through the palette and the emptied lane goes away (the tree is normalised)
+wait 600
+shot build/ui/pnl_lane_restored.bmp
+key cmd+shift+p
+type "move output to the bottom"
+key Return
+wait 300
+shot build/ui/pnl_lane_normalised.bmp
+quit

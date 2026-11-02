@@ -1,0 +1,5 @@
+# PNL-047, third launch with the module disabled: the saved layout names its panels, they are
+# ignored without a dangling reference and the rest of the layout loads
+wait 600
+shot build/ui/pnl_ext_disabled.bmp
+quit

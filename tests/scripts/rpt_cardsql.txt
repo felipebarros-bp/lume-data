@@ -1,0 +1,28 @@
+# the selected card's query in the properties panel
+wait 300
+rpt new Painel SQL
+wait 100
+rpt asof 2026-10-31
+rpt addsql shop1 SELECT status AS label, COUNT(*) AS value FROM rpt_sales GROUP BY status
+rpt await
+wait 400
+rpt cardsql state
+rpt cardsql set SELECT region AS label, COUNT(*) AS value FROM rpt_sales GROUP BY region
+rpt cardsql apply
+rpt await
+wait 400
+rpt cardsql state
+rpt cardsql set SELECT nope FROM rpt_sales
+rpt cardsql apply
+rpt await
+wait 400
+rpt cardsql state
+rpt cardsql set DELETE FROM rpt_sales
+rpt cardsql apply
+wait 200
+rpt cardsql state
+rpt add kpi net_revenue
+rpt await
+wait 400
+rpt cardsql state
+quit

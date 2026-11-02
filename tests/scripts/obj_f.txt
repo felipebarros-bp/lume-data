@@ -1,0 +1,35 @@
+# OBJ-021: Extract Subquery to CTE (preview, then one undo step)
+wait 500
+dnode "Shop"
+wait 400
+objopen "Shop" view main v_top
+wait 800
+key cmd+a
+type "CREATE VIEW v_top AS SELECT r.id FROM (SELECT id, amount FROM sales WHERE amount > 0) r"
+wait 300
+edselect "(SELECT id, amount FROM sales WHERE amount > 0)"
+button "obj:more"
+wait 150
+menu "Extract Subquery to CTE"
+wait 200
+key cmd+a
+type "big"
+wait 200
+shot build/ui/obj_extract_cte.bmp
+button "refactor:apply"
+wait 300
+edtext
+key cmd+z
+wait 200
+edtext
+key cmd+a
+type "CREATE VIEW v_top AS SELECT id, amount, msg FROM sales s JOIN log l ON 1 = 1"
+wait 300
+button "obj:more"
+wait 150
+menu "Qualify Columns"
+wait 300
+button "refactor:apply"
+wait 300
+edtext
+quit

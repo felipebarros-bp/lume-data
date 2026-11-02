@@ -1,0 +1,65 @@
+# V2/V3: foreign key navigation, chart, transposed tab, compare, binary / geometry viewer, links
+wait 400
+dnode orders
+wait 200
+dragcells 0 1 3 2
+wait 100
+rcell 2 1
+wait 100
+menu "Chart, Transpose"
+wait 100
+menu "Chart Selection"
+wait 200
+shot build/ui/chart.bmp
+key Escape
+rcell 2 1
+wait 100
+menu "Chart, Transpose"
+wait 100
+menu "Transpose Selected"
+wait 200
+shot build/ui/transposed.bmp
+click 600 300
+key cmd+a
+type SELECT id, customer_id, total * 2 AS total, status FROM orders WHERE id <= 10;
+key cmd+alt+Return
+wait 200
+rcell 0 0
+wait 100
+menu "Chart, Transpose"
+wait 100
+menu "Compare with Another"
+wait 100
+shot build/ui/cmpmenu.bmp
+menu "#2"
+wait 200
+shot build/ui/compare.bmp
+click 600 300
+key cmd+a
+type SELECT X'424d460000000000000036000000280000000200000002000000010018000000000010000000130b0000130b000000000000000000000000ff00ff0000000000ff00ff000000' AS img, 'SRID=4326;POLYGON((0 0,4 0,4 3,0 3,0 0),(1 1,2 1,2 2,1 1))' AS geom, 'https://example.com/docs' AS link UNION ALL SELECT X'89504e470d0a1a0a0000000d49484452000000040000000308020000003b9639910000002b4944415478da63fccfc0c008c69c9c5c4c4c4ccc2c6c6cec1c5c8c40467252e2b91b8fce1dd9c5252207009a71098f68a978250000000049454e44ae426082', 'POINT(-34.9 -8.05)', 'plain text';
+key cmd+Return
+wait 300
+dcell 0 0
+wait 200
+shot build/ui/binary.bmp
+key Escape
+dcell 1 0
+wait 200
+shot build/ui/png.bmp
+key Escape
+dcell 0 1
+wait 200
+shot build/ui/geometry.bmp
+key Escape
+rcell 0 2
+wait 100
+shot build/ui/linkmenu.bmp
+key Escape
+dnode orders
+wait 200
+rcell 1 1
+wait 100
+menu "Go to customers"
+wait 300
+shot build/ui/fk.bmp
+quit

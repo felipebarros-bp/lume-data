@@ -1,0 +1,111 @@
+# Main toolbar, part A (SQLite): place and size (TBR-001), groups (002), hide / compact (006 / 007),
+# Run semantics (017 / 018 / 019 / 025), schema on SQLite (010), datasource per tab (008 / 009),
+# the Explorer selection never redirects Run (spec 9, Gherkin 1), Panels (036), overflow (040),
+# keyboard (047), context menu (038), tooltips (044)
+wait 600
+tbstate
+where "tb:run"
+where "tab:Explorer"
+invoke toolbar.toggle
+wait 200
+tbstate
+where "tab:Explorer"
+invoke toolbar.toggle
+wait 200
+invoke toolbar.compact
+wait 200
+tbstate
+invoke toolbar.compact
+wait 200
+button "edtab:query.sql"
+key cmd+a
+type "SELECT 1 AS a;"
+key Return
+type "SELECT 2 AS b;"
+button "tb:run"
+wait 500
+invoke sql.run_selection
+key shift+left
+key shift+left
+key shift+left
+invoke sql.run_selection
+wait 200
+tbstate
+shot build/ui/tb_partial.bmp
+button "Cancel"
+wait 200
+key right
+button "tb:menu:run"
+wait 200
+shot build/ui/tb_runmenu.bmp
+menu "Run All in File (2 statements)"
+wait 600
+invoke sql.run
+invoke sql.run
+wait 600
+button "tb:schema"
+wait 200
+shot build/ui/tb_sqlite_schema.bmp
+key escape
+wait 100
+invoke sql.new
+wait 200
+button "tb:datasource"
+wait 200
+type "sec"
+wait 150
+shot build/ui/tb_ds_search.bmp
+button "ds:Second"
+wait 500
+tbstate
+button "edtab:query.sql"
+wait 200
+tbstate
+node "Second"
+wait 200
+invoke sql.run
+wait 500
+tbstate
+button "tb:panels"
+wait 200
+shot build/ui/tb_panels_menu.bmp
+menu "Query History"
+wait 300
+where "tab:Query History"
+invoke toolbar.labels
+invoke toolbar.customize
+wait 200
+button "Advanced"
+button "Save"
+wait 200
+resize 720 640
+wait 500
+tbstate
+key escape
+resize 1280 820
+wait 400
+invoke toolbar.labels
+key ctrl+f5
+wait 150
+tbstate
+key right
+key right
+key down
+wait 200
+tbstate
+key escape
+key escape
+wait 150
+tbstate
+rclick 980 50
+wait 150
+menu "Compact Mode"
+wait 150
+tbstate
+invoke toolbar.compact
+wait 100
+hover "tb:run"
+wait 800
+tbstate
+shot build/ui/tb_tooltip.bmp
+quit

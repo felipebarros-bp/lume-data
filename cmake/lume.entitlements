@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Hardened runtime entitlements of Lume Data.app (needed for notarization).
+     disable-library-validation: Lume loads the database client libraries the user installed
+     (libpq, Oracle Instant Client, MySQL / MariaDB, FreeTDS) with dlopen at run time; they are
+     signed by their own vendors (or not at all), never by Lume's team. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.disable-library-validation</key><true/>
+</dict>
+</plist>

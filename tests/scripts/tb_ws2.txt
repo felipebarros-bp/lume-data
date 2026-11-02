@@ -1,0 +1,12 @@
+# restart: the customization comes back from toolbar.json (TBR-042); Reset Toolbar asks with its
+# scope, then restores the defaults without restarting (TBR-043)
+wait 600
+tbstate
+invoke toolbar.reset
+wait 200
+tbstate
+shot build/ui/tb_reset_confirm.bmp
+button "Reset Toolbar"
+wait 300
+tbstate
+quit

@@ -1,0 +1,12 @@
+# TBR-039 / 041 / 042: customize (hide Schema), saved; then the export (052)
+wait 600
+invoke toolbar.customize
+wait 300
+button "cust:schema"
+wait 100
+button "Save"
+wait 300
+tbstate
+invoke toolbar.export
+wait 200
+quit

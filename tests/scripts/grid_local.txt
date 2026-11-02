@@ -1,0 +1,29 @@
+# partial result + local filter: Local badge, Filter (1) state, "· partial" tab badge, export note, chart note
+wait 400
+click 600 300
+key cmd+a
+type WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c LIMIT 5000) SELECT x, x % 7 AS k, 'row ' || x AS label FROM c;
+key cmd+Return
+wait 500
+rcell 2 1
+wait 100
+menu "Sort & Filter"
+wait 100
+menu "Filter by This Value"
+wait 300
+shot build/ui/local_filter.bmp
+key cmd+shift+e
+wait 200
+shot build/ui/local_export.bmp
+key Escape
+dragcells 0 1 3 2
+wait 100
+rcell 2 1
+wait 100
+menu "Chart, Transpose"
+wait 100
+menu "Chart Selection"
+wait 200
+shot build/ui/local_chart.bmp
+key Escape
+quit

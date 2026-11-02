@@ -1,0 +1,27 @@
+# Text field: horizontal scroll keeps the caret visible; double-click selects a word, triple-click all
+wait 500
+key cmd+shift+p
+type the quick brown fox jumps over the lazy dog while the slow green turtle watches from the river bank and counts every single leaf falling END
+wait 150
+shot build/ui/tf_scroll_end.bmp
+fieldstate
+key cmd+left
+wait 150
+shot build/ui/tf_scroll_start.bmp
+fieldstate
+dblclick 390 98
+wait 150
+shot build/ui/tf_dbl.bmp
+fieldstate
+tripleclick 390 98
+wait 150
+shot build/ui/tf_triple.bmp
+fieldstate
+key cmd+a
+type "query focus"
+wait 150
+click 640 136
+wait 300
+shot build/ui/tf_row_click.bmp
+fieldstate
+quit

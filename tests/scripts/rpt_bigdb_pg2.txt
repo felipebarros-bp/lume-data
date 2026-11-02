@@ -1,0 +1,19 @@
+# a second session: the structure consent and the index are remembered for this connection
+wait 300
+dnode "pg big"
+awaitconn "pg big" 30000
+rpt new Outra
+wait 100
+invoke report.assistant
+wait 200
+rpt ai schema conn pg big
+rpt ai ask BIGDB quanto pagamos de honorários
+rptstate
+rpt await 60000
+rptstate
+rpt ai sxscope block 
+rpt ai ask BIGDB quanto gastamos com prestadores
+rpt await 60000
+rpt ai ask BIGDB entradas de mercadoria recebidas
+rpt await 60000
+quit

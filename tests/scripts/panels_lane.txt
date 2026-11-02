@@ -1,0 +1,30 @@
+# PNL-011: a split across the region's axis. Output dragged onto the right side of the Explorer
+# group (preview shown), Inspector split side by side from the menu (no drag), the lane
+# splitter dragged, and Output moved back out (the emptied lane goes away)
+wait 500
+hold "tab:Output"
+move 220 250
+move 255 300
+wait 150
+shot build/ui/pnl_lane_preview.bmp
+release 255 300
+wait 300
+shot build/ui/pnl_lane_split.bmp
+key cmd+shift+p
+type "show and focus inspector"
+key Return
+wait 300
+rbutton "tab:Inspector"
+wait 100
+menu "Move to"
+wait 100
+menu "Left"
+wait 300
+rbutton "tab:Inspector"
+wait 100
+menu "Split"
+wait 100
+menu "Side by side, on the right"
+wait 300
+shot build/ui/pnl_lane_three.bmp
+quit

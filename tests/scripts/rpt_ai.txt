@@ -1,0 +1,50 @@
+# Report Studio + Lume Intelligence through the loopback mock
+wait 300
+rpt new Dashboard comercial
+wait 100
+rpt asof 2026-10-31
+rpt ai payload
+rpt ai ask Mostre o faturamento
+rptstate
+rpt ai choose 0
+rpt await
+invoke report.assistant
+wait 400
+shot build/ui/rpt_ai_plan.bmp
+rptstate
+rpt ai approve
+rpt await
+rptstate
+rpt select v2
+rpt ai ask Troque para barras
+rpt await
+rptstate
+rpt ai approve
+rpt await
+rptstate
+rpt ai undo
+wait 300
+rptstate
+rpt select
+rpt ai ask INJECT receita
+rpt await
+rptstate
+rpt ai ask PROSA receita
+rpt await
+rptstate
+rpt select v2
+rpt ai ask STALE troque para barras
+rpt await
+rptstate
+rpt select
+rpt ai ask Receita líquida dos últimos 12 meses
+rpt await
+rptstate
+rpt ai refuse
+rptstate
+rpt ai ctx 5 on
+rpt select v1
+rpt ai payload
+rpt ai disable
+rptstate
+quit

@@ -1,0 +1,4 @@
+# part D, second launch: the same arrangement comes back without reconnecting or rerunning
+wait 600
+shot build/ui/pnl_after_restart.bmp
+quit

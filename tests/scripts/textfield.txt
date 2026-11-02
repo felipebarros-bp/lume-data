@@ -1,0 +1,40 @@
+# Text field editing model (ui.c), driven through the command palette's field:
+# word moves, Shift selection, replace, undo / redo, line delete, clipboard
+wait 500
+key cmd+shift+p
+type hello world foo
+key alt+left
+key alt+left
+key shift+alt+right
+type there
+wait 150
+shot build/ui/tf_replace.bmp
+fieldstate
+key cmd+z
+wait 150
+shot build/ui/tf_undo.bmp
+fieldstate
+key cmd+shift+z
+key cmd+left
+key shift+cmd+right
+key cmd+c
+key right
+type " "
+key cmd+v
+wait 150
+shot build/ui/tf_paste.bmp
+fieldstate
+key alt+backspace
+key alt+backspace
+wait 150
+shot build/ui/tf_wordel.bmp
+fieldstate
+key cmd+backspace
+type "a.b_c-d"
+key alt+left
+key shift+home
+wait 150
+shot build/ui/tf_select.bmp
+fieldstate
+key escape
+quit

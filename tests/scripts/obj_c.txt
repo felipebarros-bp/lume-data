@@ -1,0 +1,20 @@
+# AT-10 / OBJ-067: read-only connection: edit, review explains, Apply never runs; the draft can be exported
+wait 500
+dnode "RO copy"
+wait 400
+objopen "RO copy" view main v_revenue
+wait 800
+key cmd+a
+type "CREATE VIEW v_revenue AS SELECT id FROM sales"
+wait 300
+button "obj:apply"
+wait 900
+objstate
+shot build/ui/obj_readonly.bmp
+button "review:apply"
+wait 300
+objstate
+button "review:cancel"
+wait 200
+objexport build/ui/obj_export.sql
+quit

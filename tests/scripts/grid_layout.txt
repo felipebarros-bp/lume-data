@@ -1,0 +1,18 @@
+wait 400
+click 600 300
+key cmd+a
+type SELECT 1 AS c01, 2 AS c02, 3 AS c03, 4 AS c04, 5 AS c05, 6 AS c06, 7 AS c07, 8 AS c08, 9 AS c09, 10 AS c10, 11 AS c11, 12 AS c12, 13 AS c13, 14 AS c14, 15 AS c15, 16 AS c16, 'A long piece of text that should wrap onto several lines when wrap mode is enabled in the grid' AS txt UNION ALL SELECT 21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,'short';
+key cmd+Return
+wait 200
+rhead 0
+wait 100
+menu "Freeze Columns"
+wait 100
+rhead 0
+wait 100
+menu "Wrap Text"
+wait 100
+wheel 700 700 0 -40
+wait 100
+shot build/ui/wide.bmp
+quit

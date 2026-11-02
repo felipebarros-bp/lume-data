@@ -1,0 +1,17 @@
+# SQL Server: schemas of the current database
+wait 500
+dnode "ms"
+wait 1000
+nsx "ms" await
+nsx "ms" state
+nsx "ms" system 1
+nsx "ms" await
+nsx "ms" state
+nsx "ms" search db_
+wait 400
+nsx "ms" await
+nsx "ms" state
+nsx "ms" props dbo
+nsx "ms" system 0
+nsx "ms" await
+quit

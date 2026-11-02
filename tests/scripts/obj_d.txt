@@ -1,0 +1,36 @@
+# OBJ-022 / 026 / 027 / 028 / 031 / 063: diagnostics while typing, quick fix, server validation, F8, properties
+wait 500
+dnode "Shop"
+wait 400
+objopen "Shop" view main v_revenue
+wait 800
+key cmd+a
+type "CREATE OR REPLACE VIEW v_revenue AS SELECT * FROM sales s JOIN missing_tbl m ON m.id = s.id"
+wait 600
+objstate
+shot build/ui/obj_problems.bmp
+button "obj:fix:0"
+wait 300
+shot build/ui/obj_fix_preview.bmp
+button "fix:apply"
+wait 400
+objstate
+button "obj:validate"
+wait 150
+menu "Validate on Server"
+wait 900
+objstate
+key F8
+wait 200
+button "obj:more"
+wait 150
+menu "Properties"
+wait 300
+shot build/ui/obj_props.bmp
+button "info:close"
+wait 150
+button "obj:diff"
+wait 600
+shot build/ui/obj_diff.bmp
+button "diff:close"
+quit

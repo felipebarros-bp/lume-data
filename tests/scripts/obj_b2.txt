@@ -1,0 +1,20 @@
+# OBJ-009 restore + AT-04: the draft comes back; another session changes the view; Apply shows the three-way comparison
+wait 500
+dnode "Shop"
+wait 400
+objopen "Shop" view main v_top
+wait 900
+objstate
+rawsql "Shop" DROP VIEW v_top
+rawsql "Shop" CREATE VIEW v_top AS SELECT id, amount FROM v_revenue WHERE amount > 5
+button "obj:apply"
+wait 900
+objstate
+shot build/ui/obj_conflict.bmp
+button "conflict:keep"
+wait 900
+objstate
+button "review:apply"
+wait 900
+objstate
+quit

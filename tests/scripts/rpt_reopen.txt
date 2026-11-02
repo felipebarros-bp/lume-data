@@ -1,0 +1,9 @@
+# second session: the autosave is recovered; read mode changes nothing
+wait 300
+rpt open REPORT_PATH
+rpt await
+rptstate
+rpt open REPORT_PATH read
+wait 300
+rptstate
+quit

@@ -1,0 +1,6 @@
+# part F: keymap.txt overrides a panel shortcut (PNL-036): focus_mode=Cmd+Shift+K
+wait 500
+key cmd+shift+k
+wait 150
+shot build/ui/pnl_keymap_focus.bmp
+quit

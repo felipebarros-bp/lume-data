@@ -1,0 +1,32 @@
+# run 3: the user's logo dropped on the chat becomes the theme's logo; Cmd+C copies the conversation
+wait 300
+rpt new Com logo
+wait 100
+rpt asof 2026-10-31
+rpt add kpi net_revenue
+rpt await
+invoke report.assistant
+wait 300
+drop "ai:chat" __FIX__/logo-magenta.png
+wait 60
+rpt ai attachment
+rpt select
+rpt ai ask DESIGNLOGO coloca o nosso logo e as cores dele
+rpt await 20000
+rptstate
+rpt ai steps
+rpt ai approve
+rpt await 20000
+wait 300
+rpt theme state
+rpt ai attachment
+rpt saveas
+wait 200
+rpt theme state
+rpt ai selectall
+rpt ai focus
+wait 30
+key cmd+c
+wait 30
+clipboard
+quit

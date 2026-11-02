@@ -1,0 +1,11 @@
+# the connection's context menu: New Query opens a query tab on that connection
+wait 300
+rnode "Shop"
+wait 100
+button "New Query"
+wait 300
+type SELECT count(*) AS n FROM rpt_sales;
+key cmd+Return
+wait 400
+resstate
+quit

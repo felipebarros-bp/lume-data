@@ -1,0 +1,46 @@
+# LUME-PANEL-001, part A: default regions (PNL-001), collapse to the strip and back (PNL-004 / 025),
+# drag with a preview, Esc cancels (PNL-007 / scenario 3), drop on the right edge (scenario 2),
+# Move to through the menu (PNL-008), join as a tab (PNL-009), maximize / restore (PNL-014)
+wait 500
+shot build/ui/pnl_default.bmp
+button "collapse:Results"
+wait 150
+shot build/ui/pnl_collapsed.bmp
+button "strip:Output"
+wait 150
+shot build/ui/pnl_expanded_output.bmp
+hold "tab:Output"
+move 900 420
+move 1268 420
+wait 150
+shot build/ui/pnl_drag_preview.bmp
+key Escape
+wait 50
+release 1268 420
+wait 150
+shot build/ui/pnl_drag_cancelled.bmp
+hold "tab:Output"
+move 900 420
+move 1268 420
+wait 100
+release 1268 420
+wait 200
+shot build/ui/pnl_output_right.bmp
+rbutton "tab:Output"
+wait 100
+menu "Move to"
+wait 100
+menu "Bottom"
+wait 200
+shot build/ui/pnl_output_bottom_group.bmp
+dragto "tab:Output" "tab:Results"
+wait 200
+shot build/ui/pnl_output_tab_again.bmp
+button "tab:Results"
+wait 100
+button "maximize:Results"
+wait 150
+shot build/ui/pnl_maximized.bmp
+button "maximize:Results"
+wait 150
+quit

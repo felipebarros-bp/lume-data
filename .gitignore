@@ -1,0 +1,19 @@
+# build output
+build/
+build-asan/
+.cache/
+compile_commands.json
+*.bmp
+
+# local data (test databases, connection files)
+*.db
+*.sqlite
+*.sqlite3
+
+# editor / OS / assistant
+.DS_Store
+.claude/
+
+# Markdown documents stay out of the repository for now (under review: README, LICENSING,
+# CLAUDE and docs/). Remove this line to version them.
+*.md

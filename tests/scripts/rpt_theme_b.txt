@@ -1,0 +1,13 @@
+# run 2: the theme file was edited outside: both reports follow; a local override stays local
+wait 300
+rpt openpath __OUT__/Relatorio A.lrpt
+wait 300
+rpt theme state
+rpt theme accent B42318
+rpt theme state
+rpt uisave
+wait 200
+rpt openpath __OUT__/Relatorio B.lrpt
+wait 300
+rpt theme state
+quit

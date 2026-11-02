@@ -1,0 +1,20 @@
+# TBR-050: a module's action on the toolbar; unloading the module removes it (no dangling button)
+wait 600
+key cmd+shift+p
+type "show and focus outline"
+key Return
+wait 300
+tbadd md.reload
+wait 200
+tbstate
+button "tb:md.reload"
+wait 200
+unloadmodule lume.markdown
+wait 300
+tbstate
+key cmd+shift+p
+type "reload notes"
+wait 200
+shot build/ui/tb_ext_palette.bmp
+key escape
+quit

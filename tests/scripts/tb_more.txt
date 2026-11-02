@@ -1,0 +1,92 @@
+# Main toolbar, part B (SQLite): palette search by synonym / shortcut with disabled reasons (TBR-005),
+# shortcut collisions (048), menu contents (010 / 019 / 030), execution settings (024), Switch Tab
+# (035), Quick Open (037), history Open (034), a manual transaction: a new tab does not join it
+# (003), disconnect asks (028), Commit is confirmed with the target (026), session details (015),
+# Customize preview and Cancel (039)
+wait 600
+palettedump "execute"
+palettedump "cmd enter"
+palettedump "commit"
+collisions
+button "tb:menu:run"
+wait 200
+menudump
+key escape
+wait 100
+button "tb:schema"
+wait 200
+menudump
+key escape
+wait 100
+invoke sql.exec_settings
+wait 200
+tbstate
+button "Done"
+wait 100
+invoke sql.new
+wait 200
+button "tb:datasource"
+wait 150
+type "Second"
+key Return
+wait 400
+invoke nav.switch_tab
+wait 200
+tbstate
+key Return
+wait 300
+tbstate
+invoke nav.quick_open
+wait 200
+type "orders"
+wait 150
+key Return
+wait 300
+invoke panel.history
+wait 400
+button "hist:0"
+wait 100
+button "Open"
+wait 300
+button "edtab:query.sql"
+wait 150
+invoke tx.manual
+wait 500
+tbstate
+key cmd+a
+type "CREATE TABLE tb_commit_me(a int)"
+invoke sql.run
+wait 400
+invoke sql.new
+wait 300
+tbstate
+key escape
+wait 100
+button "edtab:query.sql"
+wait 200
+invoke ds.disconnect
+wait 200
+tbmodal
+button "Cancel"
+wait 200
+tbstate
+invoke tx.commit
+wait 200
+tbmodal
+button "Commit"
+wait 600
+tbstate
+invoke ds.session
+wait 200
+tbmodal
+button "Close"
+wait 100
+invoke toolbar.customize
+wait 200
+button "Minimal"
+wait 100
+tbstate
+button "Cancel"
+wait 200
+tbstate
+quit

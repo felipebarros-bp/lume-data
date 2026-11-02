@@ -1,0 +1,15 @@
+# Regression: two connections open, the second one active, double-click a table of the first.
+# Switching the active connection rebuilds the explorer tree; the clicked node used to be read
+# after it was freed (crash in preview_table / draw_text_fit). Run under the ASan build.
+wait 400
+dnode Second
+wait 300
+shot build/ui/explorer_two_connected.bmp
+dnode orders
+wait 300
+shot build/ui/explorer_two_preview.bmp
+key Down
+key Down
+key Return
+wait 300
+quit

@@ -1,0 +1,61 @@
+# Visual Table Designer on PostgreSQL: USING, data checks, PROD policy, read-only connection, migration file
+wait 500
+dnode "syn A"
+wait 1500
+td open "syn A" lume_tdui orders
+wait 1500
+tdstate
+td col status
+td set type integer
+td set default ''
+wait 100
+tdstate
+td set using status::integer
+wait 100
+tdstate
+td col total
+td set notnull 1
+td review
+td datacheck
+wait 1500
+tdstate
+td cancel
+td set notnull 0
+td review
+td consent
+td apply
+wait 2000
+tdstate
+td table
+td addcol
+td set name mig_col
+td set type text
+td menu 2
+wait 300
+td undo
+dnode "syn PROD"
+wait 1500
+td open "syn PROD" lume_tdui prod_t
+wait 1500
+td table
+td addcol
+td set name note
+td set type text
+td review
+td apply
+wait 300
+td prodname prod_t
+td apply
+wait 2000
+tdstate
+td open "syn RO" lume_tdui orders
+wait 1500
+td table
+td addcol
+td set name ro_col
+td set type text
+td review
+td apply
+wait 500
+tdstate
+quit

@@ -1,0 +1,45 @@
+# Settings (Cmd+,): sections, the Intelligence section edits ai.txt, app settings are saved, short sections do not scroll
+wait 300
+key cmd+,
+wait 60
+settingsstate
+shot __OUT__/settings.bmp
+wheelon "settings:card" -5
+wait 20
+settingsstate
+clickon "settings:sec Query Execution"
+wait 30
+clickon "settings:fetch"
+wait 10
+key cmd+a
+type 2000
+button "Apply"
+wait 20
+clickon "settings:sec Results & Format"
+wait 30
+clickon "settings:group"
+wait 20
+clickon "settings:sec Editor"
+wait 30
+clickon "settings:tabs"
+wait 20
+clickon "settings:sec Reports"
+wait 30
+shot __OUT__/settings_reports.bmp
+clickon "settings:sec Lume Intelligence"
+wait 30
+clickon "settings:fastmodel"
+wait 20
+type claude-haiku-5-5
+wait 20
+button "Save"
+wait 60
+clickon "settings:forget shop1"
+wait 60
+key Escape
+wait 30
+settingsstate
+nativesettings
+wait 30
+settingsstate
+quit

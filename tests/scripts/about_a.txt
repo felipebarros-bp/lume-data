@@ -1,0 +1,23 @@
+# About Lume Data: open from the brand, real info, keyboard, Copy Info, licenses, Esc
+wait 500
+button "menubar:brand"
+wait 400
+aboutstate
+shot build/ui/about_main.bmp
+button "about:Technical Details"
+wait 200
+shot build/ui/about_details.bmp
+button "about:btn:Copy Info"
+wait 200
+clipboard
+aboutstate
+button "about:Licenses"
+wait 300
+shot build/ui/about_licenses.bmp
+key Escape
+wait 200
+aboutstate
+key Escape
+wait 200
+aboutstate
+quit

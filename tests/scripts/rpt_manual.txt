@@ -1,0 +1,77 @@
+# Report Studio without AI: cards from the catalog, cache, undo, layout, themes, filters, policy, timeout, save, export
+wait 300
+rpt new Receita
+wait 100
+rpt asof 2026-10-31
+rpt add kpi net_revenue
+rpt set compare yoy
+rpt add kpi orders
+rpt add line net_revenue month
+rpt add bar net_revenue region
+rpt add table orders region
+rpt add text Notas|- Receita líquida exclui pedidos cancelados
+rpt await
+rptstate
+rpt select v3
+rpt set kind bar
+wait 600
+rptstate
+rpt undo
+wait 400
+rptstate
+rpt select v2
+rpt move 0 0 3 4
+wait 300
+rptstate
+rpt select v1
+rpt set lock on
+rpt select v2
+rpt move 0 4 3 4
+rptstate
+rpt theme dark
+wait 400
+shot build/ui/rpt_dark.bmp
+rpt theme executive
+wait 300
+shot build/ui/rpt_exec.bmp
+rpt theme light
+rpt filter region Sul
+rpt await
+rptstate
+rpt filter customer_email x@example.com
+wait 600
+rptstate
+rpt filter clear
+wait 800
+rpt addsql shop1 DELETE FROM rpt_sales
+rpt await
+rptstate
+rpt delete
+rpt timeout 1
+rpt addsql shop1 WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 300000000) SELECT count(*) FROM c
+rpt await
+rptstate
+rpt delete
+rpt timeout 30
+rpt preview on
+wait 300
+shot build/ui/rpt_preview.bmp
+rptstate
+rpt preview off
+rpt prov v1
+wait 300
+shot build/ui/rpt_prov.bmp
+rpt prov
+rpt save
+wait 200
+rptstate
+rpt export build/rpt-ui/page.png page
+rpt export build/rpt-ui/kpi.png v1 2x
+rpt export /nonexistent-dir/x.png page
+rpt ai ask Mostre o faturamento
+rptstate
+rpt ai ask Receita líquida por região
+rptstate
+rpt title Receita (editado depois de salvar)
+wait 300
+quit

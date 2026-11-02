@@ -1,0 +1,11 @@
+# run 3: a locked theme ignores the override; a missing file falls back to the copy in the report
+wait 300
+rpt openpath __OUT__/Relatorio A.lrpt
+wait 300
+rpt theme state
+rpt theme accent 15803D
+rpt theme state
+rpt openpath __OUT__/moved/Relatorio B.lrpt
+wait 300
+rpt theme state
+quit

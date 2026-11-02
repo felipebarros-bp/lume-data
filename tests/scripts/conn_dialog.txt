@@ -1,0 +1,38 @@
+# the New Connection dialog: a database picker first (search, Enter), then the form; editing keeps
+# matching fields when the type changes; PROD suggests read-only; Test runs off the UI thread
+wait 300
+key cmd+shift+n
+wait 60
+dialogstate
+type pg
+key Return
+wait 30
+dialogstate
+key Return
+wait 10
+dialogstate
+clickon "PROD"
+wait 10
+dialogstate
+clickon "conn:test"
+wait 2
+dialogstate
+wait 600
+dialogstate
+key Escape
+wait 30
+dialogstate
+rnode "Shop"
+wait 60
+button "Edit Connection…"
+wait 60
+dialogstate
+clickon "conn:change"
+wait 30
+type mssql
+key Return
+wait 30
+dialogstate
+key Escape
+wait 20
+quit

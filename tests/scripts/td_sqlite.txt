@@ -1,0 +1,114 @@
+# Visual Table Designer on SQLite: create, alter natively, undo / redo, rebuild with consent, drift, drafts, drop, Explorer menu
+wait 500
+dnode "Shop"
+wait 800
+td new "Shop" main
+wait 200
+tdstate
+td table
+td set name pedidos
+td addcol
+td set name id
+td set type INTEGER
+td set notnull 1
+td addkey pk
+td table
+td addcol
+td set name total
+td set type REAL
+td set default 0
+td addkey index
+td table
+td addcol
+td set name customer_id
+td set type INTEGER
+td addkey fk
+td set ref customers
+td set refcols id
+wait 200
+tdstate
+shot build/ui/td_new.bmp
+td review
+wait 300
+shot build/ui/td_review.bmp
+td apply
+wait 1500
+tdstate
+td col total
+td set name amount
+td table
+td addcol
+td set name note
+td set type TEXT
+wait 200
+tdstate
+td review
+td apply
+wait 1500
+tdstate
+td col note
+td set name nota
+td undo
+wait 100
+tdstate
+td redo
+wait 100
+tdstate
+td undo
+td col amount
+td set type INTEGER
+td set notnull 1
+wait 200
+tdstate
+td review
+wait 200
+shot build/ui/td_rebuild_review.bmp
+td apply
+wait 300
+tdstate
+td consent
+td apply
+wait 2000
+tdstate
+rawsql "Shop" ALTER TABLE pedidos ADD COLUMN x_drift INTEGER
+td table
+td addcol
+td set name extra
+td review
+td apply
+wait 1500
+tdstate
+shot build/ui/td_drift.bmp
+td menu 5
+wait 1500
+tdstate
+td addcol
+td set name unsaved_col
+td close
+wait 200
+tdstate
+td closeanswer save
+wait 300
+td open "Shop" main pedidos
+wait 1500
+tdstate
+td menu 4
+wait 200
+td ddl "Shop" main customers
+wait 1500
+td drop "Shop" main pedidos
+wait 1500
+tdstate
+td apply
+wait 300
+td consent
+td apply
+wait 1500
+tdstate
+rnode "customers"
+wait 300
+button "Modify Table"
+wait 1500
+tdstate
+wait 3000
+quit

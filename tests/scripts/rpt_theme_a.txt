@@ -1,0 +1,36 @@
+# shared themes, run 1: theme file + logo; a second report linked to it; the workspace Brand Kit
+wait 300
+rpt new Relatorio A
+wait 100
+rpt asof 2026-10-31
+rpt add kpi net_revenue
+rpt add bar net_revenue region
+rpt await
+rpt uisave
+wait 200
+rpt theme saveas __OUT__/themes/brand.lrtheme
+rpt theme logo __FIX__/logo-magenta.png
+rpt theme state
+rpt uisave
+wait 200
+rpt new Relatorio B
+wait 100
+rpt asof 2026-10-31
+rpt add kpi orders
+rpt await
+rpt uisave
+wait 200
+rpt theme open __OUT__/themes/brand.lrtheme
+rpt theme state
+rpt uisave
+wait 400
+shot __OUT__/b.bmp
+rpt exportas png
+wait 200
+rpt new Relatorio C
+wait 200
+rpt theme ws
+rpt new Relatorio D
+wait 200
+rpt theme state
+quit

@@ -1,0 +1,40 @@
+# TBR-047 / Gherkin 6: the toolbar without a mouse. Ctrl+F5 gives it the focus; Tab reaches
+# every control in order; Down opens Run's menu; Escape closes it and runs nothing; Escape again
+# gives the focus back to the editor. tbnames lists each control's accessible name.
+wait 600
+tbnames
+key ctrl+f5
+wait 150
+tbstate
+key tab
+tbstate
+key tab
+tbstate
+key tab
+tbstate
+key tab
+tbstate
+key tab
+tbstate
+key tab
+tbstate
+key tab
+tbstate
+key tab
+tbstate
+key shift+tab
+key shift+tab
+key shift+tab
+key shift+tab
+wait 100
+tbstate
+key down
+wait 200
+tbstate
+key escape
+wait 150
+tbstate
+key escape
+wait 150
+tbstate
+quit

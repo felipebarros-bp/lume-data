@@ -1,0 +1,20 @@
+# Regression (crash 2026-10-31): a click on a bar button hides its panel inside drag_update,
+# after this frame's layout was computed. With Query History alone in its group, the group was
+# left empty (active = -1) but its header was still drawn and read desc[-1].title (SIGSEGV in
+# snprintf). Layout: Query History alone in its own bottom group, toggled from the bar twice
+# and from its header menu.
+wait 400
+button "bar:Query History"
+wait 300
+button "bar:Query History"
+wait 300
+button "bar:Query History"
+wait 300
+button "bar:Query History"
+wait 300
+button "actions:Query History"
+wait 150
+menu "Hide (content kept)"
+wait 300
+shot build/ui/pnl_hide_last.bmp
+quit
