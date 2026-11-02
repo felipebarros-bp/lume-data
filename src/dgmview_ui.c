@@ -189,6 +189,7 @@ void dg_find_list(App *a, DgDoc *d) {
     draw_rrect(R, rect_inset(box, -1, -1), px(a, 6), C(T_BORDER));
     draw_rrect(R, box, px(a, 6), C(T_PANEL));
     ui_record("dgm:findlist", box);
+    d->findlist_rect = box; d->findlist_frame = d->nframe;
     /* filters (DGM-031 / 036) */
     float x = box.x + px(a, 6), y = box.y + px(a, 4);
     struct { const char *lab; int bit; } f[] = { { "Tables", DF_TABLES }, { "Columns", DF_COLUMNS }, { "Constraints", DF_CONSTRAINTS }, { "Notes", DF_NOTES } };
@@ -676,8 +677,9 @@ void dg_dialogs(App *a, DgDoc *d) {
             if (img) { int k2 = ui_segmented(a, br, bgs, can_t ? 3 : 2, cur); if (k2 >= 0) { d->ex_dark = k2 == 1; d->ex_transparent = k2 == 2; } }
             y += px(a, 32);
         }
-        if (ui_checkbox(a, rect_make(x, y, w / 2, px(a, 22)), "Title and legend", d->ex_legend, img)) { d->ex_legend = !d->ex_legend; d->ex_title = d->ex_legend; }
-        if (ui_checkbox(a, rect_make(x + w / 2, y, w / 2, px(a, 22)), "Provenance footer", d->ex_footer, img)) d->ex_footer = !d->ex_footer;
+        bool vec = d->ex_fmt == EXF_SVG || d->ex_fmt == EXF_HTML;   /* PNG / PDF render the canvas as it is: no title, legend or footer */
+        if (ui_checkbox(a, rect_make(x, y, w / 2, px(a, 22)), vec ? "Title and legend" : "Title and legend (SVG and HTML only)", vec && d->ex_legend, vec)) { d->ex_legend = !d->ex_legend; d->ex_title = d->ex_legend; }
+        if (ui_checkbox(a, rect_make(x + w / 2, y, w / 2, px(a, 22)), vec ? "Provenance footer" : "Footer (SVG and HTML only)", vec && d->ex_footer, vec)) d->ex_footer = !d->ex_footer;
         y += px(a, 26);
         static const char *const scl[] = { "1x", "2x" };
         if (d->ex_fmt == EXF_PNG || d->ex_fmt == EXF_PDF) { draw_text_fit(a->font_small, R, "Scale", -1, rect_make(x, y, px(a, 44), px(a, 26)), C(T_TEXT_MUTED), 0); int k2 = ui_segmented(a, rect_make(x + px(a, 48), y, px(a, 110), px(a, 26)), scl, 2, d->ex_scale == 1 ? 0 : 1); if (k2 >= 0) d->ex_scale = k2 + 1; }

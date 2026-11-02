@@ -19,3 +19,6 @@ compile_commands.json
 !/README.md
 !/LICENSING.md
 !/CLAUDE.md
+# the published documentation (Docusaurus) is versioned with the code
+!/website/**/*.md
+!/website/**/*.mdx

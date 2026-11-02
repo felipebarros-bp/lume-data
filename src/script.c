@@ -452,6 +452,12 @@ void script_tick(App *a) {
         lines = realloc(lines, sizeof *lines * (nlines + 1));
         memmove(&lines[cur + 1], &lines[cur], sizeof *lines * (nlines - cur));
         lines[cur] = tail; nlines++;
+    } else if (!strcmp(cmd, "pinch")) {   /* pinch X Y SCALE: a trackpad pinch over (X, Y), as SDL delivers it (SDL_EVENT_PINCH_UPDATE) */
+        float sc = 1; sscanf(arg, "%f %f %f", &x, &y, &sc);
+        push_mouse(a, SDL_EVENT_MOUSE_MOTION, x, y, 0, false);
+        SDL_Event pe; SDL_zero(pe); pe.type = SDL_EVENT_PINCH_BEGIN; SDL_PushEvent(&pe);
+        SDL_zero(pe); pe.type = SDL_EVENT_PINCH_UPDATE; pe.pinch.scale = sc; SDL_PushEvent(&pe);
+        SDL_zero(pe); pe.type = SDL_EVENT_PINCH_END; SDL_PushEvent(&pe);
     } else if (!strcmp(cmd, "mdown")) {   /* press and hold (a drag spread over frames: mdown, move..., mup) */
         sscanf(arg, "%f %f", &x, &y);
         push_mouse(a, SDL_EVENT_MOUSE_MOTION, x, y, 0, false);

@@ -52,7 +52,7 @@ static void draw_card(App *a, DgDoc *d, int i, Font *fh, Font *fr, float k) {
     const DgNode *n = &d->d.n[i];
     float sx, sy; dg_world_to_screen(d, a, n->x, n->y, &sx, &sy);
     Rect rc = rect_make(sx, sy, n->w * k, n->h * k);
-    { char tag[64]; snprintf(tag, sizeof tag, "dgm:card:%.53s", n->kind == DN_ENTITY ? n->key + 7 : n->key); ui_record(tag, rc); }   /* accessible name (DGM-096) */
+    if (d->drawn_cards < 200) { char tag[64]; snprintf(tag, sizeof tag, "dgm:card:%.53s", n->kind == DN_ENTITY ? n->key + 7 : n->key); ui_record(tag, rc); }   /* accessible name (DGM-096); the harness keeps 512 targets */
     bool dim = dimmed(d, i);
     uint8_t al = dim ? 70 : 255;
     float rad = fmaxf(1, 6 * k);
@@ -300,7 +300,8 @@ void dg_canvas(App *a, DgDoc *d, Rect r) {
     P = &DARKP;
     if (d->need_fit && d->d.nn && !d->lay_th) dg_fit(a, d, false);
     bool over = rect_contains(r, in->mouse_x, in->mouse_y) && !d->dlg && !d->cm.open;
-    Rect fl; if (over && d->find_focus && d->find_list && ui_target("dgm:findlist", &fl) && rect_contains(fl, in->mouse_x, in->mouse_y)) over = false;   /* the find list is on top */
+    /* the find list is drawn above the canvas later in this frame: its rect from the previous frame */
+    if (over && d->find_focus && d->find_list && d->nframe - d->findlist_frame <= 2 && rect_contains(d->findlist_rect, in->mouse_x, in->mouse_y)) over = false;
     bool mm_on = d->minimap && d->d.nn;
     Rect mr = mm_rect(a, d);
     float wx, wy; dg_screen_to_world(d, a, in->mouse_x, in->mouse_y, &wx, &wy);

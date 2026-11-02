@@ -35,6 +35,14 @@ expect "DGM-053: the diagram is saved in the workspace's diagrams folder" '[ -s 
 expect "RN-08: no credentials or rows in the file" '! grep -qiE "password|secret|INSERT|SELECT" $P/diagrams/orders.lume-erd'
 saved_x=$(python3 -c "import json;d=json.load(open('$P/diagrams/orders.lume-erd'));print([n['x'] for n in d['nodes'] if n['key']=='orders'][0])")
 
+out=$(run dgm_findfilter)
+expect "every script target found (find filters)" '[ "$(missing "$out")" = 0 ]'
+expect "DGM-031: clicking Columns in the find list adds column hits (the canvas under the list does not take the click)" '[ "$(field "$(st "$out" 2)" hits)" -gt "$(field "$(st "$out" 1)" hits)" ] && [ "$(field "$(st "$out" 2)" find)" = cus ]'
+
+out=$(run dgm_zoom)
+z1=$(field "$(st "$out" 1)" zoom); z2=$(field "$(st "$out" 2)" zoom); z3=$(field "$(st "$out" 3)" zoom); z4=$(field "$(st "$out" 4)" zoom)
+expect "DGM-020: a trackpad pinch zooms (1.0 -> $z2 -> $z3), the toolbar + too (-> $z4)" 'awk -v a="$z1" -v b="$z2" -v c="$z3" -v d="$z4" "BEGIN{exit !(b > a * 1.4 && c < b * 0.6 && d > c * 1.2)}"'
+
 # reopen: positions kept; a changed table is flagged
 sqlite3 build/dgm_small.db "ALTER TABLE customers ADD COLUMN vip INTEGER"
 rm -f $P/cache/dgm-*.idx

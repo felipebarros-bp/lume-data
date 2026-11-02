@@ -1,0 +1,18 @@
+# Zoom by trackpad pinch (the SDL event), by a double click on the background, and from the toolbar
+wait 30
+dgm open orders "Shop"
+dgmawait
+wait 20
+dgm zoom 1
+wait 5
+dgmstate
+pinch 600 330 1.5
+wait 5
+dgmstate
+pinch 600 330 0.5
+wait 5
+dgmstate
+button "dgm:zoomin"
+wait 5
+dgmstate
+quit

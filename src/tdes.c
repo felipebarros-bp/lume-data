@@ -1305,7 +1305,7 @@ static void run_menu(App *a, TdDoc *d, int id) {
     if (!alive(d)) return;
     Connection *c = conn_of(a, d->conn_id);
     replan(d);
-    if (id >= MI_TYPE0) {   /* a type from the picker */
+    if (id >= MI_TYPE0 && id < 1000) {   /* a type from the picker (the component menu's ids start at 1001) */
         TdCol *col = td_col(&d->draft, d->sel_id);
         const char *const *ty = td_types(d->dialect); int n = 0; while (ty[n]) n++;
         if (col && id - MI_TYPE0 < n) { push_undo(d, ""); snprintf(col->type, sizeof col->type, "%s", ty[id - MI_TYPE0]); changed(d); d->f_loaded_rev = 0; }

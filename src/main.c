@@ -550,7 +550,7 @@ void app_input_event(App *a, const SDL_Event *e) {
         break;
     }
     case SDL_EVENT_PINCH_UPDATE:   /* trackpad pinch: views that zoom read the factor (diagrams) */
-        if (e->pinch.scale > 0) in->pinch *= e->pinch.scale;
+        if (e->pinch.scale > 0) in->pinch = (in->pinch > 0 ? in->pinch : 1) * e->pinch.scale;
         break;
     case SDL_EVENT_KEY_DOWN:
         if (in->nkeys < LUME_MAX_KEYS) {
@@ -625,6 +625,7 @@ static void input_begin_frame(Input *in) {
     in->mouse_pressed = in->mouse_released = in->mouse_consumed = in->mouse_rpressed = false;
     in->clicks = 0;
     in->wheel_x = in->wheel_y = 0;
+    in->pinch = 1;
     in->nkeys = 0;
     in->ntext = 0;
 }

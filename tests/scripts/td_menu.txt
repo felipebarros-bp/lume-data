@@ -1,0 +1,22 @@
+# The component menus, clicked for real (right-click a group, click the item): Add Foreign Key, Add Unique Key,
+# Add Column. (td menu <id> calls the action directly; this goes through the popup like a user.)
+wait 300
+td open "Shop" main customers
+wait 300
+tdstate
+rbutton "tdrow:Foreign Keys"
+wait 10
+menu "Add Foreign Key"
+wait 10
+tdstate
+rbutton "tdrow:Unique Keys"
+wait 10
+menu "Add Unique"
+wait 10
+tdstate
+rbutton "tdrow:Columns"
+wait 10
+menu "Add Column"
+wait 10
+tdstate
+quit

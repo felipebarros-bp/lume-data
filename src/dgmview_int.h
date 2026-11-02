@@ -71,6 +71,7 @@ typedef struct DgDoc {
     TextField find; bool find_focus, find_list; int find_flags;
     DgHit *hits; int nhits, total, cur; char last_q[200]; int last_flags; unsigned last_cat;
     bool highlight_all;                 /* DGM-038 */
+    Rect findlist_rect; Uint64 findlist_frame;   /* the find list as last drawn: the canvas never takes clicks there */
     char flash[DG_KEY]; Uint64 flash_t; /* the hit just navigated to */
     int flash_note;
     /* panes */

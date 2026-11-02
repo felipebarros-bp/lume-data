@@ -499,12 +499,16 @@ static void svg_body(Sb *b, const Dgm *d, bool only_sel, const DgSvgOpt *o, floa
                 sb_fmt(b, "<text x=\"%.1f\" y=\"%.1f\" fill=\"%s\" font-size=\"10\">%s</text>", n->x + 8, y, P->accent, tag);
                 /* the viewer's font is not Lume's: estimate widths (7 units per character at 12 px) and squeeze
                  * the name into the room the type leaves, so the two never overlap */
-                float tw = d->show_types && c->type ? 6.6f * (float)strlen(c->type) : 0;
-                float room = n->w - 38 - (tw > 0 ? tw + 10 : 0), nw = 7.0f * (float)strlen(c->name);
+                /* the viewer's font is not Lume's: a name that cannot fit beside its type (estimated at 6.2
+                 * units per character at 12 px) is cut with an ellipsis, never stretched; the HTML export
+                 * re-measures with the browser's font from data-full */
+                float tw = d->show_types && c->type ? 6.2f * (float)strlen(c->type) : 0;
+                float room = n->w - 38 - (tw > 0 ? tw + 10 : 0);
                 if (room < 20) room = 20;
-                sb_fmt(b, "<text class=\"col\" x=\"%.1f\" y=\"%.1f\" fill=\"%s\" data-room=\"%.0f\"", n->x + 30, y, c->notnull ? P->text : P->muted, room);
-                if (nw > room) sb_fmt(b, " textLength=\"%.0f\" lengthAdjust=\"spacingAndGlyphs\"", room);
-                sb_cat(b, ">"); sb_xml(b, c->name); sb_cat(b, "</text>");
+                int fit = (int)(room / 6.4f), len = (int)strlen(c->name);
+                char shown[300]; if (len > fit && fit > 2) snprintf(shown, sizeof shown, "%.*s\xE2\x80\xA6", fit - 1, c->name); else snprintf(shown, sizeof shown, "%s", c->name);
+                sb_fmt(b, "<text class=\"col\" x=\"%.1f\" y=\"%.1f\" fill=\"%s\" data-room=\"%.0f\" data-full=\"", n->x + 30, y, c->notnull ? P->text : P->muted, room);
+                sb_xml(b, c->name); sb_cat(b, "\">"); sb_xml(b, shown); sb_cat(b, "<title>"); sb_xml(b, c->name); sb_cat(b, "</title></text>");
                 if (tw > 0) { sb_fmt(b, "<text x=\"%.1f\" y=\"%.1f\" fill=\"%s\" text-anchor=\"end\">", n->x + n->w - 8, y, P->muted); sb_xml(b, c->type); sb_cat(b, "</text>"); }
             } else if (n->kind == DN_ENTITY) {
                 int line = 0; const char *p = n->attrs;
@@ -535,6 +539,12 @@ char *dgm_svg(const Dgm *d, bool only_sel, const DgSvgOpt *o) {
     const Pal *P = o->dark ? &DARK : &LIGHT;
     float x0, y0, x1, y1;
     if (!dgm_bounds(d, only_sel, &x0, &y0, &x1, &y1)) { x0 = y0 = 0; x1 = y1 = 100; }
+    for (int e = 0; e < d->ne; e++) {   /* every edge's route (self references loop outside their card) */
+        if (d->e[e].hidden || (only_sel && !(d->n[d->e[e].from].sel && d->n[d->e[e].to].sel))) continue;
+        float p[8]; int np = dgm_route(d, e, p);
+        for (int k = 0; k < np; k++) { x0 = fminf(x0, p[2 * k] - 20); x1 = fmaxf(x1, p[2 * k] + 20); y0 = fminf(y0, p[2 * k + 1] - 10); y1 = fmaxf(y1, p[2 * k + 1] + 10); }
+    }
+    if (o->legend && x1 - x0 < 560) x1 = x0 + 560;   /* the legend's three entries fit inside the background */
     float m = 30, top = o->title && o->title_text && *o->title_text ? 34 : 0, bottom = (o->legend ? 30 : 0) + (o->footer && *o->footer ? 20 : 0);
     float W = x1 - x0 + 2 * m, H = y1 - y0 + 2 * m + top + bottom, sc = o->scale > 0 ? o->scale : 1;
     Sb b = {0};
@@ -574,7 +584,7 @@ char *dgm_html(const Dgm *d, const DgSvgOpt *o) {
     sb_cat(&b, "</div>\n<script>\n(function(){var s=document.querySelector('#v svg');s.removeAttribute('width');s.removeAttribute('height');var vb=s.getAttribute('viewBox').split(' ').map(Number),home=vb.slice();"
                "function set(){s.setAttribute('viewBox',vb.join(' '));}"
                "function home0(){var r=document.getElementById('v').getBoundingClientRect(),k=Math.min(r.width/vb[2],r.height/vb[3]);if(k>1.25){var w=r.width/1.25,h=r.height/1.25,cx=vb[0]+vb[2]/2,cy=vb[1]+vb[3]/2;vb=[cx-w/2,cy-h/2,w,h];}home=vb.slice();set();}"
-               "[].forEach.call(document.querySelectorAll('text.col'),function(t){var room=+t.getAttribute('data-room');if(t.getComputedTextLength()>room){t.removeAttribute('textLength');var s=t.textContent;while(s.length>1&&t.getComputedTextLength()>room){s=s.slice(0,-1);t.textContent=s+'\\u2026';}}});"
+               "[].forEach.call(document.querySelectorAll('text.col'),function(t){var room=+t.getAttribute('data-room'),full=t.getAttribute('data-full'),tip=t.querySelector('title');t.textContent=full;if(tip)t.appendChild(tip);var s=full;while(s.length>1&&t.getComputedTextLength()>room){s=s.slice(0,-1);t.firstChild.nodeValue=s+'\\u2026';}});"
                "function zoom(f,cx,cy){var w=vb[2]*f,h=vb[3]*f;if(w<50||w>1e6)return;cx=cx===undefined?vb[0]+vb[2]/2:cx;cy=cy===undefined?vb[1]+vb[3]/2:cy;vb=[cx-(cx-vb[0])*f,cy-(cy-vb[1])*f,w,h];set();}"
                "var v=document.getElementById('v'),drag=null;v.addEventListener('mousedown',function(e){drag=[e.clientX,e.clientY];v.style.cursor='grabbing';});"
                "window.addEventListener('mouseup',function(){drag=null;v.style.cursor='grab';});"
