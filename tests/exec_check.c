@@ -65,8 +65,13 @@ int main(void) {
     wait_done(j, 5000);
     check(j && j->stmts[0].status == XS_FAILED && j->stmts[1].status == XS_OK && exec_take_result(j, 1, &rs) && rs.has_rows && strcmp(rs_cell(&rs, 0, 0), "2") == 0, "continue on error: the second statement still runs and returns rows", NULL);
     rs_free(&rs);
+#if SQLITE_VERSION_NUMBER >= 3038000   /* sqlite3_error_offset: SQLite 3.38+ */
     check(exec_take_result(j, 2, &rs) && !rs.ok && rs.err_offset == 13, "syntax error offset points at the bad token inside the statement", rs.error);
     { int l, c; sql_line_col(j->text + j->stmts[2].start, j->stmts[2].end - j->stmts[2].start, rs.err_offset, &l, &c); char dd[48]; snprintf(dd, sizeof dd, "line %d col %d", l, c); check(l == 1 && c == 14, "offset to line / column", dd); }
+#else
+    check(exec_take_result(j, 2, &rs) && !rs.ok, "a syntax error fails the statement", rs.error);
+    printf("skip  error offset: SQLite %s has no sqlite3_error_offset (3.38+)\n", sqlite3_libversion());
+#endif
     rs_free(&rs); exec_free(j);
     /* busy connection refuses a second job */
     j = exec_start(db, "with recursive c(x) as (select 1 union all select x + 1 from c limit 200000000) select count(*) from c;", -1, 100, true);

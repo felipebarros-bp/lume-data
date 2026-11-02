@@ -79,7 +79,10 @@ jobs:
         if: inputs.run_tests
         env:
           DYLD_FALLBACK_LIBRARY_PATH: ${{ runner.temp }}/sdl3/lib
-        run: sh tests/run_ci.sh
+          PKG_CONFIG_PATH: ${{ runner.temp }}/sdl3/lib/pkgconfig   # suites that compile their own checks against SDL3
+        run: |
+          brew list pkg-config >/dev/null 2>&1 || brew install pkg-config
+          sh tests/run_ci.sh
 
       - name: Import the signing certificate
         if: env.HAS_CERT == 'true'
@@ -190,6 +193,7 @@ jobs:
         if: inputs.run_tests
         env:
           LD_LIBRARY_PATH: ${{ runner.temp }}/sdl3/lib
+          PKG_CONFIG_PATH: ${{ runner.temp }}/sdl3/lib/pkgconfig
         run: |
           export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg"; mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
           xvfb-run -a sh tests/run_ci.sh
@@ -212,48 +216,43 @@ jobs:
     name: Windows (x64, experimental)
     runs-on: windows-2022
     continue-on-error: true   # until the Windows port is validated (BL-058): never blocks the other platforms
+    defaults:
+      run:
+        shell: msys2 {0}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: SDL3 (cached)
-        id: sdl-cache
-        uses: actions/cache@v4
+      - name: MSYS2 (MinGW-w64 UCRT64 toolchain, SDL3, SQLite)
+        uses: msys2/setup-msys2@v2
         with:
-          path: ${{ runner.temp }}\sdl3
-          key: sdl3-${{ env.SDL_TAG }}-windows-x64
-      - name: Build SDL3
-        if: steps.sdl-cache.outputs.cache-hit != 'true'
-        shell: pwsh
-        run: |
-          git clone --depth 1 --branch $env:SDL_TAG https://github.com/libsdl-org/SDL.git "$env:RUNNER_TEMP\sdl-src"
-          cmake -S "$env:RUNNER_TEMP\sdl-src" -B "$env:RUNNER_TEMP\sdl-build" -A x64 -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DCMAKE_INSTALL_PREFIX="$env:RUNNER_TEMP\sdl3"
-          cmake --build "$env:RUNNER_TEMP\sdl-build" --config Release
-          cmake --install "$env:RUNNER_TEMP\sdl-build" --config Release
-      - name: SQLite (vcpkg)
-        shell: pwsh
-        run: vcpkg install sqlite3:x64-windows
+          msystem: UCRT64
+          update: true
+          install: >-
+            git zip
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-sdl3
+            mingw-w64-ucrt-x86_64-sqlite3
       - name: Build Lume
-        shell: pwsh
         run: |
-          cmake -S . -B build -A x64 -DCMAKE_PREFIX_PATH="$env:RUNNER_TEMP\sdl3" `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
-            -DLUME_CHANNEL="${{ inputs.channel }}"
-          cmake --build build --config Release
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLUME_CHANNEL="${{ inputs.channel }}"
+          cmake --build build -- -k 0   # keep going: the log lists everything the port still needs
       - name: Package
-        shell: pwsh
         run: |
-          $ver = (Select-String -Path CMakeLists.txt -Pattern 'project\(lume VERSION ([0-9.]+)').Matches[0].Groups[1].Value
-          $name = "lume-data-$ver-windows-x64"
-          $out = "build\$name"
-          New-Item -ItemType Directory -Force -Path $out | Out-Null
-          Copy-Item build\Release\lume.exe $out
-          Copy-Item "$env:RUNNER_TEMP\sdl3\bin\SDL3.dll" $out
-          Copy-Item build\Release\*.dll $out -ErrorAction SilentlyContinue
-          Copy-Item -Recurse assets "$out\assets"
-          Copy-Item LICENSE "$out\LICENSE.txt"
-          Compress-Archive -Path $out -DestinationPath "build\$name.zip" -Force
-          Get-FileHash "build\$name.zip" -Algorithm SHA256
+          ver=$(sed -n 's/^project(lume VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          name="lume-data-$ver-windows-x64"
+          out="build/$name"
+          mkdir -p "$out"
+          cp build/lume.exe "$out/"
+          # the DLLs it needs from the toolchain (SDL3, SQLite, the C runtime helpers)
+          ldd build/lume.exe | awk '/ucrt64/ { print $3 }' | xargs -r -I{} cp {} "$out/"
+          cp -R assets "$out/assets"
+          cp LICENSE "$out/LICENSE.txt"
+          (cd build && zip -qr "$name.zip" "$name")
+          sha256sum "build/$name.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: lume-windows-x64

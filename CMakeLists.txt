@@ -50,9 +50,11 @@ target_compile_definitions(lume PRIVATE
   LUME_WEBSITE_URL="${LUME_WEBSITE_URL}" LUME_DOCS_URL="${LUME_DOCS_URL}" LUME_ISSUES_URL="${LUME_ISSUES_URL}"
   LUME_RELEASE_NOTES_URL="${LUME_RELEASE_NOTES_URL}" LUME_LICENSE_NAME="${LUME_LICENSE_NAME}" LUME_COPYRIGHT="${LUME_COPYRIGHT}")
 
+if(WIN32)
+  target_link_libraries(lume PRIVATE psapi advapi32 ws2_32)   # advapi32: Credential Manager (secstore.c); ws2_32: sockets
+endif()
 if(MSVC)
   target_compile_options(lume PRIVATE /W4)
-  target_link_libraries(lume PRIVATE psapi advapi32)   # advapi32: Credential Manager (secstore.c)
 else()
   target_compile_options(lume PRIVATE -Wall -Wextra -Wno-unused-parameter)
   set_source_files_properties(src/font.c PROPERTIES COMPILE_OPTIONS -Wno-unused-function)
