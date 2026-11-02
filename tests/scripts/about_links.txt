@@ -1,0 +1,14 @@
+# The configured links: Tab reaches every one, and each opens its GitHub page (the harness only prints it)
+wait 300
+invoke app.about.open
+wait 300
+key shift+Tab
+wait 100
+aboutstate
+invoke app.about.open_website
+invoke app.about.open_documentation
+invoke app.about.report_issue
+invoke app.about.open_release_notes
+wait 200
+aboutstate
+quit
