@@ -18,7 +18,11 @@ case "$OS" in
           about_ui ai_sql_ui conn_dialog_ui connect_fail_ui grid_scrollbar_ui new_query_ui results_tabs_ui output_select_ui
           settings_ui textfield_ui open_ui rpt_design_ui rpt_export_ui rpt_filter_ui rpt_theme_ui rpt_cardsql_ui rpt_aisql_ui" ;;
   Linux)
-    LIST="$HEADLESS smoke" ;;   # grows as the Linux port is validated (BL-058)
+    # validated under xvfb in ubuntu:22.04 (BL-058); still to validate there: about_ui, connect_fail_ui,
+    # rpt_design_ui, rpt_export_ui
+    LIST="$HEADLESS schidx_check plan_check gitcore_check crash_check smoke
+          ai_sql_ui conn_dialog_ui grid_scrollbar_ui new_query_ui results_tabs_ui output_select_ui
+          settings_ui textfield_ui open_ui rpt_filter_ui rpt_theme_ui rpt_cardsql_ui rpt_aisql_ui" ;;
   *)
     LIST="$HEADLESS" ;;
 esac

@@ -7,7 +7,7 @@
 #   objects_quit: quit with the object list loaded and an object tab edited (double free at exit, 31/10/2026).
 cd "$(dirname "$0")/.."
 export LUME_TOOLBAR=hidden   # scripts written before the main toolbar use window coordinates
-[ -d build-asan ] || cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_FLAGS="-fsanitize=address -fno-omit-frame-pointer" >/dev/null
+[ -f build-asan/CMakeCache.txt ] || cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_FLAGS="-fsanitize=address -fno-omit-frame-pointer" >/dev/null
 cmake --build build-asan >/dev/null || { echo "FAIL  ASan build"; exit 1; }
 fails=0
 # two SQLite connections in a private preferences folder

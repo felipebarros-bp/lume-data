@@ -170,7 +170,8 @@ jobs:
             libsqlite3-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev \
             libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev libdecor-0-dev libegl1-mesa-dev \
             libgl1-mesa-dev libgles2-mesa-dev libdrm-dev libgbm-dev libasound2-dev libpulse-dev \
-            libpipewire-0.3-dev libdbus-1-dev libudev-dev libibus-1.0-dev
+            libpipewire-0.3-dev libdbus-1-dev libudev-dev libibus-1.0-dev \
+            sqlite3 curl file libpq5   # tests: sqlite3 CLI fixtures, AI mock via curl, file(1), libpq for the connect-failure dialog
       - name: SDL3 (cached)
         id: sdl-cache
         uses: actions/cache@v4
@@ -195,6 +196,7 @@ jobs:
         env:
           LD_LIBRARY_PATH: ${{ runner.temp }}/sdl3/lib
           PKG_CONFIG_PATH: ${{ runner.temp }}/sdl3/lib/pkgconfig
+          CMAKE_PREFIX_PATH: ${{ runner.temp }}/sdl3                # the ASan build configures its own tree
         run: |
           export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg"; mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
           xvfb-run -a sh tests/run_ci.sh
