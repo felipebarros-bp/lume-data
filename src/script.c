@@ -29,6 +29,7 @@
 #include "dialog.h"
 #include "telemetry.h"
 #include "update.h"
+#include "dgmview.h"
 #include "log.h"
 #include "planview.h"
 #include "rptview.h"
@@ -271,6 +272,14 @@ void script_tick(App *a) {
     }
     else if (!strcmp(cmd, "telemetrystate")) telemetry_dump();
     else if (!strcmp(cmd, "updatestate")) update_dump();
+    else if (!strcmp(cmd, "dgm")) dgmview_cmd(a, arg);        /* ER diagrams: dgm <op> [args] (dgmview.c) */
+    else if (!strcmp(cmd, "dgmstate")) dgmview_dump(a);
+    else if (!strcmp(cmd, "dgmawait")) {   /* repeat until the active diagram's catalog is read and laid out (or the deadline) */
+        static Uint64 gdeadline; int ms = atoi(arg);
+        if (!gdeadline) gdeadline = now + (Uint64)(ms > 0 ? ms : 30000);
+        if (!dgmview_ready(a) && now < gdeadline) { cur--; next_at = now + 50; }
+        else { if (!dgmview_ready(a)) { printf("script: target not found: dgmawait timed out\n"); fflush(stdout); } gdeadline = 0; }
+    }
     else if (!strcmp(cmd, "updateawait")) { for (int i = 0; i < 1000 && update_busy(); i++) SDL_Delay(10); }   /* the request ends (10 s at most); the next frames show its answer */   /* the update check: state, answer, skipped version */
     else if (!strcmp(cmd, "crashsim")) log_write_crash_report(11);   /* the report a SIGSEGV would leave, without dying (crashrep tests) */   /* consent and the session's counters */
     else if (!strcmp(cmd, "edscroll")) {   /* the active editor's horizontal scroll, its widest line and its text width (px) */

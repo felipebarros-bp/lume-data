@@ -152,12 +152,13 @@ int main(void) {
     for (int d = 0; d < 4; d++) {
         int k = 0, kinds = 0; bool quoted = true;
         while (schidx_sql(dl[d], k, sch, 2, &kind, sql, sizeof sql)) { kinds |= 1 << kind; if (!strstr(sql, "'o''neil'") && !strstr(sql, "'O''NEIL'")) quoted = false; if (strstr(sql, "DELETE") || strstr(sql, "INSERT") || strstr(sql, "UPDATE ")) quoted = false; k++; }
-        CHECK(k == 3 && kinds == 7 && quoted, "%s: 3 bulk catalog reads (columns, table descriptions, foreign keys), schema names quoted as literals", dl[d]);
+        CHECK(k == 4 && kinds == 15 && quoted, "%s: 4 bulk catalog reads (columns, table descriptions, foreign keys with names and referenced columns, unique keys), schema names quoted as literals", dl[d]);
     }
     { schidx_sql("postgres", 0, NULL, 0, &kind, sql, sizeof sql); bool a1 = strstr(sql, "has_table_privilege(c.oid, 'SELECT')") != NULL;
       schidx_sql("postgres", 2, NULL, 0, &kind, sql, sizeof sql); bool a2 = strstr(sql, "has_table_privilege(c.oid, 'SELECT')") != NULL;
       CHECK(a1 && a2, "postgres: only tables the login may SELECT are indexed (pg_class lists every table)"); }
-    CHECK(!schidx_sql("sqlite", 0, NULL, 0, &kind, sql, sizeof sql), "SQLite has no bulk read (its tables come from the connection)");
+    { int k = 0, kinds = 0; while (schidx_sql("sqlite", k, NULL, 0, &kind, sql, sizeof sql)) { kinds |= 1 << kind; k++; }
+      CHECK(k == 4 && kinds == 15, "SQLite: the same 4 reads through table-valued pragmas, one statement each (ER diagrams)"); }
 
     {   /* the user's own queries (history) explain a cryptic table, locally */
         int zx = schidx_table(&x, "ERP", "ZX9010", false);

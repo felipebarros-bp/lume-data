@@ -1,0 +1,33 @@
+# User relations, notes, entities, business names, hidden edges, conceptual view, exports (DGM-013 / 047 / 008 / 051 / 062 / 064 / 069)
+wait 30
+dgm open orders "Shop"
+dgmawait
+wait 20
+dgm add archive_orders
+dgm rel archive_orders customers customer_id
+dgm hide "orders(customer_id)"
+dgm note "Billing <b>" area "orders and payments"
+dgm entity "Invoice" "PK number text;issued date"
+dgm alias customers Clients
+dgm act conceptual
+wait 10
+dgmstate
+dgm export svg build/dgm-export/d.svg diagram
+dgm export png build/dgm-export/d.png diagram
+dgm export pdf build/dgm-export/d.pdf diagram
+dgm export mmd build/dgm-export/d.mmd diagram
+dgm export graphml build/dgm-export/d.graphml diagram
+dgm export drawio build/dgm-export/d.drawio diagram
+dgm export html build/dgm-export/d.html diagram
+dgm sel orders
+dgm export svg build/dgm-export/sel.svg selection
+dgm export lume-erd build/dgm-export/sel.lume-erd selection
+dgm act show_hidden
+dgm find "from:archive to:customers"
+dgm next
+wait 5
+dgmstate
+dgm act disconnected
+wait 5
+dgmstate
+quit

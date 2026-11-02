@@ -36,6 +36,7 @@
 #include "panels.h"
 #include "theme.h"
 #include "tdes.h"
+#include "dgmview.h"
 #include "ui.h"
 
 /* Row kinds: a connection root, a group (Tables / Views / a schema, also used for message
@@ -72,7 +73,7 @@ enum {
     CM_SC_CONSOLE, CM_SC_EXPAND, CM_SC_FIND, CM_SC_REFRESH, CM_SC_PROPS, CM_SC_COPY, CM_SC_VERIFY, CM_SC_PIN, CM_SC_UNPIN,
     CM_OPT_COMPACT, CM_OPT_ALL, CM_OPT_PINNED, CM_OPT_SYSTEM, CM_OPT_RECENT, CM_OPT_KNOWN, CM_OPT_CAP, CM_OPT_PAGE, CM_OPT_KINDS, CM_OPT_DISCOVER, CM_OPT_RESET,
     CM_HIT_OPEN, CM_HIT_REVEAL, CM_HIT_PIN, CM_HIT_COPY, CM_HIT_PROPS,
-    CM_NEW_TABLE, CM_NEW_QUERY, CM_TB_MODIFY, CM_TB_DATA, CM_TB_DDL, CM_TB_DUP, CM_TB_DEPS, CM_TB_DROP,
+    CM_NEW_TABLE, CM_NEW_QUERY, CM_TB_ERD, CM_TB_ERD_ADD, CM_SC_ERD, CM_TB_MODIFY, CM_TB_DATA, CM_TB_DDL, CM_TB_DUP, CM_TB_DEPS, CM_TB_DROP,
 };
 #define CM_MAX 28
 
@@ -1009,6 +1010,9 @@ static void cm_open_node(Explorer *e, App *a, Node *n, float x, float y) {
         cm_add(e, CM_TB_DUP, "Duplicate Structure...", -1, !td || ro);
         cm_add(e, CM_TB_DEPS, "Dependencies...", -1, !td);
         cm_add(e, CM_SEP, "", -1, true);
+        cm_add(e, CM_TB_ERD, "Show ER Diagram", -1, false);
+        if (dgmview_has_diagram_for(a, c->id)) cm_add(e, CM_TB_ERD_ADD, "Add to Current Diagram", -1, false);
+        cm_add(e, CM_SEP, "", -1, true);
         cm_add(e, CM_TB_DROP, "Drop Table...", -1, !td || ro);
         return;
     }
@@ -1039,6 +1043,7 @@ static void cm_open_node(Explorer *e, App *a, Node *n, float x, float y) {
         snprintf(e->cm_schema, sizeof e->cm_schema, "%s", n->sname);
         cm_add(e, CM_SC_CONSOLE, "Open SQL Console", -1, false);
         cm_add(e, CM_NEW_TABLE, "New > Table...", -1, !tdes_supported(c) || c->read_only);   /* TBL-001 / 082 */
+        cm_add(e, CM_SC_ERD, "New ER Diagram\xE2\x80\xA6", -1, false);   /* DGM-002 */
         cm_add(e, CM_SC_EXPAND, n->expanded ? "Collapse" : "Expand", -1, false);
         cm_add(e, CM_SC_FIND, "Find Objects\xE2\x80\xA6", -1, !s->ad->caps.object_search);
         cm_add(e, CM_SC_REFRESH, "Refresh", -1, false);
@@ -1118,6 +1123,12 @@ static void cm_run(Explorer *e, App *a, int item) {
         if (c && c->db) { char sc[128], tb[256]; snprintf(sc, sizeof sc, "%s", e->cm_schema); snprintf(tb, sizeof tb, "%s", e->cm_table); e->cm_open = false;
             tdes_open_table(a, c, sc, tb, item == CM_TB_DDL ? 1 : item == CM_TB_DUP ? 2 : item == CM_TB_DROP ? 3 : 0); return; }
         break;
+    case CM_TB_ERD: case CM_TB_ERD_ADD:
+        if (c) { char sc[128], tb[256]; snprintf(sc, sizeof sc, "%s", e->cm_schema); snprintf(tb, sizeof tb, "%s", e->cm_table); e->cm_open = false;
+            if (item == CM_TB_ERD) dgmview_open_table(a, c, sc, tb); else dgmview_add_to_current(a, c, sc, tb);
+            return; }
+        break;
+    case CM_SC_ERD: if (c) { char sc[200]; snprintf(sc, sizeof sc, "%s", e->cm_schema); e->cm_open = false; dgmview_new_for_schema(a, c, sc); return; } break;
     case CM_TB_DATA: if (c && c->db) {   /* the data grid, not the structure (TBL-083.2) */
             char full[400]; snprintf(full, sizeof full, "%s", e->cm_table);
             for (int i = 0; i < c->ntables; i++) { const char *nm = c->tables[i].name, *dt = strchr(nm, '.'); if (!strcmp(dt ? dt + 1 : nm, e->cm_table)) { snprintf(full, sizeof full, "%s", nm); break; } }

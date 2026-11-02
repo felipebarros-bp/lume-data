@@ -1,0 +1,41 @@
+# DGM-001 / 030..034 / 075 / 053: open focused, find (on and off the diagram), Next with wrap, expand, move, save
+wait 30
+dgm open orders "Shop"
+dgmawait
+wait 20
+dgmstate
+button "dgm:layout"
+wait 10
+button "dgm:findfield"
+type "audit_event"
+wait 5
+key Return
+wait 20
+dgmstate
+dgm find order
+wait 5
+dgm next
+dgm next
+dgm next
+dgm next
+wait 10
+dgmstate
+dgm expand customers 1
+wait 20
+dgmstate
+dgm act mode_all
+dgm sel orders
+dgm move orders 40 30
+dgm save
+wait 5
+dgmstate
+dgm menu card orders
+wait 5
+dgmstate
+key Escape
+wait 5
+dgm act undo
+wait 5
+dgmstate
+shot build/ui/dgm_a.bmp
+quit

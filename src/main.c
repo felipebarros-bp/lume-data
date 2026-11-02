@@ -57,6 +57,7 @@
 #include "toolbar.h"
 #include "exec.h"
 #include "update.h"
+#include "dgmview.h"
 #include <stdarg.h>
 
 /* LUME_VERSION comes from CMake (project VERSION): the single source for About, Copy Info and the log. */
@@ -971,6 +972,7 @@ static void frame(App *a) {
     tdes_pre_update(a);        /* table designer: jobs, its review / close dialogs */
     planview_pre_update(a);    /* execution plans: capture and AI jobs, node menu */
     rptview_pre_update(a);     /* Report Studio: queries, AI, autosave, menus */
+    dgmview_pre_update(a);     /* ER diagrams: catalog reads, layout workers, autosave, shortcuts */
     gitview_pre_update(a);     /* Source Control: Git jobs, watcher, menus */
     app_poll_connections(a);   /* background connects that finished */
     int action = menu_update(a->menu, a, bar);
@@ -996,6 +998,7 @@ static void frame(App *a) {
     tdes_draw_overlay(a);      /* table designer review / close dialogs, its menus */
     planview_draw_overlay(a);  /* execution plan node menu */
     rptview_draw_overlay(a);   /* Report Studio menus */
+    dgmview_draw_overlay(a);   /* ER diagram menus */
     gitview_draw_overlay(a);   /* Source Control menus */
     about_draw(a);
     settings_draw(a);
@@ -1142,6 +1145,7 @@ int main(int argc, char **argv) {
     tdes_init(a);                       /* visual table designer */
     planview_init(a);                   /* execution plan panel + Lume Intelligence (registers its panel module) */
     rptview_init(a);                    /* Report Studio + assistant panel (LI-*) */
+    dgmview_init(a);                    /* ER diagrams (docs/diagrams.md) */
     {
         g_app_for_cmd = a;
         Command c; memset(&c, 0, sizeof c);
@@ -1228,6 +1232,7 @@ int main(int argc, char **argv) {
     tdes_shutdown(a);                   /* keeps unsaved table drafts */
     planview_shutdown(a);
     rptview_shutdown(a);                /* autosaves unsaved reports */
+    dgmview_shutdown(a);                /* saves diagram layouts */
     gitview_shutdown(a);
     brand_free();
     panels_destroy(a->panels, a);       /* saves the layout, frees every query tab */

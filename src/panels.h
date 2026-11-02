@@ -110,6 +110,10 @@ int panels_active_file_tab(Panels *p, App *a);
 int panels_dirty_files_under(Panels *p, const char *root, char out[][256], int max);
 int panels_save_files_under(Panels *p, App *a, const char *root);
 int panels_open_diff_tab(Panels *p, App *a, const char *title, struct GdDoc *gd);
+struct DgDoc;
+int panels_open_diagram_tab(Panels *p, App *a, const char *title, struct DgDoc *dg);   /* ER diagram (dgmview.c) */
+struct DgDoc *panels_active_diagram(Panels *p, App *a);
+void panels_activate_diagram(Panels *p, App *a, struct DgDoc *dg);
 /* the buffer vs the file on disk (gitview.c draws it) */
 void panels_compare_buffer_disk(App *a, int tab_id);
 void panels_set_tab_title(Panels *p, int id, const char *title);
