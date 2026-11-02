@@ -98,6 +98,7 @@ run_suite grid_scrollbar_ui "UI harness: the result grid scroll bar can be dragg
 run_suite editor_hscroll_ui "UI harness: the SQL editor never scrolls sideways past its text" sh tests/editor_hscroll_ui.sh
 run_suite chat_scroll_ui "UI harness: an approval taller than the chat opens at its title once and stays at the end once scrolled there" sh tests/chat_scroll_ui.sh
 run_suite conn_dialog_ui "UI harness: New Connection picks the database first (search), PROD suggests read-only, Test reports beside its button, editing changes the type through the picker" sh tests/conn_dialog_ui.sh
+run_suite themes_ui "UI harness: colour themes from Settings > Appearance and the Command Palette, saved and restored, Match the system, unknown theme keeps the default" sh tests/themes_ui.sh
 run_suite conn_secrets_ui "UI harness: connection passwords live in the OS secret store (one-time move out of secrets.txt, back on the next launch, removed with the connection); fake password, test service" sh tests/conn_secrets_ui.sh
 run_suite telemetry_ui "UI harness: anonymous usage statistics are off by default; with consent only counts and ranges go out (loopback mock), never SQL, names, hosts, users or paths" sh tests/telemetry_ui.sh
 run_suite update_ui "UI harness: update check against GitHub releases (launch + daily, Download opens this platform's installer, Skip This Version, Help > Check for Updates, Settings switch; loopback mock)" sh tests/update_ui.sh

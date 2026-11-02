@@ -575,6 +575,7 @@ static void handle_event(App *a, SDL_Event *e) {
     if (a->panels && panels_handle_event(a->panels, a, e)) return;   /* layout export / import dialogs */
     switch (e->type) {
     case SDL_EVENT_QUIT: a->running = false; break;
+    case SDL_EVENT_SYSTEM_THEME_CHANGED: if (theme_follow_system()) LOG_I("theme: the system appearance changed, now %s", g_theme->name); break;
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
     case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
     case SDL_EVENT_WINDOW_RESIZED:
@@ -712,13 +713,14 @@ static void app_prefs_load(App *a) {
         else if (!strcmp(line, "telemetry")) a->telemetry = v != 0;
         else if (!strcmp(line, "crash_reports") && v >= 0 && v <= 2) a->crash_reports = v;
         else if (!strcmp(line, "update_check")) a->update_check = v != 0;
+        else if (!strcmp(line, "theme")) { if (!theme_select(eq)) LOG_W("settings: unknown theme \"%.40s\", keeping %s", eq, theme_choice()); }
         else if (!strcmp(line, "report_locale") && (!strcmp(eq, "pt-BR") || !strcmp(eq, "en-US"))) snprintf(a->report_locale, sizeof a->report_locale, "%s", eq);
     }
     fclose(f);
     if (z >= 0.6f && z <= 2.5f && z != a->zoom) set_zoom(a, z);
 }
 static unsigned prefs_sig(const App *a) {
-    char b[220]; snprintf(b, sizeof b, "%d|%d|%d|%.2f|%d|%d|%d|%d|%s|%d|%d|%d", a->fetch_size, a->continue_on_error, a->results_budget_mb, a->zoom, a->fmt_group, a->fmt_decimals, a->fmt_date, a->fmt_tz, a->report_locale, a->telemetry, a->crash_reports, a->update_check);
+    char b[260]; snprintf(b, sizeof b, "%d|%d|%d|%.2f|%d|%d|%d|%d|%s|%d|%d|%d|%s", a->fetch_size, a->continue_on_error, a->results_budget_mb, a->zoom, a->fmt_group, a->fmt_decimals, a->fmt_date, a->fmt_tz, a->report_locale, a->telemetry, a->crash_reports, a->update_check, theme_choice());
     unsigned h = 2166136261u; for (const char *q = b; *q; q++) { h ^= (unsigned char)*q; h *= 16777619u; } return h;
 }
 static unsigned g_prefs_sig; static bool g_prefs_loaded;
@@ -729,6 +731,7 @@ void app_prefs_save(App *a) {
     fprintf(f, "fetch_size=%d\ncontinue_on_error=%d\nresults_budget_mb=%d\nzoom=%.2f\nfmt_group=%d\nfmt_decimals=%d\nfmt_date=%d\nfmt_tz=%d\n", a->fetch_size, a->continue_on_error, a->results_budget_mb, a->zoom, a->fmt_group, a->fmt_decimals, a->fmt_date, a->fmt_tz);
     if (a->report_locale[0]) fprintf(f, "report_locale=%s\n", a->report_locale);
     fprintf(f, "telemetry=%d\ncrash_reports=%d\nupdate_check=%d\n", a->telemetry ? 1 : 0, a->crash_reports, a->update_check ? 1 : 0);
+    fprintf(f, "theme=%s\n", theme_choice());
     fclose(f); rename(tmp, p);
     g_prefs_sig = prefs_sig(a);
 }
