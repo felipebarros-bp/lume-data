@@ -156,7 +156,7 @@ static struct {
     bool signing, welcome;       /* a ChatGPT sign-in in the browser; the plan's first-use note */
     char models[40][96]; int nmodels; bool models_open;
     /* the conversation (chat layout): earlier turns; the current turn is the live state below them */
-    struct { char role; char *text; } chat[48]; int nchat, turn_start; RvDoc *chat_doc; float chat_scroll; bool chat_stick, steps_open, steps_closed; unsigned chat_sig; float chat_total;
+    struct { char role; char *text; } chat[48]; int nchat, turn_start; RvDoc *chat_doc; float chat_scroll; bool chat_stick, steps_open, steps_closed; unsigned chat_sig; float chat_total, chat_max;
     /* text selection in the conversation: message index (nchat = the live message) and byte offset */
     int sel_am, sel_ao, sel_bm, sel_bo; bool sel_on, sel_drag;
     ScrollBar chat_sb;
@@ -4484,6 +4484,7 @@ static void as_draw(void *view, void *ctx, DockRect drc, bool focused) {
     if (G.sel_on && !G.ced_focus && (focus_id != 7 || G.q.cursor == G.q.anchor) && (focus_id == 7 || rect_contains(rc, a->in.mouse_x, a->in.mouse_y)) && input_key(&a->in, SDLK_C, KM_PRIMARY)) { char *t = sel_text(); if (t) { SDL_SetClipboardText(t); app_status(a, "Copied"); free(t); } }
     if (a->in.mouse_pressed && !a->in.mouse_consumed && rect_contains(mid, a->in.mouse_x, a->in.mouse_y)) { G.sel_on = false; focus_id = 0; }   /* a click on empty space clears the selection */
     float maxs = total > mid.h ? total - mid.h : 0;
+    G.chat_max = maxs;
     bool grew = total != G.chat_total; G.chat_total = total;
     float before = G.chat_scroll;
     if (G.chat_stick || G.chat_scroll > maxs) G.chat_scroll = maxs;   /* new content: show the newest */
@@ -4822,6 +4823,7 @@ void rptview_cmd(App *a, const char *arg) {
         else if (!strcmp(sub, "chat")) {   /* harness: the conversation so far */
             for (int i = 0; i < G.nchat; i++) printf("rptchat %s: %s\n", G.chat[i].role == 'u' ? "user" : G.chat[i].role == 't' ? "tokens" : "assistant", G.chat[i].text);
             printf("rptchat live [%s]: %s\n", AS_NAME[G.ast], G.amsg);
+            printf("rptchat scroll=%.0f max=%.0f stick=%d\n", G.chat_scroll, G.chat_max, G.chat_stick);
         }
         else if (!strcmp(sub, "schema")) {
             if (!strcmp(r2, "allow")) schema_allow(a);

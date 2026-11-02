@@ -96,6 +96,7 @@ run_suite results_tabs_ui "UI harness: results belong to the query tab that ran 
 run_suite new_query_ui "UI harness: a connection context menu offers New Query (a query tab on that connection, connecting first)" sh tests/new_query_ui.sh
 run_suite grid_scrollbar_ui "UI harness: the result grid scroll bar can be dragged with the mouse" sh tests/grid_scrollbar_ui.sh
 run_suite editor_hscroll_ui "UI harness: the SQL editor never scrolls sideways past its text" sh tests/editor_hscroll_ui.sh
+run_suite chat_scroll_ui "UI harness: an approval taller than the chat opens at its title once and stays at the end once scrolled there" sh tests/chat_scroll_ui.sh
 run_suite conn_dialog_ui "UI harness: New Connection picks the database first (search), PROD suggests read-only, Test reports beside its button, editing changes the type through the picker" sh tests/conn_dialog_ui.sh
 run_suite connect_fail_ui "UI harness: a failed connect opens a dialog with the driver message and Retry / Edit connection / Close" sh tests/connect_fail_ui.sh
 run_suite dock_check   "docking engine: transactions, undo, presets, persistence, corrupt layouts, drop targets, latency" sh tests/dock_check.sh

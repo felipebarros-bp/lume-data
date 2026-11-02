@@ -1,0 +1,34 @@
+# an approval taller than the chat opens at its title once; scrolling to the end stays at the end
+wait 300
+resize 1000 460
+wait 60
+rpt new Painel
+wait 100
+rpt asof 2026-10-31
+rpt add kpi net_revenue
+rpt add kpi orders
+rpt add line net_revenue month
+rpt await
+invoke report.assistant
+wait 100
+rpt select
+rpt ai ask DESIGN deixe com cara de dashboard executivo
+rpt await 20000
+rpt ai approve
+rpt await 20000
+wait 30
+rpt select
+rpt ai ask DESIGN agora com cara de painel operacional
+rpt await 20000
+wait 30
+rpt ai chat
+wheelon "ai:chat" -60
+wait 10
+wheelon "ai:chat" -60
+wait 10
+wheelon "ai:chat" -60
+wait 30
+rpt ai chat
+wait 60
+rpt ai chat
+quit
