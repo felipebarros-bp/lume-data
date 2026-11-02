@@ -26,6 +26,7 @@
  * results are taken from the job with exec_take_result() once a statement is done. */
 #include "units.h"
 #include "output.h"
+#include "telemetry.h"
 #include "panels.h"
 #include "commands.h"
 #include "conn.h"
@@ -235,6 +236,7 @@ static void snippet(const char *sql, int len, char *out, size_t n) {
  * RUN_* value for where the first result goes; editor_rev / sql_base locate the text in the
  * editor for "Go to SQL". Returns false (with a status message) if it could not start. */
 bool output_run(Output *o, App *a, Db *db, const char *sql, int len, int mode, uint32_t editor_rev, int sql_base) {
+    telemetry_count(TM_QUERY);
     OutRunOpts op = { .mode = mode };
     return output_run_opts(o, a, db, sql, len, editor_rev, sql_base, &op) > 0;
 }

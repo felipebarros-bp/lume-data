@@ -16,7 +16,7 @@ missing() { printf '%s\n' "$1" | grep -c '^script: target not found'; }
 case "$(uname -s)" in Darwin) PLATFORM=macOS ;; *) PLATFORM=$(uname -s) ;; esac   # SDL_GetPlatform()
 case "$(uname -m)" in arm64|aarch64) PLATFORM="$PLATFORM arm64" ;; *) PLATFORM="$PLATFORM $(uname -m)" ;; esac
 nth() { printf '%s\n' "$1" | grep "^$2" | sed -n "$3p"; }
-run() { LUME_PREF_DIR=$P LUME_SCRIPT=tests/scripts/$1.txt ./build/lume 2>&1; }
+run() { LUME_TEST_NO_LINKS=1 LUME_PREF_DIR=$P LUME_SCRIPT=tests/scripts/$1.txt ./build/lume 2>&1; }   # most scenarios: a build without links
 # connections holding a user, a password and a host (never connected) and a file under the home folder
 printf '[connection]\nid=demo1\nname=Demo (in-memory)\ndriver=sqlite\ndemo=1\npath=:memory:\n\n[connection]\nid=pgx\nname=Payroll\ndriver=postgres\nhost=db.payroll.internal\nport=5432\ndatabase=payroll\nuser=alice.admin\n\n[connection]\nid=sqf\nname=Private file\ndriver=sqlite\npath=%s/private-notes.db\n' "$HOME" > $P/connections.txt
 ( umask 077; printf 'pgx\tpassword\tSup3rS3cret!\n' > $P/secrets.txt )
@@ -46,9 +46,14 @@ expect "scenario 3 / ABOUT-023: no password, user, host, database name, home pat
 clip2=$(printf '%s\n' "$out" | awk '/^clipboard-begin/{c++} c==2&&!/^clipboard/{print} /^clipboard-end/&&c==2{exit}')
 expect "ABOUT-026: Copy Version copies \"0.1.0 (build <commit>)\": the git commit, or Development build outside a repository" 'printf "%s" "$clip2" | grep -qE "^0\.1\.0 \((Development build|build [0-9a-f]{7,})\)$"'
 
+# The links this build ships with (GitHub): all reachable, each opens its page (never a real browser here)
+out=$(LUME_PREF_DIR=$P LUME_SCRIPT=tests/scripts/about_links.txt ./build/lume 2>&1)
+expect "ABOUT links: Website, Documentation, Report an Issue and Release Notes open the GitHub pages" 'printf "%s\n" "$out" | grep -qx "url-open https://github.com/tessarotto21/lume-data" && printf "%s\n" "$out" | grep -qx "url-open https://github.com/tessarotto21/lume-data/blob/main/README.md" && printf "%s\n" "$out" | grep -qx "url-open https://github.com/tessarotto21/lume-data/issues/new/choose" && printf "%s\n" "$out" | grep -qx "url-open https://github.com/tessarotto21/lume-data/releases"'
+expect "ABOUT links: the last one opened says so" 'nth "$out" aboutstate 2 | grep -q "note=\"Opened in the browser\""'
+
 # ABOUT-002: the symbol asset missing -> monochrome fallback, logged, the About still opens
 T=build/about-noassets; rm -rf $T; mkdir -p $T; cp build/lume $T/; cp -R assets $T/assets; rm -f $T/assets/brand/lume-data-symbol-transparent-*.png
-out=$(LUME_PREF_DIR=$P LUME_SCRIPT=tests/scripts/about_d.txt $T/lume 2>&1)
+out=$(LUME_TEST_NO_LINKS=1 LUME_PREF_DIR=$P LUME_SCRIPT=tests/scripts/about_d.txt $T/lume 2>&1)
 expect "ABOUT-002 / 024: without the symbol asset the About opens with the monochrome fallback, and the log says so" 'nth "$out" aboutstate 1 | grep -q "open=1.*fallback=1" && grep -q "symbol asset is missing" $P/logs/lume.log'
 
 # BL-022: the native application menu's About opens this About; the .app bundle is self-contained

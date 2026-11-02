@@ -157,6 +157,22 @@ below has a bar the suite enforces, so a regression fails the build.
 Long work never blocks the window: queries, connects, connection tests, plans, exports and AI
 requests run off the UI thread, with a cancel that reaches the server.
 
+## Privacy
+
+Lume Data works fully offline and sends nothing by default.
+
+- **Lume Intelligence** is off until you turn it on; the database structure is shared only after you
+  allow it, rows only with a separate consent.
+- **Anonymous usage statistics** (Settings > Privacy) are off unless you turn them on. When on, Lume
+  sends the version, the operating system and, per session, counts and timings in coarse ranges
+  ("10-99 queries", "startup 0.5-1 s"). Never SQL, data, names of connections, tables or files, hosts,
+  users, paths, keys or prompts, and no installation id. They go to [Aptabase](https://aptabase.com)
+  in the EU, which does not store IP addresses. Settings > Privacy shows exactly what is sent.
+- **Crash reports**: after a crash, the next launch asks before sending anything (or always / never,
+  as you choose in Settings > Privacy). A report holds the version, the operating system, the signal
+  and the function names where Lume stopped; never SQL, data, names, paths or user information.
+  "View report" shows the exact report before it is sent. Reports go to GlitchTip.
+
 ## Install
 
 Release builds come from the GitHub Actions workflow **Release builds** (run by hand):

@@ -1,0 +1,11 @@
+# a short session: one query, one plan; then quit (the summary is written for the next launch)
+wait 300
+click 700 400
+key cmd+a
+type SELECT name, city FROM customers WHERE city = 'Salvador';
+key cmd+Return
+wait 200
+plan explain
+wait 200
+telemetrystate
+quit

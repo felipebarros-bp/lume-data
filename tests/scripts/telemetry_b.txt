@@ -1,0 +1,4 @@
+# the next launch: the previous session's summary and this start go out (when enabled)
+wait 300
+telemetrystate
+quit
