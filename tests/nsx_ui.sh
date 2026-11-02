@@ -58,7 +58,7 @@ if docker exec dbv-postgres true 2>/dev/null && [ -f "$ENV_FILE" ]; then
 else echo "skip  PostgreSQL scale scenarios: dbv-postgres not running"; fi
 
 # ---- MySQL: Databases ----
-MYENV="${LUME_MYSQL_ENV:-/private/tmp/claude-501/-Users-isabella-workspace-tessarotto/fca9806a-3181-4d53-8793-f86a7d31d145/scratchpad/mysql.env}"
+MYENV="${LUME_MYSQL_ENV:-$HOME/workspace/tessarotto/test-servers/mysql/.env}"
 if docker ps --format '{{.Names}}' | grep -qx lume-mysql && [ -f "$MYENV" ]; then
   M=build/nsx-mysql; rm -rf $M; mkdir -p $M
   MYSQL_PW=$(grep '^MYSQL_PW=' "$MYENV" | cut -d= -f2-)

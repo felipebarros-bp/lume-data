@@ -1,0 +1,56 @@
+name: Bug report
+description: Something in Lume Data does not work as it should
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Please never paste passwords, API keys or real data here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a connection to ...
+        2. Run ...
+        3. See ...
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [macOS (Apple Silicon), macOS (Intel), Linux x86_64, Linux arm64, Windows x64]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Lume Data version
+      description: About Lume Data > Copy Version (for example "0.1.0 (build 1a2b3c4)").
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Connections, SQL editor, Results grid, Execution plans, Table designer, Database objects, Reports, Lume Intelligence (AI), Source Control, Settings / other]
+  - type: dropdown
+    id: database
+    attributes:
+      label: Database
+      multiple: true
+      options: [SQLite, PostgreSQL, Oracle, MySQL, MariaDB, SQL Server, Not database specific]
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log or screenshot
+      description: The log is in the preferences folder (logs/lume.log). Check that it holds nothing private before pasting.
+      render: text

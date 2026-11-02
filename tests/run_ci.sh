@@ -15,7 +15,7 @@ HEADLESS="grid_check exec_check units_check objects_check tbl_check rpt_check to
 case "$OS" in
   Darwin)
     LIST="$HEADLESS schidx_check plan_check gitcore_check crash_check smoke
-          about_ui ai_sql_ui conn_dialog_ui connect_fail_ui grid_scrollbar_ui editor_hscroll_ui chat_scroll_ui new_query_ui results_tabs_ui output_select_ui
+          about_ui ai_sql_ui conn_dialog_ui conn_secrets_ui connect_fail_ui grid_scrollbar_ui editor_hscroll_ui chat_scroll_ui new_query_ui results_tabs_ui output_select_ui
           settings_ui textfield_ui open_ui rpt_design_ui rpt_export_ui rpt_filter_ui rpt_theme_ui rpt_cardsql_ui rpt_aisql_ui" ;;
   Linux)
     # validated under xvfb in ubuntu:22.04 (BL-058); still to validate there: about_ui, connect_fail_ui,

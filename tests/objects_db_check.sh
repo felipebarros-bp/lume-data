@@ -14,7 +14,7 @@ if [ -z "$LUME_PG_CONN" ] && [ -f "$ENV_FILE" ]; then
 fi
 export LUME_PG_CONN
 # MySQL (BL-013): the lume-mysql test container, password from its private env file
-MYENV="${LUME_MYSQL_ENV:-/private/tmp/claude-501/-Users-isabella-workspace-tessarotto/fca9806a-3181-4d53-8793-f86a7d31d145/scratchpad/mysql.env}"
+MYENV="${LUME_MYSQL_ENV:-$HOME/workspace/tessarotto/test-servers/mysql/.env}"
 if [ -z "$LUME_MYSQL_LOC" ] && [ -f "$MYENV" ] && docker ps --format '{{.Names}}' | grep -qx lume-mysql; then
   MYSQL_PW=$(grep '^MYSQL_PW=' "$MYENV" | cut -d= -f2-)
   LUME_MYSQL_LOC=$(printf '127.0.0.1\n13306\nroot\n%s\nshop' "$MYSQL_PW"); export LUME_MYSQL_LOC

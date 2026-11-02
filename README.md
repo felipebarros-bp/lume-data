@@ -61,9 +61,9 @@ world.**
 - A database picker with search (`pg`, `mssql`, `file`...), grouped by kind, then a form with the
   fields of that driver. **Test connection** runs in the background and reports the server's answer.
 - Environments (DEV / HML / PROD) and a **Read-only in Lume** switch; choosing PROD suggests it.
-- AI keys and the ChatGPT session live in the operating system's secret store (macOS Keychain,
-  Windows Credential Manager, Secret Service on Linux). Connection passwords are kept apart from the
-  connection file, in a file only your user can read; moving them to the secret store is next.
+- Passwords, AI keys and the ChatGPT session live in the operating system's secret store (macOS
+  Keychain, Windows Credential Manager, Secret Service on Linux), never in the connection file. Where a
+  system has no secret store, connection passwords fall back to a file only your user can read.
 - Schema explorer built for large catalogs (tested with a server of 170,009 schemas): names
   first, details on demand, server-side search, pinned schemas.
 

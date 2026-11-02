@@ -53,6 +53,7 @@ struct Connection {
     char name[64];   /* user-visible name */
     char driver[16];   /* DriverInfo id */
     char values[CONN_MAX_FIELDS][CONN_VALUE_LEN];   /* indexed like the driver's fields[] */
+    bool pw_in_file[CONN_MAX_FIELDS];   /* this password is in secrets.txt (the secret store did not take it) */
     int demo;   /* a bundled demo connection: 1 the classic demo, 2 the e-commerce shop (demo_shop.c) */
     /* metadata set by the user, never deduced from the host name (TBR-013 / 014) */
     int env;                    /* CONN_ENV_*: a label shown next to the connection and in write confirmations */

@@ -6,7 +6,8 @@
  *   - driver registry: one static DriverInfo per engine (fields shown in the dialog and the
  *     function that turns those fields into the DbDriver's location string);
  *   - store: load / save of connections.txt (INI-like "[connection]" blocks of key=value)
- *     and secrets.txt (one "id<TAB>key<TAB>password" line per stored password, mode 0600);
+ *     and the OS secret store for passwords (secrets.txt, one "id<TAB>key<TAB>password" line, mode 0600,
+ *     only where there is no store, and as the source of a one-time migration);
  *   - lifecycle: connect, refresh the catalog, lazy column loading, disconnect.
  *
  * Ownership: the ConnStore owns its Connection structs (each one calloc'd); a Connection
@@ -15,6 +16,7 @@
  */
 #include "conn.h"
 #include "log.h"
+#include "secstore.h"
 #include <strings.h>
 #include <sys/stat.h>
 #ifndef _WIN32
@@ -180,6 +182,31 @@ static Connection *store_push(ConnStore *s) {
     return c;
 }
 
+/* ---- where passwords live ----
+ * The OS secret store (macOS Keychain, Windows Credential Manager, Secret Service), one entry per
+ * password field: service "Lume Data", account "connection:<id>:<field>". secrets.txt (mode 0600) is
+ * only the fallback where no secret store exists, and the source of a one-time migration: an entry
+ * leaves the file only once the store has it. Under the test harness the test databases' passwords stay
+ * in the test prefs' secrets.txt (CLAUDE.md), unless LUME_TEST_PW_STORE=1 (a test with fake passwords). */
+#define CONN_SECRET_SERVICE "Lume Data"
+static void secret_account(const Connection *c, const char *key, char *out, size_t n) { snprintf(out, n, "connection:%s:%s", c->id, key); }
+static bool use_store(void) {
+    if (getenv("LUME_SCRIPT") && !getenv("LUME_TEST_PW_STORE")) return false;
+    char why[200]; return secstore_available(why, sizeof why);
+}
+/* Fills the empty password fields from the secret store. */
+static void load_store_secrets(ConnStore *s) {
+    for (int i = 0; i < s->n; i++) {
+        Connection *c = s->items[i]; const DriverInfo *d = conn_driver(c);
+        for (int k = 0; d && k < d->nfields; k++) {
+            if (d->fields[k].type != FIELD_PASSWORD || c->values[k][0]) continue;
+            char acc[160]; secret_account(c, d->fields[k].key, acc, sizeof acc);
+            char *pw = secstore_get(CONN_SECRET_SERVICE, acc);
+            if (pw) { snprintf(c->values[k], sizeof c->values[k], "%s", pw); secstore_free(pw); }
+        }
+    }
+}
+
 /* Reads secrets.txt and puts each password back into its connection. Lines for unknown ids
  * or malformed lines are skipped. A missing file is not an error. */
 static void load_secrets(ConnStore *s) {
@@ -246,18 +273,25 @@ ConnStore *conns_load(void) {
         if (!conn_driver(s->items[i]) || !s->items[i]->id[0]) { free(s->items[i]); s->items[i] = s->items[--s->n]; i--; }
     }
     load_secrets(s);
+    if (use_store()) {
+        load_store_secrets(s);
+        char path[1200]; store_path(s, "secrets.txt", path, sizeof path);
+        struct stat st;
+        if (stat(path, &st) == 0) { conns_save(s); LOG_I("connection passwords: moved from secrets.txt to the %s", secstore_name()); }   /* one-time migration */
+    }
     return s;
 }
 
-/* See conn.h. Both files are rewritten in place (not via a temporary file). secrets.txt is
- * created with mode 0600 on Unix; on Windows it relies on the profile folder's ACL. */
+/* See conn.h. connections.txt never holds a password. Passwords go to the OS secret store; secrets.txt
+ * (mode 0600 on Unix, the profile folder's ACL on Windows) keeps only what the store could not take,
+ * and is deleted when nothing is left in it. */
 void conns_save(ConnStore *s) {
     if (!s->dir[0]) return;
     char path[1200], tmp[1200];
     store_path(s, "connections.txt", path, sizeof path);
     FILE *f = fopen(path, "w");
     if (f) {
-        fprintf(f, "# Lume connections. Passwords live in secrets.txt (mode 0600), never here.\n");
+        fprintf(f, "# Lume connections. Passwords are never here: they live in the OS secret store.\n");
         for (int i = 0; i < s->n; i++) {
             Connection *c = s->items[i];
             const DriverInfo *d = conn_driver(c);
@@ -272,8 +306,28 @@ void conns_save(ConnStore *s) {
         }
         fclose(f);
     }
-    /* secrets.txt: only non-empty password fields */
+    /* passwords: the secret store first; secrets.txt only for what it could not take (or no store here) */
+    bool store = use_store();
+    int left = 0;
+    for (int i = 0; i < s->n; i++) {
+        Connection *c = s->items[i]; const DriverInfo *d = conn_driver(c);
+        for (int k = 0; d && k < d->nfields; k++) {
+            if (d->fields[k].type != FIELD_PASSWORD) continue;
+            c->pw_in_file[k] = false;
+            if (!c->values[k][0]) { if (store) { char acc[160]; secret_account(c, d->fields[k].key, acc, sizeof acc); secstore_delete(CONN_SECRET_SERVICE, acc); } continue; }
+            bool kept = false;
+            if (store) {
+                char acc[160], why[200]; secret_account(c, d->fields[k].key, acc, sizeof acc);
+                char *cur = secstore_get(CONN_SECRET_SERVICE, acc);
+                kept = cur && !strcmp(cur, c->values[k]);   /* unchanged: no write */
+                secstore_free(cur);
+                if (!kept) { kept = secstore_set(CONN_SECRET_SERVICE, acc, c->values[k], why, sizeof why); if (!kept) LOG_W("connection %s: the %s did not take the password (%s); kept in secrets.txt", c->name, secstore_name(), why); }
+            }
+            if (!kept) { c->pw_in_file[k] = true; left++; }
+        }
+    }
     store_path(s, "secrets.txt", tmp, sizeof tmp);
+    if (!left) { unlink(tmp); return; }
 #ifndef _WIN32
     int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     f = fd >= 0 ? fdopen(fd, "w") : NULL;
@@ -285,7 +339,7 @@ void conns_save(ConnStore *s) {
             Connection *c = s->items[i];
             const DriverInfo *d = conn_driver(c);
             for (int k = 0; d && k < d->nfields; k++)
-                if (d->fields[k].type == FIELD_PASSWORD && c->values[k][0]) fprintf(f, "%s\t%s\t%s\n", c->id, d->fields[k].key, c->values[k]);
+                if (d->fields[k].type == FIELD_PASSWORD && c->values[k][0] && c->pw_in_file[k]) fprintf(f, "%s\t%s\t%s\n", c->id, d->fields[k].key, c->values[k]);
         }
         fclose(f);
     }
@@ -312,6 +366,10 @@ Connection *conns_add(ConnStore *s, const char *driver_id) {
 /* Removes `c` from the store keeping the order of the others, frees it and saves. `c` is
  * invalid after the call. */
 void conns_remove(ConnStore *s, Connection *c) {
+    if (use_store()) {   /* its passwords leave the secret store with it */
+        const DriverInfo *d = conn_driver(c);
+        for (int k = 0; d && k < d->nfields; k++) if (d->fields[k].type == FIELD_PASSWORD) { char acc[160]; secret_account(c, d->fields[k].key, acc, sizeof acc); secstore_delete(CONN_SECRET_SERVICE, acc); }
+    }
     for (int i = 0; i < s->n; i++) if (s->items[i] == c) {
         conn_cancel_connect(c);   /* its worker must not write into freed memory */
         conn_disconnect(c);
