@@ -59,6 +59,7 @@ void dg_toolbar(App *a, DgDoc *d, Rect bar) {
     char cnt[40];
     if (!d->find.len) cnt[0] = 0;
     else if (!d->total) snprintf(cnt, sizeof cnt, "No match");
+    else if (d->cur < 0) snprintf(cnt, sizeof cnt, "%d match%s", d->total, d->total == 1 ? "" : "es");
     else snprintf(cnt, sizeof cnt, "%d of %d", d->cur + 1, d->total);
     float cw = px(a, 74);
     draw_text_fit(a->font_small, R, cnt, -1, rect_make(x, y, cw, h), C(d->find.len && !d->total ? T_RED : T_TEXT_MUTED), 0);
@@ -70,17 +71,18 @@ void dg_toolbar(App *a, DgDoc *d, Rect bar) {
     x += px(a, 8);
     float right = bar.x + bar.w - px(a, 8);
     /* the right side: export / more (always visible) */
-    float mw = font_width(a->font_ui, "More", -1) + px(a, 30), ew = font_width(a->font_ui, "Export", -1) + px(a, 30);
+    float mw = font_width(a->font_ui, "More", -1) + px(a, 34), ew = font_width(a->font_ui, "Export\xE2\x80\xA6", -1) + px(a, 22);
     Rect more = rect_make(right - mw, y, mw, h), exr = rect_make(right - mw - ew - px(a, 4), y, ew, h);
     ui_record("dgm:more", more); ui_record("dgm:export", exr);
-    if (ui_button(a, more, "More \xE2\x96\xBE", BTN_QUIET, true)) dg_open_menu(a, d, 0, -1, -1, -1, more.x, more.y + more.h);
-    if (ui_button(a, exr, "Export \xE2\x96\xBE", BTN_QUIET, d->d.nn > 0)) dg_open_menu(a, d, 4, -1, -1, -1, exr.x, exr.y + exr.h);
+    if (ui_button(a, more, "More   ", BTN_QUIET, true)) dg_open_menu(a, d, 0, -1, -1, -1, more.x, more.y + more.h);
+    draw_triangle(R, more.x + more.w - px(a, 13), more.y + more.h / 2, px(a, 7), px(a, 4), true, C(T_TEXT_MUTED));
+    if (ui_button(a, exr, "Export\xE2\x80\xA6", BTN_QUIET, d->d.nn > 0)) dg_open_export(a, d, d->ex_fmt);   /* the last format used */
     right = exr.x - px(a, 8);
     /* middle: layout, card mode, zoom, fit (dropped from the right when narrow: all also in More) */
     struct { const char *lab; int act; int style; const char *tag; bool en; } it[] = {
         { "Layout", DA_LAYOUT, BTN_QUIET, "dgm:layout", d->d.nn > 0 && !d->lay_th },
         { "Fit", DA_FIT, BTN_QUIET, "dgm:fit", d->d.nn > 0 },
-        { "-", DA_ZOOM_OUT, BTN_QUIET, "dgm:zoomout", true },
+        { "\xE2\x80\x93", DA_ZOOM_OUT, BTN_QUIET, "dgm:zoomout", true },
         { NULL, DA_ZOOM_100, BTN_QUIET, "dgm:zoom", true },
         { "+", DA_ZOOM_IN, BTN_QUIET, "dgm:zoomin", true },
     };
@@ -94,6 +96,7 @@ void dg_toolbar(App *a, DgDoc *d, Rect bar) {
         if (m >= 0 && m != d->d.mode) dg_action(a, d, m == 0 ? DA_MODE_NAME : m == 1 ? DA_MODE_KEYS : DA_MODE_ALL);
         x += segw + px(a, 8);
         for (size_t i = 0; i < sizeof it / sizeof it[0]; i++) { tb_btn(a, &x, y, h, it[i].lab, it[i].style, it[i].en, &c, it[i].tag); if (c) dg_action(a, d, it[i].act); }
+        if (x + font_width(a->font_ui, "Business names", -1) + px(a, 22) <= right) { x += px(a, 4); tb_btn(a, &x, y, h, "Business names", d->d.conceptual ? BTN_SELECTED : BTN_QUIET, true, &c, "dgm:conceptual"); if (c) dg_action(a, d, DA_CONCEPTUAL); }
     } else if (x + px(a, 120) <= right) {
         tb_btn(a, &x, y, h, "Layout", BTN_QUIET, d->d.nn > 0 && !d->lay_th, &c, "dgm:layout"); if (c) dg_action(a, d, DA_LAYOUT);
         tb_btn(a, &x, y, h, "Fit", BTN_QUIET, d->d.nn > 0, &c, "dgm:fit"); if (c) dg_action(a, d, DA_FIT);
@@ -130,9 +133,10 @@ void dg_find_run(App *a, DgDoc *d) {
 }
 void dg_find_step(App *a, DgDoc *d, int dir) {
     if (!d->nhits) { if (d->find.len) dg_msg(d, "No match for \"%s\" in the diagram's scope", d->find.buf); return; }
+    int prev = d->cur;
     d->cur = d->cur < 0 ? (dir > 0 ? 0 : d->nhits - 1) : (d->cur + dir + d->nhits) % d->nhits;
-    if (d->cur == 0 && dir > 0 && d->nhits > 1) dg_msg(d, "Back to the first match");
-    else if (d->cur == d->nhits - 1 && dir < 0 && d->nhits > 1) dg_msg(d, "Back to the last match");
+    if (prev == d->nhits - 1 && dir > 0 && d->nhits > 1) dg_msg(d, "Back to the first match");
+    else if (prev == 0 && dir < 0 && d->nhits > 1) dg_msg(d, "Back to the last match");
     DgHit *h = &d->hits[d->cur];
     dg_push_history(d);
     if (h->what == DH_NOTE) {
@@ -197,7 +201,7 @@ void dg_find_list(App *a, DgDoc *d) {
         if (ui_button(a, r, m[i].lab, curm == i ? BTN_SELECTED : BTN_QUIET, true)) d->find_flags = (d->find_flags & ~(DF_PREFIX | DF_EXACT | DF_GLOB)) | m[i].bit;
         x += w + px(a, 3);
     }
-    { float w = px(a, 30); Rect r = rect_make(x, y, w, px(a, 22)); ui_record("dgm:match:case", r); if (ui_button(a, r, "Aa", d->find_flags & DF_CASE ? BTN_SELECTED : BTN_QUIET, true)) d->find_flags ^= DF_CASE; }
+    { float w = font_width(a->font_small, "Match case", -1) + px(a, 14); Rect r = rect_make(x, y, w, px(a, 22)); ui_record("dgm:match:case", r); if (ui_button(a, r, "Match case", d->find_flags & DF_CASE ? BTN_SELECTED : BTN_QUIET, true)) d->find_flags ^= DF_CASE; }
     y = box.y + fh;
     if (!d->nhits) draw_text_fit(a->font_small, R, "No match in this diagram's scope (More > Scope... adds schemas)", -1, rect_make(box.x + px(a, 10), y, box.w - px(a, 20), rh), C(T_TEXT_MUTED), 0);
     int first = d->cur > show - 1 ? d->cur - show + 1 : 0;
@@ -206,7 +210,7 @@ void dg_find_list(App *a, DgDoc *d) {
         Rect r = rect_make(box.x + px(a, 4), y + rh * (float)i, box.w - px(a, 8), rh);
         bool hv = rect_contains(r, in->mouse_x, in->mouse_y);
         if (hi == d->cur || hv) draw_rrect(R, r, px(a, 4), C(hi == d->cur ? T_SELECTED : T_HOVER));
-        const char *state = h->what == DH_NOTE ? "note" : h->node >= 0 ? "on diagram" : "not on diagram";
+        const char *state = h->what == DH_NOTE ? "note" : h->node >= 0 ? "on diagram" : "not on diagram yet";
         float sw = font_width(a->font_small, state, -1) + px(a, 8);
         draw_text_fit(a->font_ui, R, h->text, -1, rect_make(r.x + px(a, 8), r.y, r.w - sw - px(a, 16), r.h), C(T_TEXT), 0);
         draw_text_fit(a->font_small, R, state, -1, rect_make(r.x + r.w - sw - px(a, 4), r.y, sw, r.h), C(h->node >= 0 ? T_TEXT_DIM : T_ACCENT), 2);
@@ -214,7 +218,7 @@ void dg_find_list(App *a, DgDoc *d) {
         if (hv && in->mouse_pressed && !in->mouse_consumed) { in->mouse_consumed = true; d->cur = hi - 1; dg_find_step(a, d, 1); }
     }
     char foot[160]; int on = 0; for (int i = 0; i < d->nhits; i++) on += d->hits[i].node >= 0;
-    snprintf(foot, sizeof foot, "%d match%s \xC2\xB7 %d on the diagram, %d in the scope only \xC2\xB7 Enter: next, Shift+Enter: previous", d->total, d->total == 1 ? "" : "es", on, d->total - on);
+    snprintf(foot, sizeof foot, "%d match%s \xC2\xB7 %d not on the diagram (going to it adds it) \xC2\xB7 Enter / Shift+Enter", d->total, d->total == 1 ? "" : "es", d->total - on);
     draw_text_fit(a->font_small, R, foot, -1, rect_make(box.x + px(a, 10), box.y + box.h - px(a, 22), box.w - px(a, 20), px(a, 20)), C(T_TEXT_DIM), 0);
     if (in->mouse_pressed && !in->mouse_consumed && !rect_contains(box, in->mouse_x, in->mouse_y) && !rect_contains(fr, in->mouse_x, in->mouse_y)) d->find_list = false;
     if (rect_contains(box, in->mouse_x, in->mouse_y) && in->mouse_pressed) in->mouse_consumed = true;
@@ -241,13 +245,14 @@ void dg_props_pane(App *a, DgDoc *d, Rect r) {
         return;
     }
     DgNode *nd = &d->d.n[n];
-    draw_text_fit(a->font_ui, R, nd->kind == DN_ENTITY ? nd->key + 7 : nd->key, -1, rect_make(x, y, w, px(a, 22)), C(T_TEXT), 0); y += px(a, 22);
+    { Rect cl = rect_make(r.x + r.w - px(a, 30), r.y + px(a, 8), px(a, 22), px(a, 22)); ui_record("dgm:props:close", cl); if (ui_button(a, cl, "", BTN_QUIET, true)) d->props = false; draw_cross(R, cl.x + cl.w / 2, cl.y + cl.h / 2, px(a, 8), fmaxf(1, px(a, 1.4f)), C(T_TEXT_MUTED)); }
+    draw_text_fit(a->font_ui, R, nd->kind == DN_ENTITY ? nd->key + 7 : nd->key, -1, rect_make(x, y, w - px(a, 26), px(a, 22)), C(T_TEXT), 0); y += px(a, 22);
     const char *kind = nd->kind == DN_ENTITY ? "logical entity" : nd->kind == DN_STUB ? "external reference (outside the scope or not readable)" : d->d.x && nd->ti >= 0 && d->d.x->t[nd->ti].is_view ? "view" : "table";
     draw_text_fit(a->font_small, R, kind, -1, rect_make(x, y, w, px(a, 18)), C(T_TEXT_MUTED), 0); y += px(a, 22);
     if (nd->alias[0]) { char s[160]; snprintf(s, sizeof s, "Business name: %s", nd->alias); draw_text_fit(a->font_small, R, s, -1, rect_make(x, y, w, px(a, 18)), C(T_SYN_KEYWORD), 0); y += px(a, 20); }
     /* actions (DGM-084 / 086) */
     struct { const char *lab; int act; bool en; } acts[] = {
-        { "Open Data", DA_OPEN_DATA, nd->kind == DN_TABLE }, { "Definition", DA_OPEN_DEFINITION, nd->kind == DN_TABLE }, { "Neighbors", DA_NEIGH1, nd->kind == DN_TABLE && nd->more > 0 },
+        { "Open Data", DA_OPEN_DATA, nd->kind == DN_TABLE }, { "Show DDL", DA_OPEN_DEFINITION, nd->kind == DN_TABLE }, { "Show Neighbors", DA_NEIGH1, nd->kind == DN_TABLE && nd->more > 0 },
     };
     float bx = x;
     for (int i = 0; i < 3; i++) { float bw = font_width(a->font_small, acts[i].lab, -1) + px(a, 16); char tag[40]; snprintf(tag, sizeof tag, "dgm:prop:%s", acts[i].lab); Rect br = rect_make(bx, y, bw, px(a, 24)); ui_record(tag, br); if (ui_button(a, br, acts[i].lab, BTN_QUIET, acts[i].en)) dg_action(a, d, acts[i].act); bx += bw + px(a, 4); }
@@ -259,8 +264,14 @@ void dg_props_pane(App *a, DgDoc *d, Rect r) {
         draw_text_fit(a->font_small, R, h, -1, rect_make(x, y, w, px(a, 18)), C(T_TEXT_DIM), 0); y += px(a, 20);
         for (int c = 0; c < t->ncols; c++) {
             const SxCol *col = &t->cols[c];
-            char s[400]; snprintf(s, sizeof s, "%s%s  %s%s", col->pk ? "PK " : "", col->name, col->type ? col->type : "", col->notnull ? "  not null" : "");
-            draw_text_fit(a->font_small, R, s, -1, rect_make(x, y, w, px(a, 18)), C(col->pk ? T_YELLOW : T_TEXT), 0); y += px(a, 18);
+            bool fk = false; for (int q = 0; q < t->nfks; q++) if (dgm_col_in(t->fks[q].cols, col->name)) fk = true;
+            if (col->pk) draw_icon_key(R, x + px(a, 7), y + px(a, 9), px(a, 10), C(T_YELLOW));
+            else if (fk) draw_text_fit(a->font_small, R, "FK", -1, rect_make(x, y, px(a, 18), px(a, 18)), C(T_ACCENT), 1);
+            char ty[160]; snprintf(ty, sizeof ty, "%s%s", col->type ? col->type : "", col->notnull || col->pk ? "" : "  null");
+            float tw2 = fminf(w * 0.48f, font_width(a->font_small, ty, -1) + px(a, 4));
+            draw_text_fit(a->font_small, R, col->name, -1, rect_make(x + px(a, 20), y, w - px(a, 20) - tw2 - px(a, 6), px(a, 18)), C(T_TEXT), 0);
+            draw_text_fit(a->font_small, R, ty, -1, rect_make(x + w - tw2, y, tw2, px(a, 18)), C(T_TEXT_DIM), 2);
+            y += px(a, 18);
             if (col->comment && col->comment[0]) { y += results_draw_wrapped(a->font_small, R, col->comment, rect_make(x + px(a, 12), y, w - px(a, 12), px(a, 60)), C(T_TEXT_DIM), 0, true); }
         }
         y += px(a, 8);
@@ -297,14 +308,20 @@ void dg_props_pane(App *a, DgDoc *d, Rect r) {
 }
 
 /* ---------------------------------------------------------------- status strip (DGM-093) */
+static void thousands(int v, char *o, size_t n) {
+    char b[32]; snprintf(b, sizeof b, "%d", v); int L = (int)strlen(b); size_t w = 0;
+    for (int i = 0; i < L && w + 2 < n; i++) { if (i && (L - i) % 3 == 0 && b[i - 1] != '-') o[w++] = ','; o[w++] = b[i]; }
+    o[w] = 0;
+}
 void dg_footer(App *a, DgDoc *d, char *out, size_t n) {
     DgCat *k = dg_cat(d); (void)a;
     int fk = 0; for (int e = 0; e < d->d.ne; e++) fk += d->d.e[e].origin == DE_FK;
     int partial = 0; for (int i = 0; i < d->d.nn; i++) partial += d->d.n[i].kind == DN_STUB;
     char when[40] = "not read yet";
     if (d->d.captured[0]) snprintf(when, sizeof when, "%.16s", d->d.captured);
-    snprintf(out, n, "%d on diagram / %d in scope \xC2\xB7 %d FK%s \xC2\xB7 snapshot %s%s \xC2\xB7 read-only%s",
-             d->d.nn, k && k->state == CS_READY ? k->x.n : 0, fk, fk == 1 ? "" : "s", when, k && k->stale ? " (offline: cached)" : "",
+    char on[24], sc[24]; thousands(d->d.nn, on, sizeof on); thousands(k && k->state == CS_READY ? k->x.n : 0, sc, sizeof sc);
+    snprintf(out, n, "%s%s on diagram / %s in scope \xC2\xB7 %d FK%s \xC2\xB7 snapshot %s%s \xC2\xB7 database read-only%s",
+             d->d.conceptual ? "BUSINESS NAMES \xC2\xB7 " : "", on, sc, fk, fk == 1 ? "" : "s", when, k && k->stale ? " (offline: cached)" : "",
              partial ? " \xC2\xB7 external references shown as stubs" : "");
 }
 void dg_status(App *a, DgDoc *d, Rect r) {
@@ -335,18 +352,14 @@ void dg_open_menu(App *a, DgDoc *d, int kind, int node, int edge, int note, floa
         DgNode *n = &d->d.n[node];
         bool table = n->kind == DN_TABLE;
         popup_add(m, DA_FOCUS_HERE, "Focus Here", false, table);
-        popup_add(m, DA_NEIGH1, "Show Neighbors (1 hop)", false, table);
-        popup_add(m, DA_NEIGH2, "Show Neighbors (2 hops)", false, table);
-        popup_add(m, DA_NEIGH3, "Show Neighbors (3 hops)", false, table);
+        popup_add(m, DA_NEIGH1, table && n->more == 0 ? "Show Neighbors (all on diagram)" : "Show Neighbors  \xE2\x80\xBA", false, table && n->more > 0);
         popup_add(m, DA_ISOLATE, d->isolate ? "Reset Focus" : "Isolate Neighborhood", false, true);
-        popup_add(m, DA_OPEN_DATA, "Open Table Data", true, table);
+        popup_add(m, DA_OPEN_DATA, "Open Data", true, table);
         popup_add(m, DA_OPEN_DEFINITION, "Show DDL", false, table);
         popup_add(m, DA_EDIT_TABLE, "Edit Table\xE2\x80\xA6", false, table);
-        popup_add(m, DA_REFRESH_TABLE, "Refresh Table", false, table);
-        popup_add(m, DA_CARD_NAME, "Card: Name Only", true, true);
-        popup_add(m, DA_CARD_KEYS, "Card: Keys", false, true);
-        popup_add(m, DA_CARD_ALL, "Card: All Columns", false, true);
-        popup_add(m, DA_PIN, n->pinned ? "Unpin Position" : "Pin Position", false, true);
+        popup_add(m, DA_REFRESH_TABLE, "Refresh", false, table);
+        popup_add(m, DA_CARD_KEYS, "Card  \xE2\x80\xBA", true, true);
+        popup_add(m, DA_PIN, n->pinned ? "\xE2\x9C\x93 Pinned" : "Pin Position", false, true);
         popup_add(m, DA_COLOR, "Set Color  \xE2\x80\xBA", false, true);
         popup_add(m, DA_ALIAS, "Business Name\xE2\x80\xA6", false, true);
         if (n->kind == DN_ENTITY) popup_add(m, DA_ATTRS, "Attributes\xE2\x80\xA6", false, true);
@@ -379,15 +392,16 @@ void dg_open_menu(App *a, DgDoc *d, int kind, int node, int edge, int note, floa
         popup_add(m, DA_SAVE_SUBSET, "Save Selection as Diagram\xE2\x80\xA6", false, ns > 0);
     } else {
         popup_add(m, DA_FIND, "Add Tables\xE2\x80\xA6 (Find)", false, true);
-        popup_add(m, DA_LAYOUT, "Auto Layout", false, d->d.nn > 0);
-        popup_add(m, DA_FIT, "Fit Content", false, d->d.nn > 0);
+        popup_add(m, DA_LAYOUT, "Layout", false, d->d.nn > 0);
+        popup_add(m, DA_FIT, "Fit", false, d->d.nn > 0);
+        popup_add(m, DA_ZOOM_100, "Zoom to 100%", false, true);
         popup_add(m, DA_SELECT_ALL, "Select All", false, d->d.nn > 0);
         popup_add(m, DA_NOTE, "Add Note", true, true);
         popup_add(m, DA_AREA, "Add Group Area", false, true);
         popup_add(m, DA_ENTITY, "Add Logical Entity", false, true);
         popup_add(m, DA_GROUP_COMPONENTS, "Group by Connected Components", false, d->d.nn > 1);
         popup_add(m, DA_MINIMAP, "View  \xE2\x80\xBA", true, true);
-        popup_add(m, DA_SCOPE, "Scope\xE2\x80\xA6", false, true);
+        { Connection *sc = dg_conn(a, d->conn_id); popup_add(m, DA_SCOPE, sc && !strcmp(sc->driver, "sqlite") ? "Scope (a SQLite file has one)" : "Scope\xE2\x80\xA6", false, sc && strcmp(sc->driver, "sqlite")); }
         popup_add(m, DA_REFRESH, "Refresh Structure", false, true);
         popup_add(m, DA_COMPARE, "Compare with Saved Snapshot", false, d->d.nn > 0);
         popup_add(m, DA_AI_EXPLAIN, "Lume Intelligence  \xE2\x80\xBA", true, d->d.nn > 0);
@@ -402,6 +416,17 @@ void dg_open_menu(App *a, DgDoc *d, int kind, int node, int edge, int note, floa
 static void open_sub(DgDoc *d, int id) {
     PopupMenu *s = popup_open_sub(&d->cm, &d->sub);
     if (id == DA_COLOR) for (int i = 0; i < 9; i++) popup_add(s, 2000 + i, color_names[i], false, true);
+    else if (id == DA_NEIGH1) {
+        popup_add(s, 3000 + DA_NEIGH1, "1 hop", false, true); popup_add(s, 3000 + DA_NEIGH2, "2 hops", false, true); popup_add(s, 3000 + DA_NEIGH3, "3 hops", false, true);
+    } else if (id == DA_CARD_KEYS) {
+        int cm = d->cm_node >= 0 && d->cm_node < d->d.nn ? d->d.n[d->cm_node].mode : DM_GLOBAL;
+        snprintf(d->sub_labels[0], 96, "%s Name Only", cm == DM_NAME ? "\xE2\x9C\x93" : "   ");
+        snprintf(d->sub_labels[1], 96, "%s Keys", cm == DM_KEYS ? "\xE2\x9C\x93" : "   ");
+        snprintf(d->sub_labels[2], 96, "%s All Columns", cm == DM_ALL ? "\xE2\x9C\x93" : "   ");
+        snprintf(d->sub_labels[3], 96, "%s Like the Diagram", cm == DM_GLOBAL ? "\xE2\x9C\x93" : "   ");
+        popup_add(s, 3000 + DA_CARD_NAME, d->sub_labels[0], false, true); popup_add(s, 3000 + DA_CARD_KEYS, d->sub_labels[1], false, true);
+        popup_add(s, 3000 + DA_CARD_ALL, d->sub_labels[2], false, true); popup_add(s, 3000 + DA_CARD_GLOBAL, d->sub_labels[3], true, true);
+    }
     else if (id == DA_ALIGN_L) {
         static const char *const al[] = { "Align Left", "Align Centre", "Align Right", "Align Top", "Align Middle", "Align Bottom", "Distribute Horizontally", "Distribute Vertically" };
         for (int i = 0; i < 8; i++) popup_add(s, DA_ALIGN_L + i, al[i], i == 6, true);
@@ -415,7 +440,7 @@ static void open_sub(DgDoc *d, int id) {
         snprintf(d->sub_labels[6], 96, "Notation: %s", d->d.notation == DNOT_CROW ? "Crow's Foot" : "Simple");
         snprintf(d->sub_labels[7], 96, "Lines: %s", d->d.routing == DRT_ORTHO ? "Orthogonal" : "Straight");
         snprintf(d->sub_labels[8], 96, "%s Snap to Grid", d->d.snap ? "\xE2\x9C\x93" : "   ");
-        snprintf(d->sub_labels[9], 96, "%s Conceptual View (business names)", d->d.conceptual ? "\xE2\x9C\x93" : "   ");
+        snprintf(d->sub_labels[9], 96, "%s Business Names", d->d.conceptual ? "\xE2\x9C\x93" : "   ");
         snprintf(d->sub_labels[10], 96, "%s Highlight All Matches", d->highlight_all ? "\xE2\x9C\x93" : "   ");
         snprintf(d->sub_labels[11], 96, "Select Disconnected Tables");
         snprintf(d->sub_labels[12], 96, "Show Hidden Relations (%d)", d->d.nhidden);
@@ -429,6 +454,7 @@ static void open_sub(DgDoc *d, int id) {
 }
 void dg_menus(App *a, DgDoc *d) {
     if (!d->cm.open) return;
+    if (d->dlg) { popup_close(&d->cm); return; }   /* a dialog replaces the menu that opened it */
     int id = popup_update(a, &d->cm);
     if (id >= 0 && d->cm.open && d->cm.pending_sub >= 0 && d->cm.is_sub[d->cm.pending_sub]) { open_sub(d, id); popup_draw(a, &d->cm); return; }
     popup_draw(a, &d->cm);
@@ -458,6 +484,7 @@ void dg_prompt(DgDoc *d, int kind, int node, const char *title, const char *init
 }
 void dg_open_scope(App *a, DgDoc *d) {
     Connection *c = dg_conn(a, d->conn_id); if (!c) return;
+    if (!strcmp(c->driver, "sqlite")) { dg_msg(d, "A SQLite file has a single scope: every table is already searchable"); return; }
     d->nscope = 0;
     /* the scope's schemas first, then the Explorer's featured and loaded names */
     char cur[1200]; snprintf(cur, sizeof cur, "%s", d->d.schemas);
@@ -479,18 +506,21 @@ void dg_open_picker(App *a, DgDoc *d, const char *schema) {
     textfield_set(&d->pick_filter, ""); d->pick_scroll = 0;
     d->dlg = DLG_PICKER;
     snprintf(d->dlg_title, sizeof d->dlg_title, "New ER diagram: %s", schema && *schema ? schema : d->d.conn_name);
-    snprintf(d->dlg_body, sizeof d->dlg_body, "%d tables in this schema.%s", d->npick, d->npick > 150 ? " A large schema: start from the most connected tables or pick the ones you need (the rest stays searchable)." : "");
+    char tn[24]; thousands(d->npick, tn, sizeof tn);
+    snprintf(d->dlg_body, sizeof d->dlg_body, "%s tables in this schema.%s", tn, d->npick > 150 ? " A large schema: start from the most connected tables or pick the ones you need (the rest stays searchable)." : "");
     (void)a;
 }
 void dg_open_export(App *a, DgDoc *d, int fmt) {
-    d->dlg = DLG_EXPORT; d->ex_fmt = fmt; d->ex_scope = dg_nsel(d) > 0 ? EXS_SELECTION : EXS_DIAGRAM;
+    d->dlg = DLG_EXPORT; d->ex_fmt = fmt; d->ex_scope = dg_nsel(d) >= 2 ? EXS_SELECTION : EXS_DIAGRAM;
     snprintf(d->dlg_title, sizeof d->dlg_title, "Export diagram");
     (void)a;
 }
 static Rect dlg_box(App *a, DgDoc *d, float w, float h) {
     Rect c = d->body;
     w = fminf(px(a, w), c.w - px(a, 20)); h = fminf(px(a, h), c.h - px(a, 20));
-    return rect_make(c.x + (c.w - w) / 2, c.y + fmaxf(px(a, 40), (c.h - h) / 3), w, h);
+    float y = c.y + fmaxf(px(a, 10), fminf(px(a, 40), (c.h - h) / 3));
+    if (y + h > c.y + c.h - px(a, 10)) y = c.y + c.h - px(a, 10) - h;   /* the buttons always stay inside the tab */
+    return rect_make(c.x + (c.w - w) / 2, y, w, h);
 }
 static void dlg_frame(App *a, Rect b, const char *title) {
     SDL_Renderer *R = a->renderer;
@@ -575,7 +605,7 @@ void dg_dialogs(App *a, DgDoc *d) {
         break;
     }
     case DLG_PICKER: {
-        b = dlg_box(a, d, 520, 480); dlg_frame(a, b, d->dlg_title);
+        b = dlg_box(a, d, 520, d->pick_mode == 0 ? 480 : 270); dlg_frame(a, b, d->dlg_title);
         x = b.x + px(a, 18); y = b.y + px(a, 44); w = b.w - px(a, 36);
         y += results_draw_wrapped(a->font_small, R, d->dlg_body, rect_make(x, y, w, px(a, 50)), C(T_TEXT_MUTED), 0, true) + px(a, 8);
         static const char *const modes[] = { "Pick tables", "Most connected", "Empty", "Whole schema" };
@@ -617,7 +647,7 @@ void dg_dialogs(App *a, DgDoc *d) {
         break;
     }
     case DLG_EXPORT: {
-        b = dlg_box(a, d, 560, 330); dlg_frame(a, b, d->dlg_title);
+        b = dlg_box(a, d, 560, d->ex_fmt == EXF_PDF || d->ex_fmt == EXF_MERMAID ? 370 : 340); dlg_frame(a, b, d->dlg_title);
         x = b.x + px(a, 18); y = b.y + px(a, 44); w = b.w - px(a, 36);
         static const char *const fm[] = { "PNG", "SVG", "PDF", "Mermaid", "GraphML", "draw.io", "HTML" };
         Rect fr = rect_make(x, y, w, px(a, 28)); ui_record("dgm:ex:format", fr);
@@ -625,21 +655,29 @@ void dg_dialogs(App *a, DgDoc *d) {
         y += px(a, 38);
         char s0[40], s1[40], s2[40]; snprintf(s0, sizeof s0, "Selection (%d)", scope_count(d, EXS_SELECTION)); snprintf(s1, sizeof s1, "Visible (%d)", scope_count(d, EXS_VISIBLE)); snprintf(s2, sizeof s2, "Diagram (%d)", d->d.nn);
         const char *sc[] = { s0, s1, s2 };
-        draw_text_fit(a->font_small, R, "What to export (the catalog itself never: only cards on the diagram)", -1, rect_make(x, y, w, px(a, 18)), C(T_TEXT_MUTED), 0); y += px(a, 22);
+        draw_text_fit(a->font_small, R, "Export:", -1, rect_make(x, y, w, px(a, 18)), C(T_TEXT_MUTED), 0); y += px(a, 22);
         Rect srr = rect_make(x, y, w, px(a, 28)); ui_record("dgm:ex:scope", srr);
         int s = ui_segmented(a, srr, sc, 3, d->ex_scope); if (s >= 0) d->ex_scope = s;
         y += px(a, 38);
         bool img = d->ex_fmt == EXF_PNG || d->ex_fmt == EXF_PDF || d->ex_fmt == EXF_SVG || d->ex_fmt == EXF_HTML;
-        if (ui_checkbox(a, rect_make(x, y, w / 2, px(a, 22)), "Dark background", d->ex_dark, img)) d->ex_dark = !d->ex_dark;
-        if (ui_checkbox(a, rect_make(x + w / 2, y, w / 2, px(a, 22)), "Transparent (PNG)", d->ex_transparent, d->ex_fmt == EXF_PNG || d->ex_fmt == EXF_SVG)) d->ex_transparent = !d->ex_transparent;
-        y += px(a, 26);
+        {   /* one choice for the background */
+            static const char *const bgs[] = { "Light", "Dark", "Transparent" };
+            bool can_t = d->ex_fmt == EXF_PNG || d->ex_fmt == EXF_SVG;
+            if (!can_t && d->ex_transparent) d->ex_transparent = false;
+            int cur = d->ex_transparent ? 2 : d->ex_dark ? 1 : 0;
+            draw_text_fit(a->font_small, R, "Background", -1, rect_make(x, y, px(a, 80), px(a, 26)), C(img ? T_TEXT_MUTED : T_TEXT_DIM), 0);
+            Rect br = rect_make(x + px(a, 84), y, px(a, can_t ? 270 : 180), px(a, 26)); ui_record("dgm:ex:bg", br);
+            if (img) { int k2 = ui_segmented(a, br, bgs, can_t ? 3 : 2, cur); if (k2 >= 0) { d->ex_dark = k2 == 1; d->ex_transparent = k2 == 2; } }
+            y += px(a, 32);
+        }
         if (ui_checkbox(a, rect_make(x, y, w / 2, px(a, 22)), "Title and legend", d->ex_legend, img)) { d->ex_legend = !d->ex_legend; d->ex_title = d->ex_legend; }
         if (ui_checkbox(a, rect_make(x + w / 2, y, w / 2, px(a, 22)), "Provenance footer", d->ex_footer, img)) d->ex_footer = !d->ex_footer;
         y += px(a, 26);
         static const char *const scl[] = { "1x", "2x" };
-        if (d->ex_fmt == EXF_PNG || d->ex_fmt == EXF_PDF) { int k2 = ui_segmented(a, rect_make(x, y, px(a, 120), px(a, 26)), scl, 2, d->ex_scale == 1 ? 0 : 1); if (k2 >= 0) d->ex_scale = k2 + 1; }
+        if (d->ex_fmt == EXF_PNG || d->ex_fmt == EXF_PDF) { draw_text_fit(a->font_small, R, "Scale", -1, rect_make(x, y, px(a, 44), px(a, 26)), C(T_TEXT_MUTED), 0); int k2 = ui_segmented(a, rect_make(x + px(a, 48), y, px(a, 110), px(a, 26)), scl, 2, d->ex_scale == 1 ? 0 : 1); if (k2 >= 0) d->ex_scale = k2 + 1; }
+        if (d->ex_fmt == EXF_PNG || d->ex_fmt == EXF_PDF) y += px(a, 34);
         if (d->ex_fmt == EXF_MERMAID) results_draw_wrapped(a->font_small, R, "Mermaid cannot carry comments, business names, notes or \"suggested\" relations: they are left out (counted in the status).", rect_make(x, y, w, px(a, 40)), C(T_TEXT_DIM), 0, true);
-        if (d->ex_fmt == EXF_PDF) results_draw_wrapped(a->font_small, R, "PDF holds the diagram as an image (one page). A vector PDF arrives with the vector writer (BL-043).", rect_make(x + px(a, 130), y, w - px(a, 130), px(a, 40)), C(T_TEXT_DIM), 0, true);
+        if (d->ex_fmt == EXF_PDF) results_draw_wrapped(a->font_small, R, "PDF holds the diagram as an image (one page). A vector PDF arrives with the vector writer (BL-043).", rect_make(x, y, w, px(a, 40)), C(T_TEXT_DIM), 0, true);
         Rect ok = rect_make(b.x + b.w - px(a, 228), b.y + b.h - px(a, 44), px(a, 110), px(a, 30)), ca = rect_make(b.x + b.w - px(a, 108), b.y + b.h - px(a, 44), px(a, 90), px(a, 30));
         ui_record("dgm:dlg:ok", ok); ui_record("dgm:dlg:cancel", ca);
         if (ui_button(a, ok, "Export\xE2\x80\xA6", BTN_PRIMARY, scope_count(d, d->ex_scope) > 0) || (enter && scope_count(d, d->ex_scope) > 0)) dg_dialog_ok(a, d);
@@ -647,14 +685,19 @@ void dg_dialogs(App *a, DgDoc *d) {
         break;
     }
     case DLG_AI_CONSENT: {
-        b = dlg_box(a, d, 560, 400); dlg_frame(a, b, d->dlg_title);
+        b = dlg_box(a, d, 560, d->ai_show ? 420 : 210); dlg_frame(a, b, d->dlg_title);
         x = b.x + px(a, 18); y = b.y + px(a, 44); w = b.w - px(a, 36);
         y += results_draw_wrapped(a->font_small, R, d->dlg_body, rect_make(x, y, w, px(a, 80)), C(T_TEXT), 0, true) + px(a, 8);
+        Rect sh = rect_make(x, y, px(a, 150), px(a, 26)); ui_record("dgm:ai:show", sh);
+        if (ui_button(a, sh, d->ai_show ? "Hide exact text" : "Show exact text", BTN_QUIET, true)) { d->ai_show = !d->ai_show; d->props_scroll = 0; }
+        y += px(a, 32);
         Rect list = rect_make(x, y, w, b.y + b.h - px(a, 56) - y);
-        draw_rrect(R, list, px(a, 4), C(T_EDITOR_BG));
-        clip_push(R, list);
-        results_draw_wrapped(a->font_mono ? a->font_mono : a->font_small, R, d->ai_payload ? d->ai_payload : "", rect_inset(list, px(a, 8), px(a, 6)), C(T_TEXT_MUTED), d->props_scroll, true);
-        clip_pop(R);
+        if (d->ai_show) {
+            draw_rrect(R, list, px(a, 4), C(T_EDITOR_BG));
+            clip_push(R, list);
+            results_draw_wrapped(a->font_small, R, d->ai_payload ? d->ai_payload : "", rect_inset(list, px(a, 8), px(a, 6)), C(T_TEXT_MUTED), d->props_scroll, true);
+            clip_pop(R);
+        }
         if (rect_contains(list, in->mouse_x, in->mouse_y) && in->wheel_y) { d->props_scroll = fmaxf(0, d->props_scroll - in->wheel_y * px(a, 30)); in->wheel_y = 0; }
         Rect ok = rect_make(b.x + b.w - px(a, 208), b.y + b.h - px(a, 44), px(a, 90), px(a, 30)), ca = rect_make(b.x + b.w - px(a, 108), b.y + b.h - px(a, 44), px(a, 90), px(a, 30));
         ui_record("dgm:dlg:ok", ok); ui_record("dgm:dlg:cancel", ca);
@@ -896,19 +939,30 @@ void dg_ai_start(App *a, DgDoc *d, int kind) {
     DgCat *k = dg_cat(d);
     if (!k || k->state != CS_READY) { dg_msg(d, "The structure is not loaded yet"); return; }
     /* the selected tables, else every table on the diagram; at most 60, never the whole catalog */
-    SxPick p[60]; int np = 0; bool any_sel = dg_nsel(d) > 0;
-    for (int i = 0; i < d->d.nn && np < 60; i++) { DgNode *n = &d->d.n[i]; if (n->kind != DN_TABLE || n->ti < 0 || (any_sel && !n->sel)) continue; p[np].t = n->ti; p[np].score = 1; p[np].why[0] = 0; np++; }
+    int tis[60]; int np = 0; bool any_sel = dg_nsel(d) > 0;
+    for (int i = 0; i < d->d.nn && np < 60; i++) { DgNode *n = &d->d.n[i]; if (n->kind != DN_TABLE || n->ti < 0 || (any_sel && !n->sel)) continue; tis[np++] = n->ti; }
     if (!np) { dg_msg(d, "Select tables first (or add some to the diagram)"); return; }
-    int shown = 0; char *t = schidx_render(&k->x, p, np, d->d.conn_name, 30000, &shown);
-    free(d->ai_payload);
-    size_t L = (t ? strlen(t) : 0) + 400;
-    d->ai_payload = malloc(L);
-    snprintf(d->ai_payload, L, "%s\n%s", kind == AI_EXPLAIN ? "Explain how these tables relate." : kind == AI_ORGANISE ? "Group these tables into domains for a diagram." : "Propose business names and logical relations for these tables.", t ? t : "");
-    free(t);
-    d->ai_kind = kind; d->props_scroll = 0;
+    /* the exact text: plain structure, one block per table (no rows, nothing else) */
+    size_t cap = 4096, len = 0; char *b = malloc(cap);
+    #define PUT(...) do { int w_ = snprintf(NULL, 0, __VA_ARGS__); if (len + (size_t)w_ + 1 > cap) { while (len + (size_t)w_ + 1 > cap) cap *= 2; b = realloc(b, cap); } len += (size_t)snprintf(b + len, cap - len, __VA_ARGS__); } while (0)
+    PUT("%s\n\n", kind == AI_EXPLAIN ? "Explain how these tables relate." : kind == AI_ORGANISE ? "Group these tables into domains for a diagram." : "Propose business names and logical relations for these tables.");
+    int ncols = 0, nfks = 0, ncom = 0;
+    for (int i = 0; i < np && len < 30000; i++) {
+        const SxTable *t = &k->x.t[tis[i]]; char key[DG_KEY]; dgm_key_of(&k->x, tis[i], key, sizeof key);
+        PUT("TABLE %s%s%s\n", key, t->comment && t->comment[0] ? " -- " : "", t->comment && t->comment[0] ? t->comment : ""); ncom += t->comment && t->comment[0];
+        for (int c = 0; c < t->ncols; c++) { const SxCol *cl = &t->cols[c]; PUT("  %s %s%s%s%s%s\n", cl->name, cl->type ? cl->type : "", cl->pk ? " PK" : "", cl->notnull ? " NOT NULL" : "", cl->comment && cl->comment[0] ? " -- " : "", cl->comment && cl->comment[0] ? cl->comment : ""); ncols++; ncom += cl->comment && cl->comment[0]; }
+        for (int q = 0; q < t->nfks; q++) { PUT("  FOREIGN KEY (%s) REFERENCES %s(%s)\n", t->fks[q].cols, t->fks[q].ref_table, t->fks[q].ref_cols ? t->fks[q].ref_cols : ""); nfks++; }
+    }
+    #undef PUT
+    free(d->ai_payload); d->ai_payload = b;
+    d->ai_kind = kind; d->props_scroll = 0; d->ai_show = false;
+    char names[300] = ""; size_t w = 0;
+    for (int i = 0; i < np && i < 3; i++) w += (size_t)snprintf(names + w, sizeof names - w, "%s%s", i ? ", " : "", k->x.t[tis[i]].name);
+    if (np > 3) snprintf(names + w, sizeof names - w, " and %d more", np - 3);
     d->dlg = DLG_AI_CONSENT;
-    snprintf(d->dlg_title, sizeof d->dlg_title, "Send the structure of %d table%s to Lume Intelligence?", shown, shown == 1 ? "" : "s");
-    snprintf(d->dlg_body, sizeof d->dlg_body, "Exactly the text below goes to your configured AI provider: table and column names, types, keys, foreign keys and comments. No rows, no SQL results, no credentials. %s", np >= 60 ? "Only the first 60 tables are included." : "");
+    snprintf(d->dlg_title, sizeof d->dlg_title, "Send the structure of %d %stable%s to Lume Intelligence?", np, any_sel ? "selected " : "", np == 1 ? "" : "s");
+    snprintf(d->ai_summary, sizeof d->ai_summary, "%s: %s\n%d columns, %d foreign keys, %d comments: names, types and keys only. No rows, no SQL results, no credentials.%s", np == 1 ? "Table" : "Tables", names, ncols, nfks, ncom, np >= 60 ? " Only the first 60 tables are included." : "");
+    snprintf(d->dlg_body, sizeof d->dlg_body, "%s", d->ai_summary);
     (void)a;
 }
 static void parse_proposals(DgDoc *d, const char *text) {
@@ -1092,7 +1146,7 @@ void dg_action(App *a, DgDoc *d, int act) {
     case DA_NULLS: d->d.show_nullability = !d->d.show_nullability; dg_measure(a, d); dg_touch(d); break;
     case DA_DEFAULTS: d->d.show_defaults = !d->d.show_defaults; dg_touch(d); break;
     case DA_SNAP: d->d.snap = !d->d.snap; dg_touch(d); break;
-    case DA_CONCEPTUAL: d->d.conceptual = !d->d.conceptual; dg_measure(a, d); dg_touch(d); dg_msg(d, d->d.conceptual ? "Conceptual view: business names where set (physical names in the properties and exports' legend)" : "Physical view"); break;
+    case DA_CONCEPTUAL: d->d.conceptual = !d->d.conceptual; dg_measure(a, d); dg_touch(d); dg_msg(d, d->d.conceptual ? "Business names on" : "Business names off: table names"); break;
     case DA_HIGHLIGHT_ALL: d->highlight_all = !d->highlight_all; break;
     case DA_ALIGN_L: case DA_ALIGN_C: case DA_ALIGN_R: case DA_ALIGN_T: case DA_ALIGN_M: case DA_ALIGN_B: case DA_DIST_H: case DA_DIST_V:
         dgm_snapshot(&d->d); dgm_align(&d->d, act - DA_ALIGN_L); dg_touch(d); break;

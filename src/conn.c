@@ -465,11 +465,12 @@ typedef struct ConnAttempt {
 } ConnAttempt;
 
 const char *conn_env_name(int env) {
-    static const char *n[] = { "", "DEV", "HML", "PROD" };
+    static const char *n[] = { "", "DEV", "STG", "PROD" };   /* STG: staging (saved as "HML" before; still read) */
     return env >= 0 && env < CONN_ENV_COUNT ? n[env] : "";
 }
 int conn_env_by_name(const char *name) {
     for (int e = 1; e < CONN_ENV_COUNT; e++) if (!strcasecmp(name, conn_env_name(e))) return e;
+    if (!strcasecmp(name, "HML") || !strcasecmp(name, "STAGING")) return CONN_ENV_HML;   /* older files / the full word */
     return CONN_ENV_NONE;
 }
 uint32_t conn_env_color(const Connection *c) {

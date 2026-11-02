@@ -224,7 +224,7 @@ int dgm_add_rel(Dgm *d, int kind, const char *from, const char *to, const char *
     snprintf(r->from, sizeof r->from, "%s", from ? from : ""); snprintf(r->to, sizeof r->to, "%s", to ? to : "");
     snprintf(r->cols, sizeof r->cols, "%s", cols ? cols : ""); snprintf(r->ref_cols, sizeof r->ref_cols, "%s", ref_cols ? ref_cols : "");
     snprintf(r->label, sizeof r->label, "%s", label && *label ? label : kind == DE_LOGICAL ? "relates to" : kind == DE_SUGGESTED ? "suggested" : "virtual");
-    r->card_from = kind == DE_LOGICAL ? DC_MANY : DC_UNKNOWN; r->card_to = kind == DE_LOGICAL ? DC_ONE : DC_UNKNOWN;
+    r->card_from = DC_MANY; r->card_to = DC_ONE;   /* drawn from the referencing side; editable for logical ones */
     d->dirty = true;
     return d->nrels++;
 }

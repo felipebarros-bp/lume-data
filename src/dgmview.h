@@ -19,6 +19,7 @@ const char *dgmview_doc_conn(const struct DgDoc *d);
 
 /* entry points (Explorer menus, palette) */
 bool dgmview_open_table(App *a, Connection *c, const char *schema, const char *table);   /* DGM-001 */
+bool dgmview_open_tables(App *a, Connection *c, const char *schema, const char *const *tables, int n);   /* several tables picked in the Explorer */
 bool dgmview_new_for_schema(App *a, Connection *c, const char *schema);                  /* DGM-002 picker */
 bool dgmview_new_empty(App *a, Connection *c);                                            /* DGM-003 */
 bool dgmview_add_to_current(App *a, Connection *c, const char *schema, const char *table);   /* DGM-085 */

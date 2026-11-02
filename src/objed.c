@@ -211,7 +211,7 @@ static void load_style(void) {
 }
 
 /* <prefs>/object-policy.txt (OBJ-073): "deny-apply PROD", "deny-destructive PROD",
- * "require-reason PROD", "require-validate HML" */
+ * "require-reason PROD", "require-validate STG" ("HML" is still accepted) */
 static void load_policy(void) {
     memset(G.policy, 0, sizeof G.policy);
     char p[1024]; pref_dir(p, sizeof p); strncat(p, "/object-policy.txt", sizeof p - strlen(p) - 1);

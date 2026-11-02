@@ -104,19 +104,46 @@ bool dgm_layout(Dgm *d, bool only_sel, volatile int *cancel) {
             }
         }
         if (cancelled) { free(cnt); break; }
-        /* geometry: columns by layer, each column centred on the tallest */
+        /* geometry: columns by layer; a layer with many cards wraps into sub-columns (a grid inside the
+         * layer) so a hub's hundreds of neighbours form a block, not a tower */
+        int *sub = calloc((size_t)nl, sizeof(int));          /* sub-columns per layer */
         float *colw = calloc((size_t)nl, sizeof(float)), *colh = calloc((size_t)nl, sizeof(float));
-        for (int k = 0; k < nmem; k++) { int li = L[mem[k]].layer - lmin; DgNode *n = &d->n[mem[k]]; if (n->w > colw[li]) colw[li] = n->w; colh[li] += n->h + GAP_Y; }
-        float H = 0; for (int li = 0; li < nl; li++) if (colh[li] > H) H = colh[li];
+        for (int li = 0; li < nl; li++) {
+            int cnt = 0; float maxw = 0, sumh = 0;
+            for (int k = 0; k < nmem; k++) if (L[mem[k]].layer == lmin + li) { cnt++; DgNode *n = &d->n[mem[k]]; if (n->w > maxw) maxw = n->w; sumh += n->h + GAP_Y; }
+            int rows = cnt <= 12 ? cnt : (int)ceilf(sqrtf((float)cnt) * 1.1f);
+            if (rows < 1) rows = 1;
+            sub[li] = (cnt + rows - 1) / rows;
+            colw[li] = (float)sub[li] * maxw + (float)(sub[li] - 1) * (GAP_X * 0.4f);
+            colh[li] = sub[li] > 1 ? sumh / (float)sub[li] * 1.15f : sumh;   /* estimate; the real height is set below */
+        }
+        float H = 0;
         float cx = ox;
+        float *colx = malloc(sizeof(float) * (size_t)nl);
+        for (int li = 0; li < nl; li++) { colx[li] = cx; cx += colw[li] + GAP_X; }
+        /* real heights per layer */
         for (int li = 0; li < nl; li++) {
             int lm[4096]; int nlm = 0;
             for (int k = 0; k < nmem && nlm < 4096; k++) if (L[mem[k]].layer == lmin + li) lm[nlm++] = mem[k];
             g_sort_l = L; qsort(lm, (size_t)nlm, sizeof(int), order_cmp);
-            float y = block_y + (H - colh[li]) / 2;
-            for (int k = 0; k < nlm; k++) { DgNode *n = &d->n[lm[k]]; nx[lm[k]] = cx + (colw[li] - n->w) / 2; ny[lm[k]] = y; y += n->h + GAP_Y; }
-            cx += colw[li] + GAP_X;
+            int rows = (nlm + sub[li] - 1) / sub[li];
+            float hmax = 0;
+            for (int sc = 0; sc < sub[li]; sc++) { float hh = 0; for (int r = 0; r < rows && sc * rows + r < nlm; r++) hh += d->n[lm[sc * rows + r]].h + GAP_Y; if (hh > hmax) hmax = hh; }
+            colh[li] = hmax; if (hmax > H) H = hmax;
         }
+        for (int li = 0; li < nl; li++) {
+            int lm[4096]; int nlm = 0;
+            for (int k = 0; k < nmem && nlm < 4096; k++) if (L[mem[k]].layer == lmin + li) lm[nlm++] = mem[k];
+            g_sort_l = L; qsort(lm, (size_t)nlm, sizeof(int), order_cmp);
+            int rows = (nlm + sub[li] - 1) / sub[li];
+            float subw = sub[li] > 1 ? (colw[li] - (float)(sub[li] - 1) * (GAP_X * 0.4f)) / (float)sub[li] : colw[li];
+            for (int sc = 0; sc < sub[li]; sc++) {
+                float hh = 0; for (int r = 0; r < rows && sc * rows + r < nlm; r++) hh += d->n[lm[sc * rows + r]].h + GAP_Y;
+                float y = block_y + (H - hh) / 2, x = colx[li] + (float)sc * (subw + GAP_X * 0.4f);
+                for (int r = 0; r < rows && sc * rows + r < nlm; r++) { int v = lm[sc * rows + r]; DgNode *n = &d->n[v]; nx[v] = x + (subw - n->w) / 2; ny[v] = y; y += n->h + GAP_Y; }
+            }
+        }
+        free(colx); free(sub);
         block_y += H + GAP_BLOCK;
         free(colw); free(colh); free(cnt);
     }

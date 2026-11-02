@@ -235,6 +235,8 @@ static const MenuItem tools_items[] = {
     SUB("Reports", t_reports_items),
     CMD("Lume Intelligence", NULL, "report.assistant"),
     CMD("Source Control", NULL, "git.panel"),
+    CMD("New ER Diagram" E3, NULL, "dgm.new_schema"),
+    CMD("Open ER Diagram" E3, NULL, "dgm.open"),
     SEP,
     CMD("Reload Semantic Catalog", NULL, "report.reload_catalog"),
     SEP,

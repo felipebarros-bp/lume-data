@@ -61,8 +61,19 @@ static void draw_card(App *a, DgDoc *d, int i, Font *fh, Font *fr, float k) {
     float bw = n->sel || flash ? fmaxf(2, 2 * a->scale) : fmaxf(1, a->scale);
     draw_rrect(R, rect_inset(rc, -bw, -bw), rad + bw, color_alpha(C(border), al));
     draw_rrect(R, rc, rad, color_alpha(C(P->card), al));
-    if (d->lod == 0) {   /* boxes only: the header band shows where a table is */
-        draw_rect(R, rect_make(rc.x, rc.y, rc.w, fminf(rc.h, DG_HEAD_H * k)), color_alpha(C(n->color ? TAGC[n->color] : P->head), al));
+    if (n->kind == DN_ENTITY && !n->sel) {   /* a logical entity is not a table: dashed outline in the logical colour */
+        Color ec = color_alpha(C(T_SYN_KEYWORD), al); float t = fmaxf(1, a->scale);
+        dashed(R, rc.x, rc.y - t, rc.x + rc.w, rc.y - t, t, ec, 6 * k, 4 * k); dashed(R, rc.x, rc.y + rc.h, rc.x + rc.w, rc.y + rc.h, t, ec, 6 * k, 4 * k);
+        dashed(R, rc.x - t, rc.y, rc.x - t, rc.y + rc.h, t, ec, 6 * k, 4 * k); dashed(R, rc.x + rc.w, rc.y, rc.x + rc.w, rc.y + rc.h, t, ec, 6 * k, 4 * k);
+    }
+    if (d->lod == 0) {   /* boxes only: the header band shows where a table is; its name when it fits */
+        float hh = fminf(rc.h, DG_HEAD_H * k);
+        draw_rect(R, rect_make(rc.x, rc.y, rc.w, hh), color_alpha(C(n->color ? TAGC[n->color] : P->head), al));
+        if (rc.w >= 40 && rc.h > 6) { Font *ff = dg_font(a, 7); Rect tr = rect_make(rc.x + 2, rc.y + fmaxf(0, (fminf(rc.h, 20 * a->scale / 2) - font_height(ff)) / 2), rc.w - 4, font_height(ff)); draw_rect(R, tr, color_alpha(C(P->card), 200));
+            /* cut from the left: table names share prefixes, the end tells them apart */
+            const char *nm = dgm_card_label(&d->d, i); char buf[DG_KEY + 8];
+            if (font_width(ff, nm, -1) > tr.w) { const char *p = nm; while (*p && font_width(ff, p, -1) + font_width(ff, "\xE2\x80\xA6", -1) > tr.w) p++; snprintf(buf, sizeof buf, "\xE2\x80\xA6%s", p); nm = buf; }
+            draw_text_fit(ff, R, nm, -1, tr, color_alpha(C(P->text), al), 0); d->drawn_labels++; }
         d->drawn_cards++;
         return;
     }
@@ -92,6 +103,10 @@ static void draw_card(App *a, DgDoc *d, int i, Font *fh, Font *fr, float k) {
     if (n->status && k > 0.3f) { const char *st = n->status == DS_CHANGED ? "changed" : n->status == DS_MISSING ? "missing" : "new"; float w = font_width(fr, st, -1) + 8 * k; draw_text_fit(fr, R, st, -1, rect_make(right - w, rc.y, w, head.h), color_alpha(C(n->status == DS_MISSING ? T_RED : T_YELLOW), al), 1); right -= w + 4 * k; }
     if (n->pinned && k > 0.3f) { draw_text_fit(fr, R, "pin", -1, rect_make(right - 24 * k, rc.y, 24 * k, head.h), color_alpha(C(P->muted), al), 1); right -= 28 * k; }
     draw_text_fit(fh, R, lab, -1, rect_make(rc.x + 26 * k, rc.y, right - rc.x - 26 * k, head.h), color_alpha(C(n->kind == DN_STUB ? P->muted : P->text), al), 0);
+    if (d->d.conceptual && n->alias[0] && n->kind == DN_TABLE) {   /* the physical name, muted, after the business name */
+        float lw = font_width(fh, lab, -1) + 8 * k;
+        if (rc.x + 26 * k + lw < right - 20 * k) draw_text_fit(fr, R, n->key, -1, rect_make(rc.x + 26 * k + lw, rc.y, right - rc.x - 26 * k - lw, head.h), color_alpha(C(P->muted), al), 0);
+    }
     d->drawn_labels++;
     if (n->kind == DN_STUB && n->ti < 0 && k > 0.35f && n->h > DG_HEAD_H) { /* nothing more */ }
     if (d->lod == 1) { d->drawn_cards++; return; }
@@ -166,7 +181,7 @@ static void draw_notes(App *a, DgDoc *d, bool areas, float k) {
             uint32_t tc = TAGC[n->color ? n->color : 1];
             draw_rrect(R, rc, 10 * k, color_alpha(C(tc), 22));
             draw_rrect_outline(R, rc, 10 * k, fmaxf(1, a->scale) * (fl ? 2 : 1), color_alpha(C(fl ? T_YELLOW : tc), 140));
-            if (d->lod) draw_text_fit(dg_font(a, 13 * d->d.zoom), R, n->title, -1, rect_make(rc.x + 12 * k, rc.y + 4 * k, rc.w - 24 * k, 22 * k), color_alpha(C(tc), 230), 0);
+            (void)tc;   /* the title is drawn after the cards (draw_area_titles) */
         } else {
             draw_rrect(R, rc, 4 * k, C(fl ? 0xFFF0A0 : 0xF6EBB0));
             if (d->lod) {
@@ -177,6 +192,20 @@ static void draw_notes(App *a, DgDoc *d, bool areas, float k) {
                 clip_pop(R);
             }
         }
+    }
+}
+static void draw_area_titles(App *a, DgDoc *d, float k) {
+    SDL_Renderer *R = a->renderer;
+    if (!d->lod) return;
+    Font *f = dg_font(a, 13 * d->d.zoom);
+    for (int i = 0; i < d->d.nnotes; i++) {
+        const DgNote *n = &d->d.notes[i]; if (!n->area || !n->title[0]) continue;
+        float sx, sy; dg_world_to_screen(d, a, n->x, n->y, &sx, &sy);
+        float tw = fminf(font_width(f, n->title, -1) + 16 * k, n->w * k - 8 * k);
+        Rect tr = rect_make(sx + 8 * k, sy - 22 * k - 2, tw, 22 * k);   /* a tab above the area's corner: never over a card */
+        uint32_t tc = TAGC[n->color ? n->color : 1];
+        draw_rrect(R, tr, 4 * k, color_alpha(C(P->bg), 220));
+        draw_text_fit(f, R, n->title, -1, rect_inset(tr, 6 * k, 0), C(tc), 0);
     }
 }
 void dg_draw_scene(App *a, DgDoc *d, Rect r, bool export_mode) {
@@ -209,6 +238,7 @@ void dg_draw_scene(App *a, DgDoc *d, Rect r, bool export_mode) {
     for (int q = 0; q < nv; q++) if (d->d.n[vis[q]].sel) draw_card(a, d, vis[q], fh, fr, k);   /* selected on top */
     free(vis);
     draw_notes(a, d, false, k);
+    draw_area_titles(a, d, k);
 }
 
 /* ---------------------------------------------------------------- minimap (DGM-025) */
@@ -223,7 +253,8 @@ static void mm_xform(App *a, DgDoc *d, Rect mr, float *s, float *ox, float *oy, 
 static void minimap(App *a, DgDoc *d) {
     SDL_Renderer *R = a->renderer; Rect mr = mm_rect(a, d);
     draw_rrect(R, rect_inset(mr, -1, -1), px(a, 6), C(T_BORDER));
-    draw_rrect(R, mr, px(a, 5), color_alpha(C(T_PANEL), 235));
+    bool hv = rect_contains(mr, a->in.mouse_x, a->in.mouse_y);
+    draw_rrect(R, mr, px(a, 5), color_alpha(C(T_PANEL), hv ? 245 : 170));
     float s, ox, oy, bx, by; mm_xform(a, d, mr, &s, &ox, &oy, &bx, &by);
     for (int i = 0; i < d->d.nn; i++) { DgNode *n = &d->d.n[i]; draw_rect(R, rect_make(ox + (n->x - bx) * s, oy + (n->y - by) * s, fmaxf(1, n->w * s), fmaxf(1, n->h * s)), C(n->sel ? T_ACCENT : n->color ? TAGC[n->color] : T_TEXT_DIM)); }
     float vx0, vy0, vx1, vy1; dg_screen_to_world(d, a, d->canvas.x, d->canvas.y, &vx0, &vy0); dg_screen_to_world(d, a, d->canvas.x + d->canvas.w, d->canvas.y + d->canvas.h, &vx1, &vy1);
@@ -403,13 +434,21 @@ void dg_canvas(App *a, DgDoc *d, Rect r) {
     /* hover tooltip of an edge (DGM-042) */
     if (d->hover_edge >= 0 && !d->drag) {
         DgEdge *g = &d->d.e[d->hover_edge];
-        char tip[600]; snprintf(tip, sizeof tip, "%s%s  %s(%s) \xE2\x86\x92 %s(%s)  %s", g->origin == DE_FK ? "" : g->origin == DE_VIRTUAL ? "virtual: " : g->origin == DE_SUGGESTED ? "suggested: " : "logical: ", g->name,
+        char fb[300]; snprintf(fb, sizeof fb, "%s(%s)", d->d.x && g->fk_t >= 0 ? d->d.x->t[g->fk_t].name : "", g->cols);
+        bool named = strcmp(g->name, fb) != 0;
+        char tip[600]; snprintf(tip, sizeof tip, "%s%s%s%s(%s) \xE2\x86\x92 %s(%s)  %s", g->origin == DE_FK ? "" : g->origin == DE_VIRTUAL ? "virtual: " : g->origin == DE_SUGGESTED ? "suggested: " : "logical: ", named ? g->name : "", named ? "  " : "",
                  d->d.n[g->from].key, g->cols, d->d.n[g->to].key, g->ref_cols[0] ? g->ref_cols : "key",
                  g->card_from == DC_ONE ? "one-to-one" : g->card_from == DC_MANY ? "many-to-one" : "cardinality unknown");
         float w = fminf(font_width(a->font_small, tip, -1) + px(a, 16), r.w - px(a, 20));
         Rect tr = rect_make(fminf(in->mouse_x + px(a, 12), r.x + r.w - w - px(a, 6)), in->mouse_y + px(a, 16), w, px(a, 24));
         draw_rrect(R, tr, px(a, 4), C(T_BORDER)); draw_rrect(R, rect_inset(tr, 1, 1), px(a, 4), C(T_PANEL_ALT));
         draw_text_fit(a->font_small, R, tip, -1, rect_inset(tr, px(a, 8), 0), C(T_TEXT), 0);
+    } else if (d->hover >= 0 && !d->drag && d->lod < 2) {   /* far zoom: the card's name under the pointer */
+        const char *nm = dgm_card_label(&d->d, d->hover);
+        float w = font_width(a->font_small, nm, -1) + px(a, 16);
+        Rect tr = rect_make(fminf(in->mouse_x + px(a, 12), r.x + r.w - w - px(a, 6)), in->mouse_y + px(a, 16), w, px(a, 24));
+        draw_rrect(R, tr, px(a, 4), C(T_BORDER)); draw_rrect(R, rect_inset(tr, 1, 1), px(a, 4), C(T_PANEL_ALT));
+        draw_text_fit(a->font_small, R, nm, -1, rect_inset(tr, px(a, 8), 0), C(T_TEXT), 0);
     } else if (d->hover >= 0 && !d->drag && d->d.n[d->hover].kind == DN_TABLE && d->d.x && d->d.n[d->hover].ti >= 0) {
         const SxTable *t = &d->d.x->t[d->d.n[d->hover].ti];
         if (t->comment && t->comment[0] && d->d.show_comments) {

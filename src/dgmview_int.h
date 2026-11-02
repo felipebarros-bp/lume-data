@@ -53,6 +53,7 @@ typedef struct DgDoc {
     char pending_table[DG_KEY];         /* "schema.table" to open / add once loaded */
     int pending_kind;                   /* 0 focus open, 1 add to diagram, 2 schema picker, 3 empty */
     char pending_schema[200];
+    char *pending_list;                 /* kind 4: table names, one per line (Explorer multi-selection) */
     /* interaction */
     int drag;                           /* 0 none, 1 pan, 2 move cards, 3 marquee, 4 minimap, 5 note resize, 6 note move */
     float mx0, my0, wx0, wy0, pan0x, pan0y;
@@ -95,7 +96,7 @@ typedef struct DgDoc {
     /* layout on a worker (> 200 cards) */
     SDL_Thread *lay_th; volatile int lay_cancel; SDL_AtomicInt lay_done; Dgm *lay_copy; bool lay_ok;
     /* the assistant */
-    AiJob *ai; int ai_kind; char *ai_payload; char ai_tables[4000]; char *ai_text;
+    AiJob *ai; int ai_kind; char *ai_payload; char ai_tables[4000]; char *ai_text; bool ai_show; char ai_summary[600];
     DgProposal props_ai[24]; int nprops_ai;
     /* saving */
     Uint64 dirty_at; bool save_failed;

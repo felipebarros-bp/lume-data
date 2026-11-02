@@ -63,7 +63,7 @@ expect "DGM-049: Select Disconnected Tables (the logical entity and the hidden-r
 # the 14k-table catalog
 out=$(run dgm_big)
 expect "every script target found (14k)" '[ "$(missing "$out")" = 0 ]'
-b1=$(st "$out" 1); b2=$(st "$out" 2); b3=$(st "$out" 3)
+b1=$(st "$out" 1); b2=$(st "$out" 2); bf=$(st "$out" 3); b3=$(st "$out" 4)
 expect "DGM-070: the hub opens with at most 40 cards plus what it says is left, never the 14k" '[ "$(field "$b1" nodes)" -le 41 ] && [ "$(field "$b1" in_scope)" -ge 14000 ]'
 expect "DGM-075: a large expansion asks first (\"Add N tables?\")" '[ "$(field "$b2" dlg)" = 1 ] && printf "%s" "$b2" | grep -q "dlg_title=\"Add 150 tables?\""'
 n3=$(field "$b3" nodes)
@@ -72,6 +72,7 @@ p95=$(field "$b3" frame_p95); p99=$(field "$b3" frame_p99)
 BAR95=16; BAR99=33; [ -n "${CI:-}" ] && { BAR95=60; BAR99=120; }
 expect "DGM-095: pan / zoom frame p95 ${p95} ms (bar $BAR95), p99 ${p99} ms (bar $BAR99) with $n3 cards" 'awk -v p="$p95" -v q="$p99" -v b="$BAR95" -v c="$BAR99" "BEGIN{exit !(p+0 < b && q+0 < c)}"'
 expect "DGM-073: the canvas draws only the visible cards ($(field "$b3" drawn_cards) of $n3)" '[ "$(field "$b3" drawn_cards)" -lt "$n3" ]'
+expect "DGM-022 / review: at 15 % the boxes still carry names (lod 0, $(field "$bf" drawn_labels) names drawn)" '[ "$(field "$bf" lod)" = 0 ] && [ "$(field "$bf" drawn_labels)" -gt 0 ]'
 expect "DGM-022: at 12 % the cards are boxes, at 100 % full" 'printf "%s\n" "$out" | grep -q "^dgmstate" && [ "$(field "$b3" lod)" = 2 ]'
 
 # Lume Intelligence through the loopback mock

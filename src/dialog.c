@@ -463,13 +463,13 @@ static void frame(Dialog *d, App *a, bool live) {
       if (!live && d->focus == 0) draw_rect_outline(r, nr, px(a, 1), color_hex(T_ACCENT)); }
     cy += row;
     ui_label(a, rect_make(x + pad, cy, lbl_w, fh), "Environment", ALIGN_LEFT, T_TEXT_MUTED);
-    { static const char *const envs[] = { "None", "DEV", "HML", "PROD" };
+    { static const char *const envs[] = { "None", "DEV", "STG", "PROD" };
       int pe = ui_segmented(a, rect_make(fx, cy, px(a, 260), fh), envs, 4, d->draft.env);
       if (pe >= 0 && live) {
           d->draft.env = pe;
           if (pe == CONN_ENV_PROD && !d->ro_touched && !d->draft.read_only) { d->draft.read_only = true; snprintf(d->msg, sizeof d->msg, "PROD: Read-only in Lume turned on (you can turn it off)."); d->msg_ok = true; }
       }
-      draw_text_fit(a->font_small, r, "HML = homologation / staging", -1, rect_make(fx + px(a, 272), cy, fw_full - px(a, 272), fh), color_hex(T_TEXT_DIM), ALIGN_LEFT); }
+      draw_text_fit(a->font_small, r, "STG = staging (pre-production)", -1, rect_make(fx + px(a, 272), cy, fw_full - px(a, 272), fh), color_hex(T_TEXT_DIM), ALIGN_LEFT); }
     cy += row;
     if (ui_checkbox(a, rect_make(fx, cy, px(a, 200), fh), "Read-only in Lume", d->draft.read_only, true) && live) { d->draft.read_only = !d->draft.read_only; d->ro_touched = true; }
     draw_text_fit(a->font_small, r, "Lume refuses writes; the database login itself is unchanged.", -1, rect_make(fx, cy + fh - px(a, 2), fw_full, px(a, 18)), color_hex(T_TEXT_DIM), ALIGN_LEFT);

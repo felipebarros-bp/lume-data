@@ -89,9 +89,12 @@ void dg_fit(App *a, DgDoc *d, bool only_sel) {
     if (!dgm_bounds(&d->d, only_sel, &x0, &y0, &x1, &y1)) { if (only_sel) dg_msg(d, "Fit Selection: nothing is selected"); return; }
     float cw = d->canvas.w / a->scale, ch = d->canvas.h / a->scale;
     if (cw < 50 || ch < 50) { d->need_fit = true; return; }
-    float m = 40, z = fminf((cw - 2 * m) / fmaxf(1, x1 - x0), (ch - 2 * m) / fmaxf(1, y1 - y0));
+    float mmw = d->minimap ? 200 : 0;   /* the minimap covers the bottom-right corner: frame beside it */
+    float m = 40, z = fminf((cw - 2 * m - mmw) / fmaxf(1, x1 - x0), (ch - 2 * m) / fmaxf(1, y1 - y0));
+    bool too_big = z < 0.1f;
     z = fmaxf(0.1f, fminf(only_sel ? 1.0f : 1.2f, z));   /* a small selection is not blown up (DGM-021) */
-    float px_ = (x0 + x1) / 2 - cw / (2 * z), py_ = (y0 + y1) / 2 - ch / (2 * z);
+    float px_ = (x0 + x1) / 2 - (cw - mmw) / (2 * z), py_ = (y0 + y1) / 2 - ch / (2 * z);
+    if (too_big) { dg_msg(d, "Too large to fit at a readable size: showing the centre (the minimap shows the whole)"); }
     cam_to(a, d, z, px_, py_, true);
     d->fitted = true; d->need_fit = false;
 }
@@ -347,7 +350,7 @@ static void doc_free(DgDoc *d) {
     if (d->lay_th) { d->lay_cancel = 1; SDL_WaitThread(d->lay_th, NULL); d->lay_th = NULL; }
     if (d->lay_copy) { free(d->lay_copy->n); free(d->lay_copy->e); free(d->lay_copy); d->lay_copy = NULL; }
     if (d->ai) { ai_free(d->ai); d->ai = NULL; }
-    free(d->ai_payload); free(d->ai_text); free(d->hits); free(d->drag_xy); free(d->iso); free(d->pick); free(d->pick_on);
+    free(d->ai_payload); free(d->ai_text); free(d->hits); free(d->pending_list); free(d->drag_xy); free(d->iso); free(d->pick); free(d->pick_on);
     dgm_free(&d->d);
     for (int i = 0; i < DG_MAX_DOCS; i++) if (DG.docs[i] == d) DG.docs[i] = NULL;
     free(d);
@@ -476,7 +479,7 @@ void dg_expand(App *a, DgDoc *d, int ti, int hops) {
     }
     dgm_snapshot(&d->d);
     int added = dgm_expand(&d->d, ti, hops, 150, false);
-    dg_measure(a, d); dg_layout(a, d, false); dg_iso_update(d); dg_touch(d);
+    dg_measure(a, d); dg_layout(a, d, false); dg_iso_update(d); dg_touch(d); d->need_fit = true;
     dg_msg(d, "Added %d related table%s", added, added == 1 ? "" : "s");
 }
 
@@ -499,10 +502,24 @@ static void run_pending(App *a, DgDoc *d) {
             dgm_open_focus(&d->d, ti, 40);
             int more = dgm_expand(&d->d, ti, 1, 0, true);
             dg_measure(a, d); dg_layout(a, d, false); d->need_fit = true;
+            int fn = dgm_find_node(&d->d, d->d.focus); if (fn >= 0) { dg_select_only(d, fn); snprintf(d->flash, sizeof d->flash, "%s", d->d.focus); }   /* the table it was opened on stands out */
             if (more) dg_msg(d, "+%d more related table%s: Show Neighbors adds them", more, more == 1 ? "" : "s");
         } else { int n = dg_add_hit(a, d, ti); if (n >= 0) { dg_select_only(d, n); dg_center_on(a, d, n, true); } }
         dg_touch(d);
     } else if (kind == 2) dg_open_picker(a, d, d->pending_schema);
+    else if (kind == 4 && d->pending_list) {   /* the tables picked in the Explorer, laid out together */
+        int added = 0, missing = 0; char *list = d->pending_list; d->pending_list = NULL;
+        for (char *t = strtok(list, "\n"); t; t = strtok(NULL, "\n")) {
+            int ti = find_table(k, d->pending_schema, t);
+            if (ti < 0) { missing++; continue; }
+            if (!added) dgm_key_of(&k->x, ti, d->d.focus, sizeof d->d.focus);
+            dgm_add_table(&d->d, ti, 0, (float)added * 10); added++;
+        }
+        free(list);
+        dgm_edges(&d->d); dg_measure(a, d); dg_layout(a, d, false); d->need_fit = true; dg_touch(d);
+        int more = 0; for (int i = 0; i < d->d.nn; i++) more += d->d.n[i].more;
+        dg_msg(d, "%d table%s%s%s", added, added == 1 ? "" : "s", missing ? " (some were not found in the scope)" : "", more ? ": +N on a card adds its related tables" : "");
+    }
 }
 bool dgmview_open_table(App *a, Connection *c, const char *schema, const char *table) {
     if (!c) return false;
@@ -514,6 +531,22 @@ bool dgmview_open_table(App *a, Connection *c, const char *schema, const char *t
     d->pending_kind = 0;
     if (open_tab(a, d) < 0) { doc_free(d); return false; }
     LOG_I("diagram: opened on %s (connection %s)", table, c->name);
+    return true;
+}
+bool dgmview_open_tables(App *a, Connection *c, const char *schema, const char *const *tables, int n) {
+    if (!c || n < 1) return false;
+    if (n == 1) return dgmview_open_table(a, c, schema, tables[0]);
+    if (!dialect_of(c)) { app_status(a, "ER diagrams are not available for %s connections yet", c->driver); return false; }
+    char sc[1200]; default_scope(a, c, sc, sizeof sc);
+    if (schema && *schema && strcmp(c->driver, "sqlite")) snprintf(sc, sizeof sc, "%s", schema);
+    char nm[120]; snprintf(nm, sizeof nm, "%s +%d", tables[0], n - 1);
+    DgDoc *d = doc_new(a, c, nm, sc); if (!d) return false;
+    size_t cap = 1; for (int i = 0; i < n; i++) cap += strlen(tables[i]) + 1;
+    d->pending_list = malloc(cap); d->pending_list[0] = 0;
+    for (int i = 0; i < n; i++) { strcat(d->pending_list, tables[i]); strcat(d->pending_list, "\n"); }
+    snprintf(d->pending_schema, sizeof d->pending_schema, "%s", schema && strcmp(c->driver, "sqlite") ? schema : "");
+    if (open_tab(a, d) < 0) { doc_free(d); return false; }
+    LOG_I("diagram: opened on %d tables picked in the Explorer (connection %s)", n, c->name);
     return true;
 }
 bool dgmview_new_for_schema(App *a, Connection *c, const char *schema) {
@@ -530,7 +563,6 @@ bool dgmview_new_empty(App *a, Connection *c) {
     DgDoc *d = doc_new(a, c, "New diagram", NULL); if (!d) return false;
     if (open_tab(a, d) < 0) { doc_free(d); return false; }
     d->find_focus = true;
-    dg_msg(d, "Find a table (Cmd+F) and press Enter to add it");
     return true;
 }
 bool dgmview_add_to_current(App *a, Connection *c, const char *schema, const char *table) {
@@ -571,7 +603,7 @@ void dgmview_pre_update(App *a) {
         DgDoc *d = DG.docs[i]; if (!d) continue;
         DgCat *k = dg_cat(d);
         if (k && k->state == CS_READY && d->cat_version != k->version) { dg_rebind(d); if (d->d.nn && !d->laid_out && !d->fitted) d->need_fit = true; d->laid_out = true; }
-        if (k && k->state == CS_READY && (d->pending_table[0] || d->pending_kind == 2)) run_pending(a, d);
+        if (k && k->state == CS_READY && (d->pending_table[0] || d->pending_kind == 2 || d->pending_list)) { if (d->pending_list) d->pending_kind = 4; run_pending(a, d); }
         lay_poll(a, d);
         if (d->ai) dg_ai_poll(a, d);
         if (d->d.dirty && d->d.nn && SDL_GetTicks() - d->dirty_at > 1000 && !d->lay_th) dg_save(a, d);
@@ -686,7 +718,7 @@ void dgmview_init(App *a) {
         { "dgm.note", "Diagram: Add Note", "annotation comment", DA_NOTE, false },
         { "dgm.area", "Diagram: Add Group Area", "domain module color", DA_AREA, false },
         { "dgm.entity", "Diagram: Add Logical Entity", "conceptual mer model", DA_ENTITY, false },
-        { "dgm.conceptual", "Diagram: Toggle Conceptual View", "business names mer", DA_CONCEPTUAL, false },
+        { "dgm.conceptual", "Diagram: Toggle Business Names", "conceptual view mer", DA_CONCEPTUAL, false },
         { "dgm.explain", "Diagram: Explain with Lume Intelligence", "ai assistant module", DA_AI_EXPLAIN, false },
         { "dgm.organise", "Diagram: Suggest Domain Groups (Lume Intelligence)", "ai organize arrange", DA_AI_ORGANISE, false },
         { "dgm.conceptual_ai", "Diagram: Suggest Conceptual Map (Lume Intelligence)", "ai business mer", DA_AI_CONCEPTUAL, false },
@@ -710,7 +742,7 @@ static DgDoc *doc_for_cmd(App *a) { DgDoc *d = dg_active(a); return d; }
 static int node_arg(DgDoc *d, const char *s) { return dgm_find_node(&d->d, s); }
 bool dgmview_ready(App *a) {
     DgDoc *d = dg_active(a); DgCat *k = dg_cat(d);
-    return d && k && k->state == CS_READY && d->cat_version == k->version && !d->pending_table[0] && !d->lay_th && !d->ai;
+    return d && k && k->state == CS_READY && d->cat_version == k->version && !d->pending_table[0] && !d->pending_list && !d->lay_th && !d->ai;
 }
 void dgmview_cmd(App *a, const char *arg) {
     char op[32] = "", r1[400] = "", r2[400] = "", r3[400] = "";
@@ -728,8 +760,12 @@ void dgmview_cmd(App *a, const char *arg) {
     DgDoc *d = doc_for_cmd(a);
     Connection *c = a->active;
     if (!strcmp(op, "open")) { Connection *cc = r2[0] ? NULL : c; for (int i = 0; r2[0] && a->conns && i < a->conns->n; i++) if (!strcmp(a->conns->items[i]->name, r2)) cc = a->conns->items[i]; char *dot = strrchr(r1, '.'); if (dot && cc && strcmp(cc->driver, "sqlite")) { *dot = 0; dgmview_open_table(a, cc, r1, dot + 1); } else dgmview_open_table(a, cc, "", r1); return; }
-    if (!strcmp(op, "new")) { dgmview_new_for_schema(a, c, r1); return; }
-    if (!strcmp(op, "empty")) { dgmview_new_empty(a, c); return; }
+    if (!strcmp(op, "new") || !strcmp(op, "empty")) {
+        const char *cn = !strcmp(op, "new") ? r2 : r1;
+        for (int i = 0; cn[0] && a->conns && i < a->conns->n; i++) if (!strcmp(a->conns->items[i]->name, cn)) c = a->conns->items[i];
+        if (!strcmp(op, "new")) dgmview_new_for_schema(a, c, r1); else dgmview_new_empty(a, c);
+        return;
+    }
     if (!strcmp(op, "openfile")) { dgmview_open_file(a, r1); return; }
     if (!d) { printf("dgm: no active diagram for \"%s\"\n", op); fflush(stdout); return; }
     DgCat *k = dg_cat(d);
@@ -739,7 +775,7 @@ void dgmview_cmd(App *a, const char *arg) {
     else if (!strcmp(op, "prev")) dg_find_step(a, d, -1);
     else if (!strcmp(op, "add")) { int ti = k && k->state == CS_READY ? schidx_find(&k->x, NULL, r1) : -1; if (ti >= 0) { int n = dg_add_hit(a, d, ti); dg_select_only(d, n); } else printf("dgm: no table %s\n", r1); }
     else if (!strcmp(op, "expand")) { int ti = k && k->state == CS_READY ? schidx_find(&k->x, NULL, r1) : -1; if (ti >= 0) dg_expand(a, d, ti, r2[0] ? atoi(r2) : 1); }
-    else if (!strcmp(op, "confirm")) { if (d->dlg == DLG_CONFIRM_ADD) { d->dlg = DLG_NONE; dgm_snapshot(&d->d); int added = dgm_expand(&d->d, d->confirm_ti, d->confirm_hops, 150, false); dg_measure(a, d); dg_layout(a, d, false); dg_msg(d, "Added %d related tables", added); } }
+    else if (!strcmp(op, "confirm")) { if (d->dlg == DLG_CONFIRM_ADD) dg_dialog_ok(a, d); }
     else if (!strcmp(op, "cancel")) d->dlg = DLG_NONE;
     else if (!strcmp(op, "sel")) { int n = node_arg(d, r1); if (r2[0] == '+') { if (n >= 0) d->d.n[n].sel = true; } else dg_select_only(d, n); }
     else if (!strcmp(op, "move")) { int n = node_arg(d, r1); if (n >= 0) { dgm_snapshot(&d->d); d->d.n[n].x += (float)atof(r2); d->d.n[n].y += (float)atof(r3); d->d.grid_ok = false; dg_touch(d); } }

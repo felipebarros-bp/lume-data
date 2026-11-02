@@ -23,6 +23,9 @@ dgm zoom 0.3
 wait 5
 dgm zoom 0.12
 wait 5
+dgm zoom 0.15
+wait 5
+dgmstate
 dgm zoom 1.0
 wait 5
 dragto "dgm:canvas" "+120 60"

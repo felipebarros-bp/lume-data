@@ -59,6 +59,7 @@ int dgm_route(const Dgm *d, int e, float *p) {
     const DgEdge *g = &d->e[e];
     const DgNode *a = &d->n[g->from], *b = &d->n[g->to];
     float off = (float)g->parallel * 10.0f - (float)(g->nparallel - 1) * 5.0f;   /* parallel edges side by side */
+    if (g->origin != DE_FK) off += 7.0f;   /* user relations never run on top of a foreign key into the same row */
     float ay = dgm_row_y(d, g->from, g->cols), by = dgm_row_y(d, g->to, g->ref_cols);
     if (ay < 0) ay = a->y + fminf(a->h, 60) / 2 + off;
     if (by < 0) by = b->y + fminf(b->h, 60) / 2 + off;
@@ -496,9 +497,15 @@ static void svg_body(Sb *b, const Dgm *d, bool only_sel, const DgSvgOpt *o, floa
                 bool fk = false; for (int k = 0; k < t->nfks; k++) if (dgm_col_in(t->fks[k].cols, c->name)) fk = true;
                 const char *tag = c->pk ? "PK" : fk ? "FK" : "";
                 sb_fmt(b, "<text x=\"%.1f\" y=\"%.1f\" fill=\"%s\" font-size=\"10\">%s</text>", n->x + 8, y, P->accent, tag);
-                sb_fmt(b, "<text x=\"%.1f\" y=\"%.1f\" fill=\"%s\"%s>", n->x + 30, y, P->text, c->notnull ? " font-weight=\"600\"" : "");
-                sb_xml(b, c->name); sb_cat(b, "</text>");
-                if (d->show_types && c->type) { sb_fmt(b, "<text x=\"%.1f\" y=\"%.1f\" fill=\"%s\" text-anchor=\"end\">", n->x + n->w - 8, y, P->muted); sb_xml(b, c->type); sb_cat(b, "</text>"); }
+                /* the viewer's font is not Lume's: estimate widths (7 units per character at 12 px) and squeeze
+                 * the name into the room the type leaves, so the two never overlap */
+                float tw = d->show_types && c->type ? 6.6f * (float)strlen(c->type) : 0;
+                float room = n->w - 38 - (tw > 0 ? tw + 10 : 0), nw = 7.0f * (float)strlen(c->name);
+                if (room < 20) room = 20;
+                sb_fmt(b, "<text class=\"col\" x=\"%.1f\" y=\"%.1f\" fill=\"%s\" data-room=\"%.0f\"", n->x + 30, y, c->notnull ? P->text : P->muted, room);
+                if (nw > room) sb_fmt(b, " textLength=\"%.0f\" lengthAdjust=\"spacingAndGlyphs\"", room);
+                sb_cat(b, ">"); sb_xml(b, c->name); sb_cat(b, "</text>");
+                if (tw > 0) { sb_fmt(b, "<text x=\"%.1f\" y=\"%.1f\" fill=\"%s\" text-anchor=\"end\">", n->x + n->w - 8, y, P->muted); sb_xml(b, c->type); sb_cat(b, "</text>"); }
             } else if (n->kind == DN_ENTITY) {
                 int line = 0; const char *p = n->attrs;
                 for (; *p && line < rows[r]; p++) if (*p == '\n') line++;
@@ -566,12 +573,14 @@ char *dgm_html(const Dgm *d, const DgSvgOpt *o) {
     free(svg);
     sb_cat(&b, "</div>\n<script>\n(function(){var s=document.querySelector('#v svg');s.removeAttribute('width');s.removeAttribute('height');var vb=s.getAttribute('viewBox').split(' ').map(Number),home=vb.slice();"
                "function set(){s.setAttribute('viewBox',vb.join(' '));}"
+               "function home0(){var r=document.getElementById('v').getBoundingClientRect(),k=Math.min(r.width/vb[2],r.height/vb[3]);if(k>1.25){var w=r.width/1.25,h=r.height/1.25,cx=vb[0]+vb[2]/2,cy=vb[1]+vb[3]/2;vb=[cx-w/2,cy-h/2,w,h];}home=vb.slice();set();}"
+               "[].forEach.call(document.querySelectorAll('text.col'),function(t){var room=+t.getAttribute('data-room');if(t.getComputedTextLength()>room){t.removeAttribute('textLength');var s=t.textContent;while(s.length>1&&t.getComputedTextLength()>room){s=s.slice(0,-1);t.textContent=s+'\\u2026';}}});"
                "function zoom(f,cx,cy){var w=vb[2]*f,h=vb[3]*f;if(w<50||w>1e6)return;cx=cx===undefined?vb[0]+vb[2]/2:cx;cy=cy===undefined?vb[1]+vb[3]/2:cy;vb=[cx-(cx-vb[0])*f,cy-(cy-vb[1])*f,w,h];set();}"
                "var v=document.getElementById('v'),drag=null;v.addEventListener('mousedown',function(e){drag=[e.clientX,e.clientY];v.style.cursor='grabbing';});"
                "window.addEventListener('mouseup',function(){drag=null;v.style.cursor='grab';});"
                "window.addEventListener('mousemove',function(e){if(!drag)return;var k=vb[2]/v.clientWidth;vb[0]-=(e.clientX-drag[0])*k;vb[1]-=(e.clientY-drag[1])*k;drag=[e.clientX,e.clientY];set();});"
                "v.addEventListener('wheel',function(e){e.preventDefault();var r=v.getBoundingClientRect(),k=vb[2]/r.width;zoom(e.deltaY>0?1.15:1/1.15,vb[0]+(e.clientX-r.left)*k,vb[1]+(e.clientY-r.top)*(vb[3]/r.height));},{passive:false});"
-               "document.getElementById('fit').onclick=function(){vb=home.slice();set();};document.getElementById('zi').onclick=function(){zoom(1/1.25);};document.getElementById('zo').onclick=function(){zoom(1.25);};"
+               "home0();window.addEventListener('resize',function(){});document.getElementById('fit').onclick=function(){vb=home.slice();set();};document.getElementById('zi').onclick=function(){zoom(1/1.25);};document.getElementById('zo').onclick=function(){zoom(1.25);};"
                "var q=document.getElementById('q'),c=document.getElementById('c'),hits=[],at=-1,cards=[].slice.call(document.querySelectorAll('g.card'));"
                "function show(){cards.forEach(function(g){g.classList.remove('hit');});if(at<0||!hits.length){c.textContent=q.value?'No match':'';return;}var g=hits[at];g.classList.add('hit');"
                "vb[0]=+g.getAttribute('data-x')-vb[2]/2;vb[1]=+g.getAttribute('data-y')-vb[3]/2;set();c.textContent=(at+1)+' of '+hits.length;}"
