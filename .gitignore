@@ -14,6 +14,8 @@ compile_commands.json
 .DS_Store
 .claude/
 
-# Markdown documents stay out of the repository for now (under review: README, LICENSING,
-# CLAUDE and docs/). Remove this line to version them.
+# Markdown documents stay out of the repository for now (docs/ under review), except the root ones
 *.md
+!/README.md
+!/LICENSING.md
+!/CLAUDE.md
