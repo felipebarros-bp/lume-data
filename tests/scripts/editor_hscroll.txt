@@ -1,0 +1,21 @@
+# the editor never scrolls sideways past its text: short lines stay put, a long line scrolls to its end only
+wait 300
+click 700 400
+key cmd+a
+type SELECT 1;
+wait 30
+wheel 700 400 0 -400
+wait 30
+edscroll
+wheel 700 400 -3 -1
+wait 30
+edscroll
+key cmd+a
+type SELECT 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' AS x;
+wait 30
+key cmd+Left
+wait 10
+wheel 700 400 0 -5000
+wait 30
+edscroll
+quit

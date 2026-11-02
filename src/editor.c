@@ -86,6 +86,7 @@ struct Editor {
     Rect text_rect;
     float gutter_w, line_h;
     uint32_t revision;
+    float widest; uint32_t widest_rev; float widest_lh;   /* widest line (px), for the horizontal scroll limit */
     /* diagnostics drawn under the text (object editor, OBJ-022): valid for marks_rev only */
     EdMark marks[EDITOR_MARKS_MAX]; int nmarks; uint32_t marks_rev;
     bool object_mode;    /* a definition, not a console: no "statement under the cursor" band */
@@ -1077,7 +1078,9 @@ static void editor_update_body(Editor *e, App *a, Rect body, bool focused) {
         }
     }
     if (hover && in->wheel_y != 0) e->scroll_ty -= in->wheel_y;
-    if (hover && in->wheel_x != 0) e->scroll_x = fmaxf(0, e->scroll_x - in->wheel_x);
+    /* sideways only when the gesture is mostly sideways (a vertical swipe on a trackpad carries a
+     * little horizontal motion too) */
+    if (hover && in->wheel_x != 0 && fabsf(in->wheel_x) > fabsf(in->wheel_y)) e->scroll_x = fmaxf(0, e->scroll_x - in->wheel_x);
     if (focused) handle_keys(e, a);
     track_statement(e, a);
 
@@ -1094,6 +1097,13 @@ static void editor_update_body(Editor *e, App *a, Rect body, bool focused) {
         else if (cx > e->scroll_x + text.w - px(a, 20)) e->scroll_x = cx - text.w + px(a, 60);
     }
     e->scroll_ty = clampf(e->scroll_ty, 0, max_scroll);
+    /* never further sideways than the widest line (plus a margin): nothing to show past it */
+    if (e->widest_rev != e->revision + 1 || e->widest_lh != e->line_h) {
+        float wmax = 0;
+        for (int i = 0; i < e->n; i++) { float w = font_width(f, e->lines[i].s, e->lines[i].len); if (w > wmax) wmax = w; }
+        e->widest = wmax; e->widest_rev = e->revision + 1; e->widest_lh = e->line_h;
+    }
+    e->scroll_x = clampf(e->scroll_x, 0, fmaxf(0, e->widest + px(a, 60) - text.w));
     e->scroll_y = a->reduce_motion ? e->scroll_ty : lerpf(e->scroll_y, e->scroll_ty, 0.4f);   /* PNL-039 */
     if (fabsf(e->scroll_y - e->scroll_ty) > 0.5f) a->animating = true; else e->scroll_y = e->scroll_ty;
 
@@ -1300,3 +1310,6 @@ void editor_replace_all(Editor *e, const char *text, int len) {
     editor_select_all(e);
     editor_insert(e, text, len);
 }
+
+/* Harness: the horizontal scroll and the widest line (px), to check the scroll stays within the text. */
+void editor_scroll_state(const Editor *e, float *sx, float *widest, float *view_w) { *sx = e->scroll_x; *widest = e->widest; *view_w = e->text_rect.w; }
