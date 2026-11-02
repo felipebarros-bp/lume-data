@@ -4487,7 +4487,12 @@ static void as_draw(void *view, void *ctx, DockRect drc, bool focused) {
     bool grew = total != G.chat_total; G.chat_total = total;
     float before = G.chat_scroll;
     if (G.chat_stick || G.chat_scroll > maxs) G.chat_scroll = maxs;   /* new content: show the newest */
-    if (G.chat_stick && G.ast == AS_PLAN && G.chat_scroll > g_card_top) G.chat_scroll = g_card_top;   /* an approval taller than the view: start at its title */
+    {   /* an approval taller than the view opens at its title, once; after that the user scrolls freely
+         * (scrolling to the end stays at the end) */
+        static bool snapped;
+        if (G.ast != AS_PLAN) snapped = false;
+        else if (!snapped) { snapped = true; if (G.chat_scroll > g_card_top) { G.chat_scroll = g_card_top; G.chat_stick = false; } }
+    }
     if (G.chat_scroll < 0) G.chat_scroll = 0;
     if (G.chat_scroll != before || grew) app_wake_in(a, 16);   /* redraw at the corrected position at once */
     ui_record("ai:chat", mid);
