@@ -11,7 +11,9 @@
 #include "log.h"
 #include <SDL3/SDL.h>
 #include <errno.h>
+#ifndef _WIN32
 #include <execinfo.h>
+#endif
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
@@ -60,9 +62,14 @@ static void crash_handler(int sig) {
     write_str(log_fd, head);
     write_str(STDERR_FILENO, head);
     void *frames[64];
+#ifndef _WIN32
     int n = backtrace(frames, 64);
     backtrace_symbols_fd(frames, n, log_fd >= 0 ? log_fd : STDERR_FILENO);
     if (log_fd >= 0) backtrace_symbols_fd(frames, n, STDERR_FILENO);
+#else
+    (void)frames;
+    write_str(log_fd, "(no backtrace on Windows yet)\n");
+#endif
     write_str(log_fd, "----- end of backtrace -----\n");
     if (log_fd >= 0) fsync(log_fd);
     /* let the system finish the job: default action, macOS crash report, non-zero exit */

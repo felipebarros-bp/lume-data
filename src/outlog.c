@@ -32,7 +32,7 @@
 /* Current wall-clock time in seconds since the epoch (sub-second precision). */
 static double now_s(void) { struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); return ts.tv_sec + ts.tv_nsec / 1e9; }
 /* strdup that passes NULL through. */
-static char *dup(const char *s) { return s ? strdup(s) : NULL; }
+static char *ol_dup(const char *s) { return s ? strdup(s) : NULL; }
 
 /* Static names used in text and JSON output; "?" / "unknown" for out-of-range values. */
 const char *outlog_level_name(int l) { static const char *const n[] = { "debug", "info", "success", "warning", "error" }; return l >= 0 && l < OL_COUNT ? n[l] : "?"; }
@@ -200,7 +200,7 @@ static void event_init(OutLog *l, OutEvent *e, int exec_id, int stmt_id, int typ
     memset(e, 0, sizeof *e);
     e->id = l->next_id++; e->seq = l->next_seq++; e->ts = now_s();
     e->exec_id = exec_id; e->stmt_id = stmt_id; e->type = (uint8_t)type; e->level = (uint8_t)level;
-    e->message = dup(message ? message : "");
+    e->message = ol_dup(message ? message : "");
     e->exec_ms = e->fetch_ms = e->render_ms = -1; e->rows_affected = e->rows_returned = e->rows_loaded = -1;
     e->err_line = e->err_col = -1; e->err_code = -1; e->autocommit = -1;
 }
@@ -234,7 +234,7 @@ OutEvent *outlog_push_sql(OutLog *l, int exec_id, int stmt_id, int type, int lev
 bool outlog_ingest(OutLog *l, const OutEvent *src) {
     for (int i = l->n - 1; i >= 0 && i >= l->n - 4096; i--) if (l->ev[i].id == src->id) { l->dedup_dropped++; return false; }
     OutEvent e = *src;
-    e.message = dup(src->message); e.sql = dup(src->sql); e.err_state = dup(src->err_state); e.err_detail = dup(src->err_detail); e.err_hint = dup(src->err_hint);
+    e.message = ol_dup(src->message); e.sql = ol_dup(src->sql); e.err_state = ol_dup(src->err_state); e.err_detail = ol_dup(src->err_detail); e.err_hint = ol_dup(src->err_hint);
     if (e.id >= l->next_id) l->next_id = e.id + 1;
     if (e.seq >= l->next_seq) l->next_seq = e.seq + 1;
     if (!outlog_exec(l, e.exec_id)) {

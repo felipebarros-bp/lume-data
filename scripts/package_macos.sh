@@ -38,7 +38,7 @@ chmod u+w "$APP/Contents/Frameworks/libSDL3.0.dylib"
 install_name_tool -id @rpath/libSDL3.0.dylib "$APP/Contents/Frameworks/libSDL3.0.dylib"
 install_name_tool -change "$SDL" @rpath/libSDL3.0.dylib "$BIN"
 # only the bundle's own rpath stays (the build machine's library folders say nothing on another Mac)
-for rp in $(otool -l "$BIN" | awk '/LC_RPATH/ { getline; getline; print $2 }'); do
+for rp in $(otool -l "$BIN" | awk '/LC_RPATH/ { getline; getline; print $2 }' | sort -u); do   # once per path: a universal binary lists each arch
   [ "$rp" = "@executable_path/../Frameworks" ] || install_name_tool -delete_rpath "$rp" "$BIN"
 done
 otool -l "$BIN" | grep -q '@executable_path/../Frameworks' || install_name_tool -add_rpath @executable_path/../Frameworks "$BIN"
