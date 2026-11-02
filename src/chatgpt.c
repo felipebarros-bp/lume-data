@@ -6,19 +6,26 @@
 #include "jw.h"
 #include "secstore.h"
 #include "sha256.h"
+#include "http.h"
+#ifdef _WIN32
+#include "proc_win.h"
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <arpa/inet.h>
-#include <errno.h>
-#include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
-#include <pthread.h>
 #include <spawn.h>
+#include <sys/socket.h>
+#include <sys/wait.h>
+#endif
+#include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -40,6 +47,11 @@ static void wipe(void *p, size_t n) { volatile unsigned char *q = p; while (n--)
 
 /* ---- small helpers ---- */
 static void rnd(unsigned char *b, size_t n) {
+#ifdef _WIN32
+    if (winproc_random(b, n)) return;
+    for (size_t w = 0; w < n; w++) b[w] = (unsigned char)(rand() ^ (int)time(NULL));
+    return;
+#endif
     int fd = open("/dev/urandom", O_RDONLY);
     size_t w = 0;
     if (fd >= 0) { while (w < n) { ssize_t r = read(fd, b + w, n - w); if (r <= 0) break; w += (size_t)r; } close(fd); }
@@ -259,11 +271,23 @@ static struct {
 } S = { .mu = PTHREAD_MUTEX_INITIALIZER, .lfd = -1 };
 
 static void set_state(int st, const char *msg) { pthread_mutex_lock(&S.mu); S.state = st; snprintf(S.msg, sizeof S.msg, "%s", msg ? msg : ""); pthread_mutex_unlock(&S.mu); }
+/* the loopback listener's socket calls, the same on every platform */
+#ifdef _WIN32
+#define SOCK_READ(c, b, n) recv((SOCKET)(c), (char *)(b), (int)(n), 0)
+#define SOCK_WRITE(c, b, n) send((SOCKET)(c), (const char *)(b), (int)(n), 0)
+#define SOCK_CLOSE(c) closesocket((SOCKET)(c))
+#define SOCK_POLL(p, n, ms) WSAPoll((p), (n), (ms))
+#else
+#define SOCK_READ(c, b, n) read((c), (b), (n))
+#define SOCK_WRITE(c, b, n) write((c), (b), (n))
+#define SOCK_CLOSE(c) close(c)
+#define SOCK_POLL(p, n, ms) poll((p), (n), (ms))
+#endif
 static void reply(int c, int code, const char *title, const char *text) {
     char body[1200];
     int bl = snprintf(body, sizeof body, "<!doctype html><meta charset=utf-8><title>Lume</title><body style=\"font:16px -apple-system,system-ui,sans-serif;margin:15vh auto;max-width:30em;text-align:center\"><h2>%s</h2><p>%s</p></body>", title, text);
     char h[300]; int hl = snprintf(h, sizeof h, "HTTP/1.1 %d %s\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: %d\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", code, code == 200 ? "OK" : code == 404 ? "Not Found" : "Bad Request", bl);
-    (void)!write(c, h, (size_t)hl); (void)!write(c, body, (size_t)bl);
+    (void)!SOCK_WRITE(c, h, (size_t)hl); (void)!SOCK_WRITE(c, body, (size_t)bl);
 }
 static void *listen_th(void *arg) {
     (void)arg;
@@ -272,32 +296,36 @@ static void *listen_th(void *arg) {
         if (S.cancel) { set_state(CS_FAILED, "Sign-in cancelled"); break; }
         if (time(NULL) > deadline) { set_state(CS_FAILED, "Sign-in timed out: try Continue with ChatGPT again"); break; }
         struct pollfd pf = { S.lfd, POLLIN, 0 };
-        if (poll(&pf, 1, 200) <= 0) continue;
-        int c = accept(S.lfd, NULL, NULL);
+        if (SOCK_POLL(&pf, 1, 200) <= 0) continue;
+        int c = (int)accept(S.lfd, NULL, NULL);
         if (c < 0) continue;
+        #ifdef _WIN32
+        DWORD tv = 5000; setsockopt((SOCKET)c, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
+#else
         struct timeval tv = { 5, 0 }; setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+#endif
         char req[8192]; size_t w = 0; ssize_t r;
-        while (w + 1 < sizeof req && (r = read(c, req + w, sizeof req - 1 - w)) > 0) { w += (size_t)r; req[w] = 0; if (strstr(req, "\r\n\r\n")) break; }
+        while (w + 1 < sizeof req && (r = SOCK_READ(c, req + w, sizeof req - 1 - w)) > 0) { w += (size_t)r; req[w] = 0; if (strstr(req, "\r\n\r\n")) break; }
         req[w] = 0;
         char path[4096] = ""; sscanf(req, "GET %4095s", path);
-        if (strncmp(path, "/auth/callback", 14)) { reply(c, 404, "Not found", ""); close(c); continue; }
+        if (strncmp(path, "/auth/callback", 14)) { reply(c, 404, "Not found", ""); SOCK_CLOSE(c); continue; }
         const char *q = strchr(path, '?'); q = q ? q + 1 : "";
         char code[2048], state[128], client[128], err[96], edesc[300];
         qget(q, "code", code, sizeof code); qget(q, "state", state, sizeof state); qget(q, "client_id", client, sizeof client);
         qget(q, "error", err, sizeof err); qget(q, "error_description", edesc, sizeof edesc);
-        if (strcmp(state, S.st)) { reply(c, 400, "Sign-in not recognised", "This answer does not belong to the sign-in Lume started. Close this tab and try again."); close(c); set_state(CS_FAILED, "The sign-in answer did not match (state): try again"); break; }
+        if (strcmp(state, S.st)) { reply(c, 400, "Sign-in not recognised", "This answer does not belong to the sign-in Lume started. Close this tab and try again."); SOCK_CLOSE(c); set_state(CS_FAILED, "The sign-in answer did not match (state): try again"); break; }
         if (err[0] || !code[0]) {
             reply(c, 400, "Sign-in not completed", "You can close this tab and return to Lume.");
-            close(c);
+            SOCK_CLOSE(c);
             char m[400]; snprintf(m, sizeof m, "ChatGPT sign-in was not completed%s%s%s%s", err[0] ? " (" : "", err, edesc[0] ? ": " : "", err[0] ? edesc : "");
             if (err[0]) strcat(m, ")");
             set_state(CS_FAILED, m); break;
         }
         /* the issued registration: kept and reused; a different one on a re-sign-in is refused */
         char saved[128], host[128]; reg_load(saved, sizeof saved, host, sizeof host);
-        if (saved[0] && client[0] && strcmp(saved, client)) { reply(c, 400, "Sign-in not recognised", "Close this tab and try again."); close(c); set_state(CS_FAILED, "ChatGPT returned a different app registration: sign-in refused"); wipe(code, sizeof code); break; }
+        if (saved[0] && client[0] && strcmp(saved, client)) { reply(c, 400, "Sign-in not recognised", "Close this tab and try again."); SOCK_CLOSE(c); set_state(CS_FAILED, "ChatGPT returned a different app registration: sign-in refused"); wipe(code, sizeof code); break; }
         reply(c, 200, "You're signed in", "Lume can now use your ChatGPT plan. You can close this tab and return to Lume.");
-        close(c);
+        SOCK_CLOSE(c);
         set_state(CS_EXCHANGING, "Finishing sign-in…");
         const char *cid = client[0] ? client : saved[0] ? saved : S.client_sent;
         if (client[0] && !saved[0]) reg_save(client, host);
@@ -317,22 +345,30 @@ static void *listen_th(void *arg) {
         else set_state(CS_FAILED, why);
         break;
     }
-    close(S.lfd); S.lfd = -1;
+    SOCK_CLOSE(S.lfd); S.lfd = -1;
     wipe(S.verifier, sizeof S.verifier);
     return NULL;
 }
 static void join_old(void) { if (S.running) { S.cancel = 1; pthread_join(S.th, NULL); S.running = false; } }
 bool chatgpt_signin_begin(char *url, int un, char *why, int wn) {
     join_old();
-    if (access("/usr/bin/curl", X_OK)) { snprintf(why, (size_t)wn, "/usr/bin/curl is not available"); return false; }
+    { char hw[200]; if (!http_available(hw, sizeof hw)) { snprintf(why, (size_t)wn, "%s", hw); return false; } }
     char sw[200]; if (!secstore_available(sw, sizeof sw)) { snprintf(why, (size_t)wn, "%s", sw); return false; }
+#ifdef _WIN32
+    { static bool wsa; if (!wsa) { WSADATA wd; wsa = WSAStartup(MAKEWORD(2, 2), &wd) == 0; } }
+    SOCKET ws = socket(AF_INET, SOCK_STREAM, 0);
+    int fd = ws == INVALID_SOCKET ? -1 : (int)ws;
+    if (fd < 0) { snprintf(why, (size_t)wn, "socket: error %d", WSAGetLastError()); return false; }
+    /* no SO_REUSEADDR on Windows: there it would let another program take the same port */
+#else
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) { snprintf(why, (size_t)wn, "socket: %s", strerror(errno)); return false; }
     int one = 1; setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+#endif
     struct sockaddr_in a; memset(&a, 0, sizeof a); a.sin_family = AF_INET; a.sin_port = htons((uint16_t)port()); a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     if (bind(fd, (struct sockaddr *)&a, sizeof a) || listen(fd, 4)) {
         snprintf(why, (size_t)wn, "Port %d on this machine is in use (another sign-in, or Codex, may be waiting there): close it and try again", port());
-        close(fd); return false;
+        SOCK_CLOSE(fd); return false;
     }
     S.lfd = fd; S.cancel = 0;
     /* PKCE (S256), state and nonce */
@@ -361,7 +397,7 @@ bool chatgpt_signin_begin(char *url, int un, char *why, int wn) {
     free(q);
     set_state(CS_WAITING, "Waiting for you to sign in in the browser…");
     S.running = pthread_create(&S.th, NULL, listen_th, NULL) == 0;
-    if (!S.running) { close(S.lfd); S.lfd = -1; set_state(CS_FAILED, "Could not start the sign-in listener"); snprintf(why, (size_t)wn, "Could not start the sign-in listener"); return false; }
+    if (!S.running) { SOCK_CLOSE(S.lfd); S.lfd = -1; set_state(CS_FAILED, "Could not start the sign-in listener"); snprintf(why, (size_t)wn, "Could not start the sign-in listener"); return false; }
     return true;
 }
 int chatgpt_signin_status(char *msg, int mn) {
@@ -373,19 +409,28 @@ int chatgpt_signin_status(char *msg, int mn) {
 }
 void chatgpt_signin_cancel(void) { join_old(); pthread_mutex_lock(&S.mu); if (S.state == CS_WAITING || S.state == CS_EXCHANGING) { S.state = CS_IDLE; S.msg[0] = 0; } pthread_mutex_unlock(&S.mu); }
 
-static void *reap(void *p) { pid_t pid = (pid_t)(intptr_t)p; int st; waitpid(pid, &st, 0); return NULL; }
 static void open_with(const char *url, bool test);
 void chatgpt_open_browser(const char *url) { const char *tb = getenv("LUME_TEST_BROWSER"); open_with(url, tb && !strcmp(tb, "curl")); }
 void chatgpt_open_url(const char *url) { if (getenv("LUME_SCRIPT")) return; open_with(url, false); }   /* tests never open a browser */
+/* tests: what a browser would do with the mock's sign-in page: follow its redirect to the loopback callback */
+static void *follow_th(void *p) {
+    char *url = p, *out = NULL, e[200]; int st = 0;
+    if (http_request("GET", url, NULL, NULL, 0, 20, true, NULL, NULL, NULL, &out, &st, e, sizeof e)) free(out);
+    free(url); return NULL;
+}
+#ifndef _WIN32
+static void *reap(void *p) { pid_t pid = (pid_t)(intptr_t)p; int st; waitpid(pid, &st, 0); return NULL; }
+#endif
 static void open_with(const char *url, bool test) {
-    char *argv[10]; int n = 0;
-    if (test) {   /* tests: follow the mock's redirect to the loopback callback */
-        argv[n++] = "/usr/bin/curl"; argv[n++] = "-sS"; argv[n++] = "-L"; argv[n++] = "--max-time"; argv[n++] = "20"; argv[n++] = "-o"; argv[n++] = "/dev/null"; argv[n++] = (char *)url;
-    }
-#if defined(__APPLE__)
-    else { argv[n++] = "/usr/bin/open"; argv[n++] = (char *)url; }
+    if (test) { pthread_t t; char *u = strdup(url); if (u && pthread_create(&t, NULL, follow_th, u) == 0) pthread_detach(t); else free(u); return; }
+#ifdef _WIN32
+    winproc_open_url(url);
 #else
-    else { argv[n++] = "xdg-open"; argv[n++] = (char *)url; }
+    char *argv[4]; int n = 0;
+#if defined(__APPLE__)
+    argv[n++] = "/usr/bin/open"; argv[n++] = (char *)url;
+#else
+    argv[n++] = "xdg-open"; argv[n++] = (char *)url;
 #endif
     argv[n] = NULL;
     extern char **environ;
@@ -393,4 +438,5 @@ static void open_with(const char *url, bool test) {
     if (posix_spawnp(&pid, argv[0], NULL, NULL, argv, environ) == 0) {
         pthread_t t; if (pthread_create(&t, NULL, reap, (void *)(intptr_t)pid) == 0) pthread_detach(t);
     }
+#endif
 }

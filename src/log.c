@@ -80,6 +80,11 @@ static void crash_handler(int sig) {
 /* Installs crash_handler for the fatal signals listed in log.h. SA_RESETHAND makes each
  * handler one-shot. */
 static void install_crash_handlers(void) {
+#ifdef _WIN32   /* the C runtime's signal(): no SIGBUS, no sigaction; the handler re-raises with SIG_DFL itself */
+    const int wsigs[] = { SIGSEGV, SIGABRT, SIGILL, SIGFPE };
+    for (size_t i = 0; i < sizeof wsigs / sizeof wsigs[0]; i++) signal(wsigs[i], crash_handler);
+    return;
+#else
     const int sigs[] = { SIGSEGV, SIGBUS, SIGABRT, SIGILL, SIGFPE };
     for (size_t i = 0; i < sizeof sigs / sizeof sigs[0]; i++) {
         struct sigaction sa;
@@ -89,6 +94,7 @@ static void install_crash_handlers(void) {
         sa.sa_flags = SA_RESETHAND;   /* a second fault inside the handler goes straight to default */
         sigaction(sigs[i], &sa, NULL);
     }
+#endif
 }
 
 /* ---- setup ------------------------------------------------------------- */
@@ -175,7 +181,8 @@ void log_writev(int level, const char *fmt, va_list ap) {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     struct tm tm;
-    localtime_r(&tv.tv_sec, &tm);
+    time_t sec = (time_t)tv.tv_sec;   /* a long on Windows, a time_t elsewhere */
+    localtime_r(&sec, &tm);
     char when[32];
     strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S", &tm);
 

@@ -32,10 +32,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <sys/resource.h>
+#include <sys/wait.h>
+#endif
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/wait.h>
 #include <stdint.h>
 #include <time.h>
 #include <unistd.h>
@@ -102,7 +104,9 @@ ExtractLimits extract_default_limits(const Extractor *e) {
 
 /* See extract.h. */
 bool extract_sandbox_available(void) {
-#if defined(__APPLE__)
+#if defined(_WIN32)
+    return false;   /* no OS sandbox Lume can drive yet: extractors do not run on Windows (BL-058) */
+#elif defined(__APPLE__)
     return access(SANDBOX_EXEC, X_OK) == 0;
 #else
     const char *paths[] = BWRAP_PATHS;
@@ -314,6 +318,10 @@ int extract_run(ExtractRun *run, const Extractor *e, const char *dest, const Ext
     res->exit_code = -1;
     if (!e->trusted) { res->status = EXTRACT_DENIED; snprintf(res->message, sizeof res->message, "extractor \"%s\" has not been approved", e->name); return res->status; }
     if (!extract_sandbox_available()) { res->status = EXTRACT_NO_SANDBOX; snprintf(res->message, sizeof res->message, "no sandbox is available on this system; extractors do not run without one"); return res->status; }
+#ifdef _WIN32
+    (void)run; (void)dest; (void)lim; (void)pump; (void)ud;
+    return res->status;   /* not reached: extract_sandbox_available() is false on Windows */
+#else
     ExtractLimits l = lim ? *lim : extract_default_limits(e);
     /* the program writes inside the scratch folder; the file is moved to `dest` on success */
     const char *ext = strrchr(dest, '.');
@@ -454,6 +462,7 @@ int extract_run(ExtractRun *run, const Extractor *e, const char *dest, const Ext
     res->status = EXTRACT_OK;
     snprintf(res->message, sizeof res->message, "%lld bytes in %.1f s", (long long)st.st_size, res->secs);
     return res->status;
+#endif
 }
 
 /* See extract.h. One tab-separated line appended per run; failures to open the log are

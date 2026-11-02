@@ -54,7 +54,7 @@ if(WIN32)
   if(NOT MSVC)
     target_compile_options(lume PRIVATE -include ${CMAKE_SOURCE_DIR}/src/compat_win.h)   # POSIX pieces Windows lacks
   endif()
-  target_link_libraries(lume PRIVATE psapi advapi32 ws2_32)   # advapi32: Credential Manager (secstore.c); ws2_32: sockets
+  target_link_libraries(lume PRIVATE psapi advapi32 ws2_32 winhttp bcrypt shell32)   # Credential Manager, sockets, HTTPS (http_win.c), random, opening URLs
 endif()
 if(MSVC)
   target_compile_options(lume PRIVATE /W4)

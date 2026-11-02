@@ -6,16 +6,14 @@
 #include "secstore.h"
 #include "chatgpt.h"
 #include "json.h"
+#include "http.h"
 #include <errno.h>
 #include <pthread.h>
-#include <signal.h>
-#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -107,27 +105,27 @@ bool ai_ready(const AiConfig *c, char *why, int n) {
     if (test_run_blocks_real_ai() && strcmp(c->provider, "none") && c->provider[0] && !loopback(c->endpoint)) { snprintf(why, (size_t)n, "Test run: only loopback AI endpoints are allowed (got %.120s)", c->endpoint); return false; }
     if (is_local(c)) {
         if (!loopback(c->endpoint)) { snprintf(why, (size_t)n, "provider=local needs an endpoint on this machine (http://127.0.0.1:<port>/...): nothing is sent elsewhere"); return false; }
-        if (access("/usr/bin/curl", X_OK)) { snprintf(why, (size_t)n, "/usr/bin/curl is not available"); return false; }
+        if (!http_available(why, (size_t)n)) return false;
         return true;
     }
     if (is_chatgpt(c)) {
         char email[128];
         if (!chatgpt_signed_in(email, sizeof email)) { snprintf(why, (size_t)n, "Not signed in to ChatGPT: Lume Intelligence > Settings > Continue with ChatGPT"); return false; }
         if (!c->model[0]) { snprintf(why, (size_t)n, "Choose a model in Lume Intelligence > Settings"); return false; }
-        if (access("/usr/bin/curl", X_OK)) { snprintf(why, (size_t)n, "/usr/bin/curl is not available"); return false; }
+        if (!http_available(why, (size_t)n)) return false;
         return true;
     }
     if (is_openai(c)) {
         if (!(c->key && *c->key) && ai_key_source_for("openai") == AK_NONE) { snprintf(why, (size_t)n, "No OpenAI API key yet: paste it in Lume Intelligence > Settings (it is kept in the %s, never in a file)", secstore_name()); return false; }
         if (!c->model[0]) { snprintf(why, (size_t)n, "Choose a model in Lume Intelligence > Settings"); return false; }
         if (!endpoint_ok(c->endpoint)) { snprintf(why, (size_t)n, "The AI endpoint must use https"); return false; }
-        if (access("/usr/bin/curl", X_OK)) { snprintf(why, (size_t)n, "/usr/bin/curl is not available"); return false; }
+        if (!http_available(why, (size_t)n)) return false;
         return true;
     }
     if (strcmp(c->provider, "anthropic")) { snprintf(why, (size_t)n, "Lume Intelligence is off: no AI provider is configured (set provider=anthropic in ai.txt in the preferences folder). Every local tool keeps working without it."); return false; }
     if (!(c->key && *c->key) && ai_key_source() == AK_NONE) { snprintf(why, (size_t)n, "No API key yet: paste it in Lume Intelligence > Settings (it is kept in the %s, never in a file)", secstore_name()); return false; }
     if (!endpoint_ok(c->endpoint)) { snprintf(why, (size_t)n, "The AI endpoint must use https"); return false; }
-    if (access("/usr/bin/curl", X_OK)) { snprintf(why, (size_t)n, "/usr/bin/curl is not available"); return false; }
+    if (!http_available(why, (size_t)n)) return false;
     return true;
 }
 
@@ -342,80 +340,28 @@ bool ai_parse_response_for(const AiConfig *c, const char *body, int http, AiResu
     return true;
 }
 
-/* ---- the curl child ---- */
-
-/* g_tmp: the prefs folder: request files live there (0600), not in /tmp */
-static const char *tmpdir(const char *d) { return d && *d ? d : g_tmp[0] ? g_tmp : "/tmp"; }
-/* a 0600 temp file holding s (NULL when it could not be written) */
-static bool tmpfile_with(const char *dir, const char *tag, const char *s, char *path, size_t pn) {
-    snprintf(path, pn, "%s/lume-ai-%s-XXXXXX", tmpdir(dir), tag);
-    mode_t old = umask(077); int fd = mkstemp(path); umask(old);
-    if (fd < 0) { path[0] = 0; return false; }
-    fchmod(fd, 0600);
-    size_t L = s ? strlen(s) : 0, w = 0;
-    while (w < L) { ssize_t r = write(fd, s + w, L - w); if (r <= 0) break; w += (size_t)r; }
-    close(fd);
-    if (w != L) { unlink(path); path[0] = 0; return false; }
-    return true;
-}
-/* runs curl; headers and body are read from files (never the command line). The child gets an
- * empty environment. Returns false with err when curl could not run or nothing came back. */
-typedef void (*ChunkFn)(void *ud, const char *buf, size_t len);
-static bool curl_run_ex(const char *method, const char *url, const char *hdr, const char *body, int timeout_s, pid_t *pidp, char **out, int *http, char *err, int en, ChunkFn chunk, void *ud);
-static bool curl_run(const char *method, const char *url, const char *hdr, const char *body, int timeout_s, pid_t *pidp, char **out, int *http, char *err, int en) {
-    return curl_run_ex(method, url, hdr, body, timeout_s, pidp, out, http, err, en, NULL, NULL);
-}
-static bool curl_run_ex(const char *method, const char *url, const char *hdr, const char *body, int timeout_s, pid_t *pidp, char **out, int *http, char *err, int en, ChunkFn chunk, void *ud) {
+/* ---- requests: in process (http.h), no external program; keys travel only as request headers ---- */
+static bool req_run(const char *method, const char *url, const char *hdr, const char *body, int timeout_s, volatile int *cancel,
+                    char **out, int *http, char *err, int en, HttpChunkFn chunk, void *ud) {
     *out = NULL; *http = 0;
-    int fd[2];
-    if (pipe(fd)) { snprintf(err, (size_t)en, "pipe: %s", strerror(errno)); return false; }
-    char tmo[16]; snprintf(tmo, sizeof tmo, "%d", timeout_s > 0 ? timeout_s : 60);
-    char hdrarg[1200], bodyarg[1200]; snprintf(hdrarg, sizeof hdrarg, "@%s", hdr); snprintf(bodyarg, sizeof bodyarg, "@%s", body ? body : "");
-    char *argv[16]; int n = 0;
-    argv[n++] = "/usr/bin/curl"; argv[n++] = "-sS"; argv[n++] = "--max-time"; argv[n++] = tmo;
-    argv[n++] = "-X"; argv[n++] = (char *)method; argv[n++] = (char *)url; argv[n++] = "-H"; argv[n++] = hdrarg;
-    if (body) { argv[n++] = "--data-binary"; argv[n++] = bodyarg; }
-    argv[n++] = "-w"; argv[n++] = "\n__LUME_HTTP__%{http_code}"; argv[n] = NULL;
-    posix_spawn_file_actions_t fa; posix_spawn_file_actions_init(&fa);
-    posix_spawn_file_actions_adddup2(&fa, fd[1], 1); posix_spawn_file_actions_adddup2(&fa, fd[1], 2); posix_spawn_file_actions_addclose(&fa, fd[0]);
-    char *env[] = { "PATH=/usr/bin:/bin", "LANG=C", NULL };   /* the child sees no key in its environment */
-    pid_t pid = 0;
-    int rc = posix_spawn(&pid, argv[0], &fa, NULL, argv, env);
-    posix_spawn_file_actions_destroy(&fa);
-    close(fd[1]);
-    if (rc) { close(fd[0]); snprintf(err, (size_t)en, "Could not start curl: %s", strerror(rc)); return false; }
-    if (pidp) *pidp = pid;
-    size_t cap = 65536, w = 0; char *o = malloc(cap);
-    ssize_t r;
-    while ((r = read(fd[0], o + w, cap - w - 1)) > 0) { if (chunk) chunk(ud, o + w, (size_t)r); w += (size_t)r; if (w + 1 >= cap) { cap *= 2; o = realloc(o, cap); } }
-    int st = 0; waitpid(pid, &st, 0);
-    close(fd[0]);
-    o[w] = 0;
-    char *mark = strstr(o, "\n__LUME_HTTP__");
-    if (mark) { *http = atoi(mark + 14); *mark = 0; }
-    if (*http == 0) { snprintf(err, (size_t)en, "Could not reach %s: %.200s", url, o[0] ? o : "no answer (timeout?)"); free(o); return false; }
-    *out = o;
+    char e[300] = "";
+    if (!http_request(method, url, hdr, body, body ? strlen(body) : 0, timeout_s, false, cancel, chunk, ud, out, http, e, sizeof e)) {
+        snprintf(err, (size_t)en, "Could not reach %s: %.200s", url, e[0] ? e : "no answer (timeout?)"); return false;
+    }
     return true;
 }
 bool ai_http(const char *method, const char *url, const char *headers, const char *body, int timeout_s, char **out, int *http, char *err, int en) {
     *out = NULL; *http = 0;
     if (!endpoint_ok(url) && !loopback(url)) { snprintf(err, (size_t)en, "Only https addresses are used"); return false; }
     if (test_run_blocks_real_ai() && !loopback(url)) { snprintf(err, (size_t)en, "Test run: only loopback addresses are allowed"); return false; }
-    char hp[1100], bp[1100] = "";
-    if (!tmpfile_with(NULL, "h", headers ? headers : "", hp, sizeof hp) || (body && !tmpfile_with(NULL, "b", body, bp, sizeof bp))) {
-        if (hp[0]) unlink(hp);
-        snprintf(err, (size_t)en, "Could not create the request files"); return false;
-    }
-    bool ok = curl_run(method, url, hp, body ? bp : NULL, timeout_s, NULL, out, http, err, en);
-    unlink(hp); if (bp[0]) unlink(bp);   /* the token file never outlives the request */
-    return ok;
+    return req_run(method, url, headers ? headers : "", body, timeout_s, NULL, out, http, err, en, NULL, NULL);
 }
+static void wipe_free(char *s) { if (!s) return; volatile char *q = s; while (*q) *q++ = 0; free(s); }
 
 struct AiJob {
     pthread_t th; bool started;
     pthread_mutex_t mu; char *raw; size_t nraw, capraw;   /* what curl has delivered so far (streamed requests) */
-    pid_t pid;
-    char hdr[1100], body[1100];
+    char *hdrs, *reqbody;         /* the request headers (a key may be in them: wiped after use) and body */
     AiConfig cfg;                 /* a copy, without the key pointer */
     volatile int done, cancel;
     AiResult res;
@@ -459,16 +405,17 @@ static void *worker(void *arg) {
         char *tok = NULL, why[300] = "";
         if (!chatgpt_access_token(&tok, why, sizeof why)) {
             snprintf(j->res.err, sizeof j->res.err, "%s", why[0] ? why : "Sign in to ChatGPT again");
-            unlink(j->hdr); unlink(j->body); __atomic_store_n(&j->done, 1, __ATOMIC_SEQ_CST); return NULL;
+            wipe_free(j->hdrs); j->hdrs = NULL; free(j->reqbody); j->reqbody = NULL;
+            __atomic_store_n(&j->done, 1, __ATOMIC_SEQ_CST); return NULL;
         }
-        FILE *h = fopen(j->hdr, "w");
-        if (h) { fprintf(h, "Authorization: Bearer %s\ncontent-type: application/json\naccept: text/event-stream\n", tok); fclose(h); }
+        size_t hn = strlen(tok) + 160; char *h = malloc(hn);
+        snprintf(h, hn, "Authorization: Bearer %s\ncontent-type: application/json\naccept: text/event-stream\n", tok);
         secstore_free(tok);
-        if (!h) { snprintf(j->res.err, sizeof j->res.err, "Could not write the request files"); unlink(j->hdr); unlink(j->body); __atomic_store_n(&j->done, 1, __ATOMIC_SEQ_CST); return NULL; }
+        wipe_free(j->hdrs); j->hdrs = h;
     }
     char *out = NULL; int http = 0; char err[400] = "";
-    bool ok = !j->cancel && curl_run_ex("POST", j->cfg.endpoint, j->hdr, j->body, j->cfg.timeout_s, &j->pid, &out, &http, err, sizeof err, j->cfg.stream ? on_chunk : NULL, j);
-    unlink(j->hdr); unlink(j->body);   /* the key file never outlives the request */
+    bool ok = !j->cancel && req_run("POST", j->cfg.endpoint, j->hdrs, j->reqbody, j->cfg.timeout_s, &j->cancel, &out, &http, err, sizeof err, j->cfg.stream ? on_chunk : NULL, j);
+    wipe_free(j->hdrs); j->hdrs = NULL; free(j->reqbody); j->reqbody = NULL;   /* the key never outlives the request */
     if (j->cancel) snprintf(j->res.err, sizeof j->res.err, "Cancelled");
     else if (!ok) snprintf(j->res.err, sizeof j->res.err, "Could not reach the AI provider: %s", err);
     else ai_parse_response_for(&j->cfg, out, http, &j->res);
@@ -484,7 +431,7 @@ AiJob *ai_start(const AiConfig *c, const char *system, const char *user, const c
     if (!ai_ready(c, why, sizeof why)) { snprintf(j->res.err, sizeof j->res.err, "%s", why); j->done = 1; return j; }
     j->cfg = *c; j->cfg.key = NULL;
     /* the key: being tested, else the environment, else the OS secret store; the copy read from
-     * the store is wiped as soon as it is in the 0600 header file (deleted after the request) */
+     * the store is wiped once it is in the request headers (themselves wiped after the request) */
     char *stored = NULL;
     const char *key = NULL;
     if (is_local(c)) key = key_for(c);
@@ -497,14 +444,11 @@ AiJob *ai_start(const AiConfig *c, const char *system, const char *user, const c
                   key ? "x-api-key: " : "", key ? key : "", key ? "\n" : "",
                   c->fallback && !is_local(c) ? "anthropic-beta: server-side-fallback-2026-07-01\n" : "");
     secstore_free(stored);
-    bool hok = tmpfile_with(tmp_dir, "h", hb, j->hdr, sizeof j->hdr);
-    { volatile char *q = hb; while (*q) *q++ = 0; } free(hb);
-    char *req = ai_request_json(c, system, user);
-    bool bok = tmpfile_with(tmp_dir, "b", req, j->body, sizeof j->body);
-    free(req);
-    if (!hok || !bok) { if (j->hdr[0]) unlink(j->hdr); if (j->body[0]) unlink(j->body); snprintf(j->res.err, sizeof j->res.err, "Could not create the request files"); j->done = 1; return j; }
+    (void)tmp_dir;   /* nothing is written to disk any more */
+    j->hdrs = hb;
+    j->reqbody = ai_request_json(c, system, user);
     j->started = pthread_create(&j->th, NULL, worker, j) == 0;
-    if (!j->started) { unlink(j->hdr); unlink(j->body); snprintf(j->res.err, sizeof j->res.err, "Could not start the request thread"); j->done = 1; }
+    if (!j->started) { wipe_free(j->hdrs); j->hdrs = NULL; free(j->reqbody); j->reqbody = NULL; snprintf(j->res.err, sizeof j->res.err, "Could not start the request thread"); j->done = 1; }
     return j;
 }
 
@@ -556,7 +500,7 @@ int ai_list_models(const AiConfig *c, char out[][96], int max, char *err, int en
     return n;
 }
 bool ai_done(AiJob *j) { return __atomic_load_n(&j->done, __ATOMIC_SEQ_CST) != 0; }
-void ai_cancel(AiJob *j) { if (!j || ai_done(j)) return; j->cancel = 1; if (j->pid > 0) kill(j->pid, SIGTERM); }
+void ai_cancel(AiJob *j) { if (!j || ai_done(j)) return; j->cancel = 1; }   /* the request checks it as it runs */
 const AiResult *ai_result(AiJob *j) { return &j->res; }
 double ai_elapsed(AiJob *j) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (double)(t.tv_sec - j->t0.tv_sec) + (t.tv_nsec - j->t0.tv_nsec) / 1e9; }
 void ai_free(AiJob *j) {

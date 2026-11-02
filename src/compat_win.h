@@ -29,6 +29,14 @@ static inline char *lume_strcasestr(const char *h, const char *n) {
 }
 #define strcasestr lume_strcasestr
 
+/* memmem: a byte string inside another */
+static inline void *lume_memmem(const void *h, size_t hl, const void *n, size_t nl) {
+    if (!nl) return (void *)h;
+    for (const char *p = h; hl >= nl; p++, hl--) if (!memcmp(p, n, nl)) return (void *)p;
+    return NULL;
+}
+#define memmem lume_memmem
+
 /* the thread-safe time conversions (UCRT has the _s forms, arguments swapped) */
 static inline struct tm *lume_localtime_r(const time_t *t, struct tm *r) { return localtime_s(r, t) ? NULL : r; }
 static inline struct tm *lume_gmtime_r(const time_t *t, struct tm *r) { return gmtime_s(r, t) ? NULL : r; }
@@ -36,10 +44,35 @@ static inline struct tm *lume_gmtime_r(const time_t *t, struct tm *r) { return g
 #define gmtime_r lume_gmtime_r
 #define timegm _mkgmtime
 
+/* signals and file flags Windows does not have (never raised / not needed there) */
+#include <fcntl.h>
+#include <signal.h>
+#ifndef SIGBUS
+#define SIGBUS 10
+#endif
+#ifndef O_CLOEXEC
+#define O_CLOEXEC _O_NOINHERIT
+#endif
+
 /* files */
 #define fsync(fd) _commit(fd)
 #define realpath(p, r) _fullpath((r), (p), 4096)
 #define mkdir(p, mode) _mkdir(p)
+/* no symbolic links to tell apart: lstat is stat */
+#define lstat stat
+#ifndef S_ISLNK
+#define S_ISLNK(m) 0
+#endif
+/* mkdtemp: the template's trailing XXXXXX made unique, then created */
+static inline char *lume_mkdtemp(char *tpl) {
+    size_t L = strlen(tpl);
+    for (int tries = 0; tries < 100; tries++) {
+        if (L >= 6) for (size_t i = L - 6; i < L; i++) tpl[i] = "abcdefghijklmnopqrstuvwxyz0123456789"[rand() % 36];
+        if (_mkdir(tpl) == 0) return tpl;
+    }
+    return NULL;
+}
+#define mkdtemp lume_mkdtemp
 
 /* getline: a line of any length, grown with realloc (POSIX semantics) */
 static inline long long lume_getline(char **lp, size_t *n, FILE *f) {

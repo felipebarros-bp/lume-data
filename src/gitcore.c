@@ -4,19 +4,27 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <poll.h>
 #include <signal.h>
+#ifdef _WIN32
+#include "proc_win.h"
+#include <pthread.h>
+#include <windows.h>
+#else
+#include <poll.h>
 #include <spawn.h>
+#include <sys/wait.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
 #include <sys/time.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
-extern char **environ;
+#ifndef _WIN32
+extern char **environ;   /* Windows: stdlib.h has it */
+#endif
 
 static double now_ms(void) { struct timeval tv; gettimeofday(&tv, NULL); return tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0; }
 
@@ -98,6 +106,77 @@ static char **build_env(bool no_locks) {
 
 /* ---- running ---- */
 void gitc_out_free(GitOut *o) { free(o->out); o->out = NULL; o->out_len = 0; }
+#ifdef _WIN32
+/* stdin on its own thread: Windows pipes block, and a large patch must not deadlock against git's output */
+typedef struct { int fd; const char *in; size_t len; } StdinJob;
+static void *stdin_th(void *p) {
+    StdinJob *j = p; size_t w = 0;
+    while (w < j->len) { int k = _write(j->fd, j->in + w, (unsigned)(j->len - w > 65536 ? 65536 : j->len - w)); if (k <= 0) break; w += (size_t)k; }
+    _close(j->fd); return NULL;
+}
+bool gitc_run(const char *git, const char *cwd, const char *const *argv, const GitOpts *o, GitOut *out) {
+    memset(out, 0, sizeof *out); out->exit_code = -1;
+    GitOpts def = { 0 }; if (!o) o = &def;
+    int timeout = o->timeout_ms > 0 ? o->timeout_ms : 60000;
+    size_t cap = o->max_out ? o->max_out : (size_t)64 << 20;
+    int na = 0; while (argv[na]) na++;
+    const char **av = calloc((size_t)na + 2, sizeof *av); av[0] = git; for (int i = 0; i < na; i++) av[i + 1] = argv[i];
+    char **env = build_env(o->no_optional_locks);
+    int pin = -1, pout = -1, perr = -1;
+    double t0 = now_ms();
+    WinProc *pr = winproc_start(av, (const char *const *)env, cwd, false, &pin, &pout, &perr, out->err, sizeof out->err);
+    free(av); free(env);
+    if (!pr) { out->spawn_failed = true; return false; }
+    StdinJob sj = { pin, o->stdin_data, o->stdin_data ? strlen(o->stdin_data) : 0 };
+    pthread_t sth; bool sth_on = false;
+    if (sj.len) sth_on = pthread_create(&sth, NULL, stdin_th, &sj) == 0;
+    if (!sth_on) _close(pin);
+    size_t ocap = 65536; out->out = malloc(ocap); out->out[0] = 0;
+    char ebuf[16384]; size_t elen = 0;
+    bool oopen = true, eopen = true, exited = false; int code = -1;
+    while (oopen || eopen || !exited) {
+        bool idle = true;
+        if (oopen) {
+            long n = winproc_peek(pout);
+            if (n < 0) { oopen = false; _close(pout); }
+            else if (n > 0) {
+                char b[65536]; int k = _read(pout, b, (unsigned)(n < (long)sizeof b ? n : (long)sizeof b)); idle = false;
+                if (k <= 0) { oopen = false; _close(pout); }
+                else if (out->out_len + (size_t)k < cap) {
+                    if (out->out_len + (size_t)k + 1 > ocap) { while (out->out_len + (size_t)k + 1 > ocap) ocap *= 2; out->out = realloc(out->out, ocap); }
+                    memcpy(out->out + out->out_len, b, (size_t)k); out->out_len += (size_t)k; out->out[out->out_len] = 0;
+                } else out->truncated = true;
+            }
+        }
+        if (eopen) {
+            long n = winproc_peek(perr);
+            if (n < 0) { eopen = false; _close(perr); }
+            else if (n > 0) {
+                char b[4096]; int k = _read(perr, b, (unsigned)(n < (long)sizeof b ? n : (long)sizeof b)); idle = false;
+                if (k <= 0) { eopen = false; _close(perr); }
+                else for (int q = 0; q < k; q++) { if (elen == sizeof ebuf - 1) { memmove(ebuf, ebuf + 4096, elen - 4096); elen -= 4096; } ebuf[elen++] = b[q]; }
+            }
+        }
+        if (!exited) exited = winproc_exited(pr, &code);
+        bool cancel = o->cancel && *o->cancel;
+        if (!exited && (now_ms() - t0 > timeout || cancel)) {
+            if (cancel) out->cancelled = true; else out->timed_out = true;
+            winproc_kill(pr); winproc_wait(pr); exited = true;
+        }
+        if (exited && (out->timed_out || out->cancelled)) { if (oopen) { _close(pout); oopen = false; } if (eopen) { _close(perr); eopen = false; } }
+        if (idle) Sleep(5);
+    }
+    if (sth_on) pthread_join(sth, NULL);
+    winproc_free(pr);
+    out->ms = now_ms() - t0;
+    if (!out->timed_out && !out->cancelled) out->exit_code = code;
+    ebuf[elen] = 0;
+    const char *tail = elen > sizeof out->err - 1 ? ebuf + elen - (sizeof out->err - 1) : ebuf;
+    gitc_redact(tail, out->err, sizeof out->err);
+    size_t L = strlen(out->err); while (L && isspace((unsigned char)out->err[L - 1])) out->err[--L] = 0;
+    return out->exit_code == 0;
+}
+#else
 bool gitc_run(const char *git, const char *cwd, const char *const *argv, const GitOpts *o, GitOut *out) {
     memset(out, 0, sizeof *out); out->exit_code = -1;
     GitOpts def = { 0 }; if (!o) o = &def;
@@ -171,15 +250,24 @@ bool gitc_run(const char *git, const char *cwd, const char *const *argv, const G
     size_t L = strlen(out->err); while (L && isspace((unsigned char)out->err[L - 1])) out->err[--L] = 0;
     return out->exit_code == 0;
 }
+#endif
 
 /* ---- executable ---- */
 bool gitc_find(const char *preferred, char *path, int pn, char *version, int vn, char *why, int wn) {
     const char *cand[8]; int nc = 0;
     if (preferred && *preferred) cand[nc++] = preferred;
     const char *env = getenv("LUME_GIT"); if (env && *env) cand[nc++] = env;
+#ifdef _WIN32
+    static char onpath[MAX_PATH];
+    if (SearchPathA(NULL, "git.exe", NULL, sizeof onpath, onpath, NULL)) cand[nc++] = onpath;   /* Git for Windows puts it on PATH */
+    cand[nc++] = "C:\\Program Files\\Git\\cmd\\git.exe"; cand[nc++] = "C:\\Program Files (x86)\\Git\\cmd\\git.exe";
+#define LUME_EXEC_OK(p) (_access((p), 0) == 0)
+#else
     cand[nc++] = "/usr/bin/git"; cand[nc++] = "/opt/homebrew/bin/git"; cand[nc++] = "/usr/local/bin/git";
+#define LUME_EXEC_OK(p) (access((p), X_OK) == 0)
+#endif
     for (int i = 0; i < nc; i++) {
-        if (access(cand[i], X_OK)) continue;
+        if (!LUME_EXEC_OK(cand[i])) continue;
         const char *av[] = { "--version", NULL };
         GitOpts o = { .timeout_ms = 15000 }; GitOut r;
         bool ok = gitc_run(cand[i], NULL, av, &o, &r);
@@ -192,7 +280,12 @@ bool gitc_find(const char *preferred, char *path, int pn, char *version, int vn,
         }
         gitc_out_free(&r);
     }
-    snprintf(why, (size_t)wn, "%s", preferred && *preferred ? "the configured Git does not run; install Git (https://git-scm.com) or fix git= in git.txt" : "Git was not found: install it (Xcode Command Line Tools: xcode-select --install, or https://git-scm.com) or set git=<path> in git.txt");
+    snprintf(why, (size_t)wn, "%s", preferred && *preferred ? "the configured Git does not run; install Git (https://git-scm.com) or fix git= in git.txt" : 
+#ifdef _WIN32
+        "Git was not found: install Git for Windows (https://git-scm.com) or set git=<path> in git.txt");
+#else
+        "Git was not found: install it (Xcode Command Line Tools: xcode-select --install, or https://git-scm.com) or set git=<path> in git.txt");
+#endif
     return false;
 }
 
