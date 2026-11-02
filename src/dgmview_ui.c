@@ -97,9 +97,12 @@ void dg_toolbar(App *a, DgDoc *d, Rect bar) {
         x += segw + px(a, 8);
         for (size_t i = 0; i < sizeof it / sizeof it[0]; i++) { tb_btn(a, &x, y, h, it[i].lab, it[i].style, it[i].en, &c, it[i].tag); if (c) dg_action(a, d, it[i].act); }
         if (x + font_width(a->font_ui, "Business names", -1) + px(a, 22) <= right) { x += px(a, 4); tb_btn(a, &x, y, h, "Business names", d->d.conceptual ? BTN_SELECTED : BTN_QUIET, true, &c, "dgm:conceptual"); if (c) dg_action(a, d, DA_CONCEPTUAL); }
-    } else if (x + px(a, 120) <= right) {
-        tb_btn(a, &x, y, h, "Layout", BTN_QUIET, d->d.nn > 0 && !d->lay_th, &c, "dgm:layout"); if (c) dg_action(a, d, DA_LAYOUT);
-        tb_btn(a, &x, y, h, "Fit", BTN_QUIET, d->d.nn > 0, &c, "dgm:fit"); if (c) dg_action(a, d, DA_FIT);
+    } else {   /* narrow: zoom first (always reachable), then layout / fit when they fit */
+        tb_btn(a, &x, y, h, "\xE2\x80\x93", BTN_QUIET, true, &c, "dgm:zoomout"); if (c) dg_action(a, d, DA_ZOOM_OUT);
+        tb_btn(a, &x, y, h, zl, BTN_QUIET, true, &c, "dgm:zoom"); if (c) dg_action(a, d, DA_ZOOM_100);
+        tb_btn(a, &x, y, h, "+", BTN_QUIET, true, &c, "dgm:zoomin"); if (c) dg_action(a, d, DA_ZOOM_IN);
+        if (x + px(a, 110) <= right) { tb_btn(a, &x, y, h, "Fit", BTN_QUIET, d->d.nn > 0, &c, "dgm:fit"); if (c) dg_action(a, d, DA_FIT); }
+        if (x + px(a, 80) <= right) { tb_btn(a, &x, y, h, "Layout", BTN_QUIET, d->d.nn > 0 && !d->lay_th, &c, "dgm:layout"); if (c) dg_action(a, d, DA_LAYOUT); }
     }
 }
 
@@ -179,7 +182,10 @@ void dg_find_list(App *a, DgDoc *d) {
     Rect fr; if (!ui_target("dgm:findfield", &fr)) return;
     int show = d->nhits < 12 ? d->nhits : 12;
     float rh = px(a, 24), fh = px(a, 30);
-    Rect box = rect_make(fr.x, fr.y + fr.h + px(a, 2), fmaxf(fr.w + px(a, 200), px(a, 440)), fh + rh * (float)(show ? show : 1) + px(a, 26));
+    float chips = px(a, 12);
+    { static const char *const lab[] = { "Tables", "Columns", "Constraints", "Notes", "Contains", "Prefix", "Exact", "Glob", "Match case" };
+      for (int i = 0; i < 9; i++) chips += font_width(a->font_small, lab[i], -1) + px(a, 17); chips += px(a, 6); }
+    Rect box = rect_make(fr.x, fr.y + fr.h + px(a, 2), fminf(fmaxf(chips, px(a, 440)), d->body.x + d->body.w - fr.x - px(a, 8)), fh + rh * (float)(show ? show : 1) + px(a, 26));
     draw_rrect(R, rect_inset(box, -1, -1), px(a, 6), C(T_BORDER));
     draw_rrect(R, box, px(a, 6), C(T_PANEL));
     ui_record("dgm:findlist", box);

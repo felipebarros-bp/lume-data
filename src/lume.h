@@ -73,6 +73,7 @@ typedef struct Input {
     bool mouse_rpressed;                     /* right button, this frame */
     int clicks;                              /* click count of this frame's press */
     float wheel_x, wheel_y;                  /* in render pixels */
+    float pinch;                             /* trackpad pinch this frame: product of the scale changes (1 = none) */
     KeyPress keys[LUME_MAX_KEYS]; int nkeys; /* key presses this frame, in order */
     char text[2048]; int ntext;              /* UTF-8 typed this frame */
 } Input;

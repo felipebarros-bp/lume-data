@@ -112,6 +112,28 @@ void dialog_open(Dialog *d, App *a, Connection *existing) {
     (void)a;
 }
 
+void dialog_open_copy(Dialog *d, App *a, const Connection *src) {
+    dialog_open(d, a, NULL);
+    if (!src) return;
+    int n; const DriverInfo *all = driver_infos(&n);
+    snprintf(d->draft.driver, sizeof d->draft.driver, "%s", src->driver);
+    d->driver_idx = 0;
+    for (int i = 0; i < n; i++) if (strcmp(all[i].id, d->draft.driver) == 0) d->driver_idx = i;
+    const DriverInfo *di = drv(d);
+    for (int i = 0; i < di->nfields && i < CONN_MAX_FIELDS; i++)   /* passwords are never copied */
+        snprintf(d->draft.values[i], CONN_VALUE_LEN, "%s", di->fields[i].type == FIELD_PASSWORD ? "" : src->values[i]);
+    d->draft.env = src->env; d->draft.env_color = src->env_color; d->draft.read_only = src->read_only;
+    char nm[80]; snprintf(nm, sizeof nm, "%.56s (copy)", src->name);
+    snprintf(d->draft.name, sizeof d->draft.name, "%s", nm);
+    textfield_set(&d->name, d->draft.name);
+    load_fields(d);
+    d->step = 1;   /* straight to the fields: the database is already chosen */
+    d->ro_touched = true;
+    bool has_pw = false; for (int i = 0; i < di->nfields; i++) if (di->fields[i].type == FIELD_PASSWORD) has_pw = true;
+    snprintf(d->msg, sizeof d->msg, "%s", has_pw ? "A copy of the connection: enter the password (it is never copied)." : "A copy of the connection.");
+    d->msg_ok = true;
+}
+
 /* Changes the draft's driver. Values of fields with the same key in both drivers are kept (the
  * text fields hold the latest edits); the others take the new driver's defaults. */
 static void switch_driver(Dialog *d, int idx) {

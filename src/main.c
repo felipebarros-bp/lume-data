@@ -208,11 +208,17 @@ static void set_title(App *a) {
 
 /* Completer callback: load a table's columns lazily through its connection. */
 static bool load_cols_cb(void *ctx, DbTable *t) { return conn_load_columns((Connection *)ctx, t); }
+/* Completer callback: a table's foreign keys (JOIN ... ON), read once through the connection */
+static bool load_fks_cb(void *ctx, const char *table, DbFk **out, int *n) {
+    Connection *c = ctx; char err[200];
+    if (!c || !c->db || !c->db->drv->list_fks || c->db->busy) return false;
+    return c->db->drv->list_fks(c->db, table, out, n, err, sizeof err);
+}
 
 /* Point the completer at the active connection's cached schema (or clear it). */
 void app_refresh_schema(App *a) {
     Connection *c = a->active;
-    if (c && c->db) complete_set_schema(a->completer, c->tables, c->ntables, c->id, load_cols_cb, c);
+    if (c && c->db) { complete_set_schema(a->completer, c->tables, c->ntables, c->id, load_cols_cb, c); complete_set_fk_loader(a->completer, load_fks_cb); }
     else complete_set_schema(a->completer, NULL, 0, NULL, NULL, NULL);
 }
 
@@ -543,6 +549,9 @@ void app_input_event(App *a, const SDL_Event *e) {
         in->wheel_y += sy * step;
         break;
     }
+    case SDL_EVENT_PINCH_UPDATE:   /* trackpad pinch: views that zoom read the factor (diagrams) */
+        if (e->pinch.scale > 0) in->pinch *= e->pinch.scale;
+        break;
     case SDL_EVENT_KEY_DOWN:
         if (in->nkeys < LUME_MAX_KEYS) {
             KeyPress *k = &in->keys[in->nkeys++];
@@ -566,6 +575,7 @@ void app_input_begin(Input *in) {
     in->mouse_pressed = in->mouse_released = in->mouse_consumed = in->mouse_rpressed = false;
     in->clicks = 0;
     in->wheel_x = in->wheel_y = 0;
+    in->pinch = 1;
     in->nkeys = 0;
     in->ntext = 0;
 }
@@ -582,7 +592,7 @@ static void handle_event(App *a, SDL_Event *e) {
         update_metrics(a);
         break;
     case SDL_EVENT_MOUSE_MOTION: case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_BUTTON_UP:
-    case SDL_EVENT_MOUSE_WHEEL: case SDL_EVENT_KEY_DOWN: case SDL_EVENT_TEXT_INPUT:
+    case SDL_EVENT_MOUSE_WHEEL: case SDL_EVENT_KEY_DOWN: case SDL_EVENT_TEXT_INPUT: case SDL_EVENT_PINCH_UPDATE:
         app_input_event(a, e);
         break;
     case SDL_EVENT_WINDOW_CLOSE_REQUESTED:

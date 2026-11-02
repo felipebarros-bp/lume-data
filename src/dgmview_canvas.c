@@ -300,6 +300,7 @@ void dg_canvas(App *a, DgDoc *d, Rect r) {
     P = &DARKP;
     if (d->need_fit && d->d.nn && !d->lay_th) dg_fit(a, d, false);
     bool over = rect_contains(r, in->mouse_x, in->mouse_y) && !d->dlg && !d->cm.open;
+    Rect fl; if (over && d->find_focus && d->find_list && ui_target("dgm:findlist", &fl) && rect_contains(fl, in->mouse_x, in->mouse_y)) over = false;   /* the find list is on top */
     bool mm_on = d->minimap && d->d.nn;
     Rect mr = mm_rect(a, d);
     float wx, wy; dg_screen_to_world(d, a, in->mouse_x, in->mouse_y, &wx, &wy);
@@ -314,6 +315,8 @@ void dg_canvas(App *a, DgDoc *d, Rect r) {
         if (n->more > 0 && in->mouse_x > sx - 46 * k && in->mouse_y < sy + DG_HEAD_H * k) d->hover_more = true;
     } else if (over) { d->hover_edge = edge_at(a, d, in->mouse_x, in->mouse_y); if (d->hover_edge < 0) d->hover_note = note_at(d, wx, wy, false); if (d->hover_note < 0 && d->hover_edge < 0) { int ar = note_at(d, wx, wy, true); if (ar >= 0) { DgNote *n = &d->d.notes[ar]; if (wy < n->y + 26) d->hover_note = ar; } } }
     if (d->hover >= 0 || d->hover_edge >= 0) a->want_cursor = d->hover_more || d->linking ? CURSOR_HAND : CURSOR_ARROW;
+    /* pinch on the trackpad: zoom at the pointer */
+    if (over && in->pinch != 0 && in->pinch != 1) { dg_zoom_at(a, d, in->pinch, in->mouse_x, in->mouse_y); in->pinch = 1; }
     /* wheel: zoom with the primary modifier (or pinch), pan otherwise; over a long card, its rows scroll (Shift) */
     if (over && (in->wheel_x != 0 || in->wheel_y != 0)) {
         SDL_Keymod mods = SDL_GetModState();
@@ -372,7 +375,8 @@ void dg_canvas(App *a, DgDoc *d, Rect r) {
             dg_msg(d, "%s: %s(%s) -> %s(%s)", g->name, d->d.n[g->from].key, g->cols, d->d.n[g->to].key, g->ref_cols[0] ? g->ref_cols : "key");
         } else {
             bool space = SDL_GetKeyboardState(NULL)[SDL_SCANCODE_SPACE];
-            if ((mods & SDL_KMOD_SHIFT) && !space) { d->drag = 3; d->mq_x0 = d->mq_x1 = wx; d->mq_y0 = d->mq_y1 = wy; }
+            if (in->clicks >= 2) { dg_zoom_at(a, d, (mods & (SDL_KMOD_SHIFT | SDL_KMOD_ALT)) ? 1 / 1.6f : 1.6f, in->mouse_x, in->mouse_y); d->drag = 0; }   /* double click on the background: zoom in (Shift / Option: out) */
+            else if ((mods & SDL_KMOD_SHIFT) && !space) { d->drag = 3; d->mq_x0 = d->mq_x1 = wx; d->mq_y0 = d->mq_y1 = wy; }
             else { d->drag = 1; if (!add) { for (int i = 0; i < d->d.nn; i++) d->d.n[i].sel = false; d->focus_node = -1; } }
         }
         app_wake_in(a, 16);
