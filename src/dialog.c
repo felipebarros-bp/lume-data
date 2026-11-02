@@ -8,7 +8,8 @@
  * keeps the values of fields that share a key (host, port, user...).
  *
  * The form: the driver's own fields first, then General (name, with the summary as a live
- * placeholder; environment; read-only in Lume). Test runs on a worker thread (the UI never
+ * placeholder; environment; read-only in Lume). Drivers with a host and port also get SSH TUNNEL
+ * (host, port, user, key file) between the two: see sshtun.h. Test runs on a worker thread (the UI never
  * blocks on a connect), its result stays beside the button until a field changes.
  *
  * State lives in struct Dialog. One frame() function lays out, handles input and draws: it runs
@@ -44,7 +45,8 @@ struct Dialog {
     float pick_scroll; ScrollBar pick_sb;
     TextField name;   /* connection name editor */
     TextField fields[CONN_MAX_FIELDS];   /* one editor per driver field */
-    int focus;                 /* 0 = name, 1.. = fields */
+    TextField ssh[4];          /* SSH tunnel: host, port, user, key file */
+    int focus;                 /* 0 = name, 1..nfields = fields, then the SSH fields (when shown) */
     int bad_field;   /* the field the last validation stopped at (+1; 0 none): outlined in red */
     char msg[256];   /* result of Test / validation, beside the Test button ("" = none) */
     bool msg_ok;   /* msg is a success (green) rather than an error (red) */
@@ -83,6 +85,17 @@ static void load_fields(Dialog *d) {
 
 static void close_dialog(Dialog *d) { test_abandon(d); d->open = false; }
 
+/* The SSH section: shown for drivers with host and port; its fields only while the tunnel is on. */
+enum { SSH_HOST, SSH_PORT, SSH_USER, SSH_KEY, SSH_NFIELDS };
+static int ssh_shown(Dialog *d) { return conn_supports_ssh(drv(d)) && d->draft.ssh ? SSH_NFIELDS : 0; }
+/* The editor behind a focus / bad_field index (1-based: driver fields, then the SSH ones). */
+static TextField *field_at(Dialog *d, int idx) {
+    int nf = drv(d)->nfields;
+    if (idx >= 1 && idx <= nf) return &d->fields[idx - 1];
+    if (idx > nf && idx <= nf + SSH_NFIELDS) return &d->ssh[idx - nf - 1];
+    return &d->name;
+}
+
 /* See dialog.h. The draft is a struct copy of the existing connection with its runtime
  * pointers cleared, so editing never touches the live connection. */
 void dialog_open(Dialog *d, App *a, Connection *existing) {
@@ -100,6 +113,9 @@ void dialog_open(Dialog *d, App *a, Connection *existing) {
     textfield_set(&d->name, d->draft.name);
     textfield_set(&d->search, "");
     load_fields(d);
+    d->draft.tunnel = NULL;
+    textfield_set(&d->ssh[SSH_HOST], d->draft.ssh_host); textfield_set(&d->ssh[SSH_PORT], d->draft.ssh_port);
+    textfield_set(&d->ssh[SSH_USER], d->draft.ssh_user); textfield_set(&d->ssh[SSH_KEY], d->draft.ssh_key);
     d->step = existing ? 1 : 0;   /* a new connection starts by choosing its database */
     d->changing = false;
     d->pick_sel = 0; d->pick_scroll = 0;
@@ -143,6 +159,10 @@ static void collect(Dialog *d) {
     /* an empty field takes the driver's default (shown as its placeholder); never a password */
     for (int i = 0; i < di->nfields; i++) snprintf(d->draft.values[i], CONN_VALUE_LEN, "%s", d->fields[i].buf[0] || di->fields[i].type == FIELD_PASSWORD ? d->fields[i].buf : di->fields[i].def);
     if (!d->draft.name[0]) conn_summary(&d->draft, d->draft.name, sizeof d->draft.name);
+    snprintf(d->draft.ssh_host, sizeof d->draft.ssh_host, "%s", d->ssh[SSH_HOST].buf);
+    snprintf(d->draft.ssh_port, sizeof d->draft.ssh_port, "%s", d->ssh[SSH_PORT].buf);
+    snprintf(d->draft.ssh_user, sizeof d->draft.ssh_user, "%s", d->ssh[SSH_USER].buf);
+    snprintf(d->draft.ssh_key, sizeof d->draft.ssh_key, "%s", d->ssh[SSH_KEY].buf);
 }
 
 /* Every non-password field must be filled; otherwise says which, outlines and focuses it. */
@@ -157,7 +177,19 @@ static bool validate(Dialog *d) {
             return false;
         }
     }
+    if (ssh_shown(d) && !d->draft.ssh_host[0]) {
+        snprintf(d->msg, sizeof d->msg, "SSH host is required (or turn the SSH tunnel off).");
+        d->msg_ok = false;
+        d->focus = d->bad_field = di->nfields + 1 + SSH_HOST;
+        return false;
+    }
     return true;
+}
+/* The draft's SSH settings into a saved connection. */
+static void copy_ssh(Connection *c, const Connection *from) {
+    c->ssh = from->ssh;
+    memcpy(c->ssh_host, from->ssh_host, sizeof c->ssh_host); memcpy(c->ssh_port, from->ssh_port, sizeof c->ssh_port);
+    memcpy(c->ssh_user, from->ssh_user, sizeof c->ssh_user); memcpy(c->ssh_key, from->ssh_key, sizeof c->ssh_key);
 }
 
 /* Writes the draft into the edited connection (or a new one) and closes the dialog.
@@ -175,12 +207,14 @@ static void save(Dialog *d, App *a, bool connect) {
         memcpy(c->values, d->draft.values, sizeof c->values);
         c->demo = 0;
         c->env = d->draft.env; c->read_only = d->draft.read_only;
+        copy_ssh(c, &d->draft);
         if (was_open) connect = true;
     } else {
         c = conns_add(a->conns, d->draft.driver);
         snprintf(c->name, sizeof c->name, "%s", d->draft.name);
         memcpy(c->values, d->draft.values, sizeof c->values);
         c->env = d->draft.env; c->read_only = d->draft.read_only;
+        copy_ssh(c, &d->draft);
     }
     app_connections_changed(a);
     close_dialog(d);
@@ -343,7 +377,8 @@ static void frame(Dialog *d, App *a, bool live) {
     float w = px(a, 640), pad = px(a, 24), row = px(a, 40), fh = px(a, 30), lbl_w = px(a, 120);
     float h;
     if (d->step == 0) h = px(a, 470);
-    else h = pad + px(a, 34) + (d->target ? row : 0) + px(a, 24) + row * di->nfields + px(a, 30) + row * 2 + px(a, 26) + px(a, 30) + px(a, 50) + px(a, 52) + pad;
+    else h = pad + px(a, 34) + (d->target ? row : 0) + px(a, 24) + row * di->nfields + px(a, 30) + row * 2 + px(a, 26) + px(a, 30) + px(a, 50) + px(a, 52) + pad
+             + (conn_supports_ssh(di) ? row + (ssh_shown(d) ? row * 3 : 0) : 0);
     if (h > a->height - px(a, 20)) h = a->height - px(a, 20);
     float x = (a->width - w) / 2, y = (a->height - h) / 2 - px(a, 10);
     Rect panel = rect_make(x, y, w, h); d->panel = panel;
@@ -403,7 +438,7 @@ static void frame(Dialog *d, App *a, bool live) {
 
     /* ---- the form ---- */
     test_poll(d, a);
-    int nfocus = 1 + di->nfields;
+    int nfocus = 1 + di->nfields + ssh_shown(d);
     if (live) for (int k = 0; k < in->nkeys; k++) {
         KeyPress *kp = &in->keys[k]; if (kp->used) continue;
         if (kp->key == SDLK_TAB) { int f = d->focus == 0 ? nfocus - 1 : d->focus - 1;   /* order on screen: fields, then name */
@@ -450,6 +485,51 @@ static void frame(Dialog *d, App *a, bool live) {
         sig = (sig ^ 0xFF) * 16777619u;
         cy += row;
     }
+    /* SSH tunnel: the database is reached through the system's ssh (sshtun.h). Compact: the switch on
+     * the section's own row, the SSH port beside the SSH host. */
+    if (conn_supports_ssh(di)) {
+        ui_label(a, rect_make(x + pad, cy, lbl_w, fh), "SSH tunnel", ALIGN_LEFT, T_TEXT_MUTED);
+        Rect sc = rect_make(fx, cy, px(a, 170), fh); ui_record("conn:tunnel", sc);
+        if (ui_checkbox(a, sc, "Use SSH tunnel", d->draft.ssh, true) && live) {
+            d->draft.ssh = !d->draft.ssh;
+            if (d->draft.ssh && !d->ssh[SSH_HOST].buf[0]) d->focus = di->nfields + 1 + SSH_HOST;
+            else if (!d->draft.ssh && d->focus > di->nfields) d->focus = 0;
+        }
+        draw_text_fit(a->font_small, r, "keys, ssh-agent and ~/.ssh/config; no SSH password", -1,
+                      rect_make(fx + px(a, 178), cy, fw_full - px(a, 178), fh), color_hex(T_TEXT_DIM), ALIGN_LEFT);
+        cy += row;
+        sig = (sig ^ (unsigned)(d->draft.ssh ? 0xA5 : 0x5A)) * 16777619u;
+        if (d->draft.ssh) {
+            static const char *const holders[SSH_NFIELDS] = { "host, or a Host from ~/.ssh/config", "22", "from ~/.ssh/config, else your login",
+                                                                "~/.ssh/id_ed25519 (empty: ssh-agent / ~/.ssh/config)" };
+            float portw = px(a, 90), portlbl = px(a, 44);
+            Rect rects[SSH_NFIELDS] = {
+                rect_make(fx, cy, fw_full - portw - portlbl - px(a, 8), fh),
+                rect_make(fx + fw_full - portw, cy, portw, fh),
+                rect_make(fx, cy + row, fw_full, fh),
+                rect_make(fx, cy + row * 2, fw_full, fh) };
+            ui_label(a, rect_make(x + pad, cy, lbl_w, fh), "SSH host", ALIGN_LEFT, T_TEXT_MUTED);
+            ui_label(a, rect_make(rects[SSH_PORT].x - portlbl, cy, portlbl - px(a, 6), fh), "Port", ALIGN_RIGHT, T_TEXT_MUTED);
+            ui_label(a, rect_make(x + pad, cy + row, lbl_w, fh), "SSH user", ALIGN_LEFT, T_TEXT_MUTED);
+            ui_label(a, rect_make(x + pad, cy + row * 2, lbl_w, fh), "Key file", ALIGN_LEFT, T_TEXT_MUTED);
+            for (int k = 0; k < SSH_NFIELDS; k++) {
+                int idx = di->nfields + 1 + k;
+                Rect fr = rects[k];
+                char tg[32]; snprintf(tg, sizeof tg, "conn:ssh%d", k); ui_record(tg, fr);
+                bool f = d->focus == idx;
+                if (ui_textfield(a, &d->ssh[k], fr, holders[k], f) && live) d->focus = idx;
+                if (k == SSH_PORT) {   /* digits only */
+                    TextField *t = &d->ssh[k]; int wn = 0;
+                    for (int q = 0; q < t->len; q++) if (t->buf[q] >= '0' && t->buf[q] <= '9') t->buf[wn++] = t->buf[q];
+                    t->buf[wn] = 0; t->len = wn; if (t->cursor > wn) t->cursor = wn;
+                }
+                if (!live) { if (d->bad_field == idx) draw_rect_outline(r, fr, px(a, 1), color_hex(T_RED)); else if (f) draw_rect_outline(r, fr, px(a, 1), color_hex(T_ACCENT)); }
+                for (const char *p = d->ssh[k].buf; *p; p++) sig = (sig ^ (unsigned char)*p) * 16777619u;
+                sig = (sig ^ 0xFF) * 16777619u;
+            }
+            cy += row * 3;
+        }
+    }
     /* General: what the connection is called and how Lume treats it */
     cy += px(a, 6);
     ui_label(a, rect_make(x + pad, cy, w, px(a, 18)), "GENERAL", ALIGN_LEFT, T_TEXT_DIM);
@@ -476,7 +556,7 @@ static void frame(Dialog *d, App *a, bool live) {
     cy += row + px(a, 20);
     /* Test: a tool, with its result beside it (cleared when a field changes) */
     if (live && d->sig && sig != d->sig && !d->job && d->msg[0] && !d->bad_field) d->msg[0] = 0;
-    if (live) { d->sig = sig; if (d->bad_field && d->fields[d->bad_field - 1].buf[0]) d->bad_field = 0; }
+    if (live) { d->sig = sig; if (d->bad_field && field_at(d, d->bad_field)->buf[0]) d->bad_field = 0; }
     Rect tb = rect_make(x + pad, cy, px(a, 140), px(a, 30)); ui_record("conn:test", tb);
     if (ui_button(a, tb, d->job ? "Testing\xE2\x80\xA6" : "Test connection", BTN_NORMAL, !d->job) && live) test_start(d);
     if (d->job) {
@@ -541,7 +621,7 @@ void dialog_draw(Dialog *d, App *a) {
     frame(d, a, false);
     a->in = saved;
     if (!d->open) return;
-    TextField *f = d->step == 0 ? &d->search : d->focus == 0 ? &d->name : &d->fields[d->focus - 1];
+    TextField *f = d->step == 0 ? &d->search : field_at(d, d->focus);
     bool on = ((SDL_GetTicks() - f->blink) / 530) % 2 == 0;
     char shown[1024];
     if (f->password) { size_t p = 0; for (int i = 0; i < f->len && p + 3 < sizeof shown;) { uint32_t cp; i = utf8_next(f->buf, f->len, i, &cp); memcpy(shown + p, "\xE2\x80\xA2", 3); p += 3; } shown[p] = 0; }
@@ -557,7 +637,7 @@ void dialog_draw(Dialog *d, App *a) {
 void dialog_dump(Dialog *d) {
     const DriverInfo *di = drv(d);
     int nkept = 0; for (int i = 0; i < di->nfields; i++) if (d->fields[i].buf[0]) nkept++;
-    printf("dialogstate open=%d step=%d edit=%d focus=%d driver=%s filled=%d/%d env=%d ro=%d testing=%d msg_ok=%d msg=\"%s\"\n", d->open, d->step, d->target != NULL, d->focus, di->id,
-           nkept, di->nfields, d->draft.env, d->draft.read_only, d->job != NULL, d->msg_ok, d->msg);
+    printf("dialogstate open=%d step=%d edit=%d focus=%d driver=%s filled=%d/%d env=%d ro=%d ssh=%d testing=%d msg_ok=%d msg=\"%s\"\n", d->open, d->step, d->target != NULL, d->focus, di->id,
+           nkept, di->nfields, d->draft.env, d->draft.read_only, d->draft.ssh, d->job != NULL, d->msg_ok, d->msg);
     fflush(stdout);
 }

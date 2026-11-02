@@ -1,0 +1,22 @@
+# SSH tunnel: failures name the tunnel (offline: a closed SSH port, an option look-alike as the host);
+# the dialog shows the switch and keeps the SSH settings when it is turned off
+wait 300
+rawsql "tunnel refused" SELECT 1
+rawsql "tunnel injection" SELECT 1
+dnode "tunnel refused"
+awaitconn "tunnel refused" 15000
+wait 30
+tbmodal
+button "Close"
+wait 30
+rnode "tunnel refused"
+wait 60
+button "Edit Connection…"
+wait 60
+dialogstate
+clickon "conn:tunnel"
+wait 30
+dialogstate
+button "Save"
+wait 60
+quit

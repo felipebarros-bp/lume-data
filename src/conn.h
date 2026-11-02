@@ -60,8 +60,16 @@ struct Connection {
     uint32_t env_color;         /* 0xRRGGBB, 0 = the environment's default colour */
     bool read_only;             /* "read-only in Lume": enforced as far as the driver allows, see db_set_read_only */
     char ai_conn[12];           /* the connection the assistant's SQL runs on (a SELECT-only login), "" = this one (BL-051) */
+    /* SSH tunnel (like DataGrip's "Use SSH tunnel"): the driver connects to a local port that the
+     * system's ssh forwards to host:port (sshtun.h). Key / agent / ~/.ssh/config only, no SSH password. */
+    bool ssh;                   /* use the tunnel */
+    char ssh_host[128];         /* SSH server (or a Host alias from ~/.ssh/config) */
+    char ssh_port[8];           /* "" = 22 / ~/.ssh/config */
+    char ssh_user[64];          /* "" = ~/.ssh/config / the login name */
+    char ssh_key[512];          /* private key file, "" = the agent / ~/.ssh/config */
     /* runtime */
     Db *db;   /* NULL while disconnected */
+    struct SshTunnel *tunnel;   /* the running tunnel of the open Db, NULL without one */
     DbTable *tables; int ntables;   /* catalog, owned; freed with db_tables_free */
     bool columns_lazy;      /* big schema: columns are loaded on demand */
     char error[256];   /* last connect / refresh error, "" when fine */
@@ -147,5 +155,11 @@ bool conn_refresh(Connection *c);     /* reloads tables of an open connection */
 /* Loads the columns of one table when they are not loaded yet (lazy schemas). False when
  * the connection is closed or the driver fails. Blocking call on the UI thread. */
 bool conn_load_columns(Connection *c, DbTable *t);
+/* Opens a session for c (its SSH tunnel first, when it has one: *tun receives it, to close with
+ * sshtun_close after db_close; NULL otherwise). Blocking. The location (which may hold the password)
+ * is built and wiped here, never logged. */
+Db *conn_open(const Connection *c, struct SshTunnel **tun, char *err, size_t errlen);
+/* Whether the driver can go through an SSH tunnel (it has host and port fields). */
+bool conn_supports_ssh(const DriverInfo *d);
 /* Opens and closes immediately; for the dialog's Test button. */
 bool conn_test(const Connection *c, char *err, size_t errlen);

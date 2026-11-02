@@ -35,6 +35,7 @@
 #include "macos_app.h"
 #include "editor.h"
 #include "conn.h"
+#include "sshtun.h"
 #include "db.h"
 #include "explorer.h"
 #include "ui.h"
@@ -244,11 +245,10 @@ void script_tick(App *a) {
         const DriverInfo *di = c ? conn_driver(c) : NULL;
         if (!di || !sql) { printf("script: rawsql failed: unknown connection\n"); fflush(stdout); }
         else {
-            char loc[2048]; conn_location(c, loc, sizeof loc); char err[256] = "";
-            Db *db = db_open(di->drv, loc, err, sizeof err);
-            memset(loc, 0, sizeof loc);
+            char err[256] = ""; struct SshTunnel *tun = NULL;
+            Db *db = conn_open(c, &tun, err, sizeof err);
             if (!db) { printf("script: rawsql failed: %s\n", err); fflush(stdout); }
-            else { ResultSet rs; rs_init(&rs); db->drv->exec(db, sql, (int)strlen(sql), 0, &rs); printf("rawsql %s%s\n", rs.ok ? "ok" : "error: ", rs.ok ? "" : rs.error); fflush(stdout); rs_free(&rs); db_close(db); }
+            else { ResultSet rs; rs_init(&rs); db->drv->exec(db, sql, (int)strlen(sql), 0, &rs); printf("rawsql %s%s\n", rs.ok ? "ok" : "error: ", rs.ok ? "" : rs.error); fflush(stdout); rs_free(&rs); db_close(db); sshtun_close(tun); }
         }
     }
     else if (!strcmp(cmd, "aboutstate")) about_dump(a);

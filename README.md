@@ -61,6 +61,9 @@ world.**
 - A database picker with search (`pg`, `mssql`, `file`...), grouped by kind, then a form with the
   fields of that driver. **Test connection** runs in the background and reports the server's answer.
 - Environments (DEV / HML / PROD) and a **Read-only in Lume** switch; choosing PROD suggests it.
+- **SSH tunnel** for PostgreSQL, Oracle, MySQL, MariaDB and SQL Server: Lume starts the system's `ssh`
+  (`-N -L` to a free local port), so `~/.ssh/config` (aliases, `ProxyJump`), the ssh-agent and your keys
+  just work. Key-based only (no SSH password prompt); the tunnel closes with the connection.
 - Passwords, AI keys and the ChatGPT session live in the operating system's secret store (macOS
   Keychain, Windows Credential Manager, Secret Service on Linux), never in the connection file. Where a
   system has no secret store, connection passwords fall back to a file only your user can read.

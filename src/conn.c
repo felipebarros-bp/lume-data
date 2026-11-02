@@ -17,6 +17,7 @@
 #include "conn.h"
 #include "log.h"
 #include "secstore.h"
+#include "sshtun.h"
 #include <strings.h>
 #include <sys/stat.h>
 #ifndef _WIN32
@@ -265,6 +266,11 @@ ConnStore *conns_load(void) {
         else if (strcmp(line, "env_color") == 0) c->env_color = (uint32_t)strtoul(eq, NULL, 16) & 0xFFFFFF;
         else if (strcmp(line, "read_only") == 0) c->read_only = atoi(eq) != 0;
         else if (strcmp(line, "ai_conn") == 0) snprintf(c->ai_conn, sizeof c->ai_conn, "%s", eq);
+        else if (strcmp(line, "ssh") == 0) c->ssh = atoi(eq) != 0;
+        else if (strcmp(line, "ssh_host") == 0) snprintf(c->ssh_host, sizeof c->ssh_host, "%s", eq);
+        else if (strcmp(line, "ssh_port") == 0) snprintf(c->ssh_port, sizeof c->ssh_port, "%s", eq);
+        else if (strcmp(line, "ssh_user") == 0) snprintf(c->ssh_user, sizeof c->ssh_user, "%s", eq);
+        else if (strcmp(line, "ssh_key") == 0) snprintf(c->ssh_key, sizeof c->ssh_key, "%s", eq);
         else conn_set_value(c, line, eq);
     }
     fclose(f);
@@ -301,6 +307,8 @@ void conns_save(ConnStore *s) {
             if (c->env_color) fprintf(f, "env_color=%06X\n", (unsigned)c->env_color);
             if (c->read_only) fprintf(f, "read_only=1\n");
             if (c->ai_conn[0]) fprintf(f, "ai_conn=%s\n", c->ai_conn);
+            if (c->ssh) fprintf(f, "ssh=1\n");
+            if (c->ssh_host[0]) fprintf(f, "ssh_host=%s\nssh_port=%s\nssh_user=%s\nssh_key=%s\n", c->ssh_host, c->ssh_port, c->ssh_user, c->ssh_key);   /* kept when switched off */
             for (int k = 0; d && k < d->nfields; k++)
                 if (d->fields[k].type != FIELD_PASSWORD) fprintf(f, "%s=%s\n", d->fields[k].key, c->values[k]);
         }
@@ -420,10 +428,8 @@ bool conn_connect(Connection *c) {
     if (c->db) return true;
     const DriverInfo *d = conn_driver(c);
     if (!d) { snprintf(c->error, sizeof c->error, "Unknown driver %s", c->driver); return false; }
-    char loc[2048], err[256] = "";
-    d->location(c, loc, sizeof loc);
-    c->db = db_open(d->drv, loc, err, sizeof err);
-    memset(loc, 0, sizeof loc);
+    char err[256] = "";
+    c->db = conn_open(c, &c->tunnel, err, sizeof err);
     c->generation++; c->state_since = SDL_GetTicks();
     if (!c->db) { snprintf(c->error, sizeof c->error, "%s", err[0] ? err : "Could not connect"); c->state = CONN_FAILED; return false; }
     c->state = CONN_CONNECTED;
@@ -448,6 +454,7 @@ void conn_disconnect(Connection *c) {
     c->tables = NULL; c->ntables = 0;
     db_close(c->db);
     c->db = NULL;
+    sshtun_close(c->tunnel); c->tunnel = NULL;   /* after the session that used it */
     c->state = CONN_DISCONNECTED; c->generation++; c->state_since = SDL_GetTicks();
 }
 
@@ -456,8 +463,8 @@ void conn_disconnect(Connection *c) {
 /* One connect running on a worker. The worker writes db / tables / err and then sets done;
  * the UI thread reads them only after done. abandoned: the UI gave up (cancel, delete). */
 typedef struct ConnAttempt {
-    const DbDriver *drv;
-    char *location;              /* freed (and wiped) by the worker when it is done with it */
+    Connection *copy;            /* what to open (password included): wiped and freed by the worker when done */
+    struct SshTunnel *tunnel;    /* the tunnel of db, when the connection uses one */
     Db *db; DbTable *tables; int ntables; bool lazy;
     char err[256];
     SDL_Thread *thread;
@@ -486,8 +493,8 @@ const char *conn_state_name(int state) {
 /* Worker: open, read the catalog (columns too unless the schema is large), then signal. */
 static int connect_worker(void *ud) {
     ConnAttempt *t = ud;
-    t->db = db_open(t->drv, t->location, t->err, sizeof t->err);
-    memset(t->location, 0, strlen(t->location)); free(t->location); t->location = NULL;   /* the password does not outlive the open */
+    t->db = conn_open(t->copy, &t->tunnel, t->err, sizeof t->err);
+    memset(t->copy, 0, sizeof *t->copy); free(t->copy); t->copy = NULL;   /* the password does not outlive the open */
     if (t->db) {
         char err[256] = "";
         if (t->db->drv->list_tables(t->db, &t->tables, &t->ntables, err, sizeof err)) {
@@ -508,12 +515,12 @@ bool conn_connect_async(Connection *c, bool reconnect) {
     const DriverInfo *d = conn_driver(c);
     if (!d) { snprintf(c->error, sizeof c->error, "Unknown driver %s", c->driver); c->state = CONN_FAILED; return false; }
     ConnAttempt *t = calloc(1, sizeof *t);
-    char loc[2048];
-    d->location(c, loc, sizeof loc);
-    t->drv = d->drv; t->location = strdup(loc);
-    memset(loc, 0, sizeof loc);
+    t->copy = malloc(sizeof *t->copy);
+    if (!t->copy) { free(t); snprintf(c->error, sizeof c->error, "out of memory"); c->state = CONN_FAILED; return false; }
+    *t->copy = *c;
+    t->copy->db = NULL; t->copy->tables = NULL; t->copy->ntables = 0; t->copy->attempt = NULL; t->copy->tunnel = NULL;   /* a plain description, no live state */
     t->thread = SDL_CreateThread(connect_worker, "lume-connect", t);
-    if (!t->thread) { free(t->location); free(t); snprintf(c->error, sizeof c->error, "could not start the connect thread"); c->state = CONN_FAILED; return false; }
+    if (!t->thread) { memset(t->copy, 0, sizeof *t->copy); free(t->copy); free(t); snprintf(c->error, sizeof c->error, "could not start the connect thread"); c->state = CONN_FAILED; return false; }
     c->attempt = t; c->error[0] = 0;
     c->state = reconnect ? CONN_RECONNECTING : CONN_CONNECTING; c->generation++; c->state_since = SDL_GetTicks();
     return true;
@@ -522,7 +529,7 @@ bool conn_connect_async(Connection *c, bool reconnect) {
 /* Frees what an abandoned or finished attempt still owns (worker joined first). */
 static void attempt_free(ConnAttempt *t, bool keep_result) {
     SDL_WaitThread(t->thread, NULL);
-    if (!keep_result) { db_tables_free(t->tables, t->ntables); db_close(t->db); }
+    if (!keep_result) { db_tables_free(t->tables, t->ntables); db_close(t->db); sshtun_close(t->tunnel); }
     free(t);
 }
 
@@ -536,7 +543,7 @@ bool conn_poll(Connection *c) {
         attempt_free(t, false);
         return true;
     }
-    c->db = t->db; c->tables = t->tables; c->ntables = t->ntables; c->columns_lazy = t->lazy;
+    c->db = t->db; c->tunnel = t->tunnel; c->tables = t->tables; c->ntables = t->ntables; c->columns_lazy = t->lazy;
     free(c->db->label); c->db->label = SDL_strdup(c->name);
     c->state = CONN_CONNECTED; c->state_since = SDL_GetTicks(); c->error[0] = 0;
     c->schema[0] = 0; c->manual_tx = false; c->isolation[0] = 0; c->ro_level = 0;   /* a new session */
@@ -569,10 +576,41 @@ bool conn_load_columns(Connection *c, DbTable *t) {
 bool conn_test(const Connection *c, char *err, size_t errlen) {
     const DriverInfo *d = conn_driver(c);
     if (!d) { snprintf(err, errlen, "Unknown driver"); return false; }
-    char loc[2048];
-    d->location(c, loc, sizeof loc);
-    Db *db = db_open(d->drv, loc, err, errlen);
+    struct SshTunnel *tun = NULL;
+    Db *db = conn_open(c, &tun, err, errlen);
     if (!db) return false;
     db_close(db);
+    sshtun_close(tun);
     return true;
+}
+
+/* See conn.h. */
+bool conn_supports_ssh(const DriverInfo *d) { return d && driver_field_index(d, "host") >= 0 && driver_field_index(d, "port") >= 0; }
+
+/* See conn.h. With a tunnel, the driver gets a copy of the connection whose host and port are the
+ * tunnel's local end; everything else (database, user, password, options) is unchanged. */
+Db *conn_open(const Connection *c, struct SshTunnel **tun, char *err, size_t errlen) {
+    *tun = NULL;
+    const DriverInfo *d = conn_driver(c);
+    if (!d) { snprintf(err, errlen, "Unknown driver %s", c->driver); return NULL; }
+    char loc[2048];
+    if (c->ssh && conn_supports_ssh(d)) {
+        const char *dh = conn_value(c, "host"); int dp = atoi(conn_value(c, "port"));
+        SshSpec sp = { c->ssh_host, c->ssh_user, c->ssh_key, atoi(c->ssh_port) };
+        int lport = 0;
+        *tun = sshtun_open(&sp, dh, dp, 20, &lport, err, errlen);
+        if (!*tun) return NULL;
+        Connection *via = malloc(sizeof *via);
+        if (!via) { sshtun_close(*tun); *tun = NULL; snprintf(err, errlen, "out of memory"); return NULL; }
+        *via = *c;
+        char ps[16]; snprintf(ps, sizeof ps, "%d", lport);
+        conn_set_value(via, "host", "127.0.0.1"); conn_set_value(via, "port", ps);
+        d->location(via, loc, sizeof loc);
+        memset(via, 0, sizeof *via); free(via);
+        LOG_I("connection %s: through an SSH tunnel (local port %d)", c->name, lport);
+    } else d->location(c, loc, sizeof loc);
+    Db *db = db_open(d->drv, loc, err, errlen);
+    memset(loc, 0, sizeof loc);
+    if (!db) { sshtun_close(*tun); *tun = NULL; }
+    return db;
 }
