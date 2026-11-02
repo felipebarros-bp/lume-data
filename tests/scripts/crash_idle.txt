@@ -1,0 +1,5 @@
+# next launch with "always" or "never": no dialog
+wait 300
+tbmodal
+wait 120
+quit

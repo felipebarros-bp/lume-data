@@ -127,6 +127,10 @@ static void sec_privacy(App *a, float x, float *py, float w) {
     NOTE("Sent: the version and build, the operating system (name, major version, architecture) and, per session, counts and timings in coarse ranges (\"10-99 queries\", \"startup 0.5-1 s\", \"memory 100-250 MB\").");
     NOTE("Never sent: SQL, data, names of connections, tables or files, hosts, users, paths, keys or prompts. No installation id either: every launch is a new, unrelated session.");
     NOTE("Where: Aptabase, in the EU (Germany). It uses the IP address only to derive the country and does not store it. A session's summary is sent at the next launch, so quitting never waits on the network.");
+    HEAD("Crash reports");
+    { static const char *const cr[] = { "Ask each time", "Always send", "Never send" };
+      int k = seg(a, x, &y, w, "When Lume Data closes unexpectedly, on the next launch:", cr, 3, a->crash_reports, "settings:crash"); if (k >= 0) a->crash_reports = k; }
+    NOTE("A crash report holds the version, the operating system, the signal and the function names where Lume stopped. Never SQL, data, names, paths or user information. It goes to GlitchTip; View report (in the dialog) shows exactly what would be sent.");
     HEAD("Exactly what is sent when Lume starts");
     { char pv[1400]; telemetry_preview(pv, sizeof pv); float hh = results_draw_wrapped(a->font_mono ? a->font_mono : a->font_small, a->renderer, pv, rect_make(x, y, w, px(a, 200)), color_hex(T_TEXT_MUTED), 0, true); y += hh + px(a, 8); }
     *py = y;

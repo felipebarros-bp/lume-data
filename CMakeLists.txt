@@ -23,6 +23,7 @@ target_link_libraries(lume PRIVATE SDL3::SDL3 SQLite::SQLite3 ${CMAKE_DL_LIBS})
 target_compile_definitions(lume PRIVATE LUME_SOURCE_ASSETS="${CMAKE_SOURCE_DIR}/assets")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(lume PRIVATE _GNU_SOURCE)   # nftw, strcasestr, memmem... (glibc hides them otherwise)
+  target_link_options(lume PRIVATE -rdynamic)   # function names in crash stacks (backtrace_symbols)
 endif()
 
 # Product and build metadata (About, Copy Info, log). Nothing here is invented: what is not

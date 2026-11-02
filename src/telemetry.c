@@ -154,3 +154,6 @@ void telemetry_dump(void) {
     printf("telemetry on=%d queries=%d plans=%d reports=%d ai=%d slow_frames=%d\n", T.on, T.counts[TM_QUERY], T.counts[TM_PLAN], T.counts[TM_REPORT], T.counts[TM_AI], T.slow_frames);
     fflush(stdout);
 }
+
+/* See telemetry.h. */
+void telemetry_system(const char **os, char *ver, size_t n, const char **ar) { *os = os_name(); os_version(ver, n); *ar = arch(); }

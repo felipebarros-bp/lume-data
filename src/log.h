@@ -37,6 +37,10 @@ enum { LOG_DEBUG, LOG_INFO, LOG_WARN, LOG_ERROR };
 /* Opens (or creates) the log file, rotates it when it is over 5 MB, writes a session banner
  * and installs the crash handlers. Safe to call once at startup; later calls do nothing. */
 void log_init(const char *app_version);
+/* Where a crash leaves its report for the next launch (crashrep.c); "" before log_init. */
+const char *log_crash_path(void);
+/* Writes the crash report for the next launch (the crash handler; the test harness simulates a crash with it). */
+void log_write_crash_report(int sig);
 
 /* Writes the closing line of the session and closes the file. */
 void log_shutdown(void);

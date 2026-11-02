@@ -33,6 +33,8 @@ void telemetry_set_enabled(bool on);
 bool telemetry_enabled(void);
 /* The exact JSON the start event would carry now (for Settings > Privacy "what is sent"). */
 void telemetry_preview(char *out, size_t n);
+/* The OS name, its major.minor version and the CPU architecture (also used by crash reports). */
+void telemetry_system(const char **os, char *ver, size_t n, const char **arch);
 /* Harness: counters and state. */
 void telemetry_dump(void);
 

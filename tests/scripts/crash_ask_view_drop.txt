@@ -1,0 +1,11 @@
+# next launch, "ask each time": the dialog; View report opens the exact JSON in a tab and asks again; Don't send deletes it
+wait 300
+tbmodal
+button "View report"
+wait 60
+edtext
+tbmodal
+button "Don't send"
+wait 30
+tbmodal
+quit

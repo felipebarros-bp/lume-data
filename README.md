@@ -165,6 +165,10 @@ Lume Data works fully offline and sends nothing by default.
   ("10-99 queries", "startup 0.5-1 s"). Never SQL, data, names of connections, tables or files, hosts,
   users, paths, keys or prompts, and no installation id. They go to [Aptabase](https://aptabase.com)
   in the EU, which does not store IP addresses. Settings > Privacy shows exactly what is sent.
+- **Crash reports**: after a crash, the next launch asks before sending anything (or always / never,
+  as you choose in Settings > Privacy). A report holds the version, the operating system, the signal
+  and the function names where Lume stopped; never SQL, data, names, paths or user information.
+  "View report" shows the exact report before it is sent. Reports go to GlitchTip.
 
 ## Install
 
