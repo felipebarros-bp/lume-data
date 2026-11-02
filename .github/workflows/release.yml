@@ -95,6 +95,9 @@ jobs:
           printf '%s' "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
           security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$CERT_PASSWORD" -T /usr/bin/codesign
           rm -f "$RUNNER_TEMP/cert.p12"
+          # the Developer ID G2 intermediate, from Apple (the .p12 holds only the leaf certificate)
+          curl -fsSL -o "$RUNNER_TEMP/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$KC" || true
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KCPW" "$KC" >/dev/null
           security list-keychains -d user -s "$KC" login.keychain-db   # the signing keychain first, the login one kept
           ID=$(security find-identity -v -p codesigning "$KC" | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)
