@@ -34,6 +34,7 @@
 #include "output.h"
 #include "script.h"
 #include "sysinfo.h"
+#include "telemetry.h"
 #include "theme.h"
 #include "log.h"
 #include "panels.h"
@@ -706,13 +707,14 @@ static void app_prefs_load(App *a) {
         else if (!strcmp(line, "fmt_decimals") && v >= -1 && v <= 10) a->fmt_decimals = v;
         else if (!strcmp(line, "fmt_date") && v >= 0 && v <= 2) a->fmt_date = v;
         else if (!strcmp(line, "fmt_tz") && v >= 0 && v <= 2) a->fmt_tz = v;
+        else if (!strcmp(line, "telemetry")) a->telemetry = v != 0;
         else if (!strcmp(line, "report_locale") && (!strcmp(eq, "pt-BR") || !strcmp(eq, "en-US"))) snprintf(a->report_locale, sizeof a->report_locale, "%s", eq);
     }
     fclose(f);
     if (z >= 0.6f && z <= 2.5f && z != a->zoom) set_zoom(a, z);
 }
 static unsigned prefs_sig(const App *a) {
-    char b[200]; snprintf(b, sizeof b, "%d|%d|%d|%.2f|%d|%d|%d|%d|%s", a->fetch_size, a->continue_on_error, a->results_budget_mb, a->zoom, a->fmt_group, a->fmt_decimals, a->fmt_date, a->fmt_tz, a->report_locale);
+    char b[220]; snprintf(b, sizeof b, "%d|%d|%d|%.2f|%d|%d|%d|%d|%s|%d", a->fetch_size, a->continue_on_error, a->results_budget_mb, a->zoom, a->fmt_group, a->fmt_decimals, a->fmt_date, a->fmt_tz, a->report_locale, a->telemetry);
     unsigned h = 2166136261u; for (const char *q = b; *q; q++) { h ^= (unsigned char)*q; h *= 16777619u; } return h;
 }
 static unsigned g_prefs_sig; static bool g_prefs_loaded;
@@ -722,6 +724,7 @@ void app_prefs_save(App *a) {
     fprintf(f, "# Lume settings (Tools > Settings...). Rules live here; learned data (history, usage, caches) stays in its own files.\n");
     fprintf(f, "fetch_size=%d\ncontinue_on_error=%d\nresults_budget_mb=%d\nzoom=%.2f\nfmt_group=%d\nfmt_decimals=%d\nfmt_date=%d\nfmt_tz=%d\n", a->fetch_size, a->continue_on_error, a->results_budget_mb, a->zoom, a->fmt_group, a->fmt_decimals, a->fmt_date, a->fmt_tz);
     if (a->report_locale[0]) fprintf(f, "report_locale=%s\n", a->report_locale);
+    fprintf(f, "telemetry=%d\n", a->telemetry ? 1 : 0);
     fclose(f); rename(tmp, p);
     g_prefs_sig = prefs_sig(a);
 }
@@ -1066,6 +1069,7 @@ static bool menu_checked(int act) {
 }
 
 int main(int argc, char **argv) {
+    Uint64 boot_ticks = SDL_GetTicks();   /* for the anonymous startup-time bucket (telemetry.h) */
     SDL_SetAppMetadata("Lume", LUME_VERSION, "dev.lume");
     log_init(LUME_VERSION);                      /* first: a crash during startup is logged too */
     /* automated tests (LUME_SCRIPT) run in the background: no Dock icon, never activated, and the
@@ -1178,6 +1182,7 @@ int main(int argc, char **argv) {
 
     bool shown = false;
     /* event loop: sleep until an event, a requested wake-up, or (while animating) not at all */
+    telemetry_start(a->conns ? a->conns->dir : "", a->telemetry, (double)(SDL_GetTicks() - boot_ticks));   /* only with consent */
     while (a->running) {
         input_begin_frame(&a->in);
         if (a->panels) panels_input_begin(a->panels);
@@ -1193,7 +1198,7 @@ int main(int argc, char **argv) {
             while (SDL_PollEvent(&e)) handle_event(a, &e);
         }
         /* draw, then background chores: completer usage save, harness step, first show */
-        { Uint64 f0 = SDL_GetPerformanceCounter(); frame(a); a->last_frame_ms = (SDL_GetPerformanceCounter() - f0) * 1000.0 / SDL_GetPerformanceFrequency(); }
+        { Uint64 f0 = SDL_GetPerformanceCounter(); frame(a); a->last_frame_ms = (SDL_GetPerformanceCounter() - f0) * 1000.0 / SDL_GetPerformanceFrequency(); telemetry_frame(a->last_frame_ms); }
         if (complete_tick(a->completer)) app_wake_in(a, 2100);
         script_tick(a);
         if (!shown) { if (!test_bg) SDL_ShowWindow(a->window); shown = true; }
@@ -1220,6 +1225,7 @@ int main(int argc, char **argv) {
     a->panels = NULL;
     output_destroy(a->output);          /* a running job is cancelled and joined first */
     results_destroy(a->results);        /* open cursors must go before their connections */
+    telemetry_stop(sys_rss_bytes());   /* the session's summary, sent next launch (only with consent) */
     conns_free(a->conns);
     menu_destroy(a->menu);
     font_destroy(a->font_ui);

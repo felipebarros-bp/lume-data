@@ -13,6 +13,7 @@
  *   carry decisions and sizes, never prompts, SQL or values (LI-082).
  */
 #include "rptview.h"
+#include "telemetry.h"
 #include "rpt.h"
 #include "sem.h"
 #include "agent.h"
@@ -279,6 +280,7 @@ static RvDoc *open_doc_tab(App *a, RvDoc *d) {
 static bool ws_theme_path(char *out, size_t n);
 static bool file_exists_(const char *p);
 static RvDoc *create_report(App *a, const char *title) {
+    telemetry_count(TM_REPORT);
     if (!G.cat_loaded) load_catalog(a);
     RvDoc *d = new_doc(a); if (!d) return NULL;
     rpt_init(&d->r, title && *title ? title : "Untitled report");
@@ -314,6 +316,7 @@ static void autosave(App *a, RvDoc *d) {
     if (rpt_save_atomic(&d->r, ap, why, sizeof why)) d->autosaved_at = now_s();
 }
 static RvDoc *open_report(App *a, const char *path, bool read) {
+    telemetry_count(TM_REPORT);
     if (!G.cat_loaded) load_catalog(a);
     /* already open in the same mode: show it; read mode beside an editable copy is a separate tab */
     for (int i = 0; i < MAX_DOCS; i++) if (G.docs[i] && !strcmp(G.docs[i]->path, path) && G.docs[i]->read_mode == read) { panels_activate_tab(a->panels, a, G.docs[i]->tab_id); return G.docs[i]; }
@@ -3333,7 +3336,7 @@ static void sql_send(App *a) {
     snprintf(G.sent_q, sizeof G.sent_q, "%s", G.q.buf);
     build_sql_payload(a, &ti);
     char dir[1100]; pref_dir(a, dir, sizeof dir);
-    G.ai = ai_start(stream_cfg(), ag_sql_system_prompt(), G.payload, dir);
+    telemetry_count(TM_AI); G.ai = ai_start(stream_cfg(), ag_sql_system_prompt(), G.payload, dir);
     if (!G.ai) { G.ast = AS_ERROR; snprintf(G.amsg, sizeof G.amsg, "The request could not start."); return; }
     G.req_qmode = true; G.ast = AS_THINKING; G.amsg[0] = 0;
     textfield_set(&G.q, "");
@@ -3518,7 +3521,7 @@ static void ai_send(App *a, RvDoc *d) {
         }
     }
     build_payload(a, d);
-    G.ai = ai_start(stream_cfg(), ag_system_prompt(), G.payload, dir);
+    telemetry_count(TM_AI); G.ai = ai_start(stream_cfg(), ag_system_prompt(), G.payload, dir);
     G.ast = AS_THINKING; G.at0 = now_s(); snprintf(G.sent_q, sizeof G.sent_q, "%s", G.q.buf);
     textfield_set(&G.q, "");   /* chat: the question moved into the conversation */
     snprintf(G.amsg, sizeof G.amsg, "Thinking (%s)...", strcmp(G.cfg.provider, "local") ? "cloud provider" : "local endpoint, nothing leaves this machine");
@@ -3773,7 +3776,7 @@ static void track_checking(App *a) {
         size_t L = strlen(G.payload) + strlen(G.last_answer) + w + 400; char *m = malloc(L);
         snprintf(m, L, "%s\n<previous_answer untrusted=\"true\">\n%s\n</previous_answer>\n<sql_check untrusted=\"true\">\n%s</sql_check>\nFix the visuals whose SQL failed and answer again with the complete proposal JSON.\n", G.payload, G.last_answer, rep);
         char dir[1100]; pref_dir(a, dir, sizeof dir);
-        G.ai = ai_start(stream_cfg(), ag_system_prompt(), m, dir);
+        telemetry_count(TM_AI); G.ai = ai_start(stream_cfg(), ag_system_prompt(), m, dir);
         audit(a, "propose_report_patch", d, "sql-check-retry", strlen(m), "");
         LOG_I("report: the AI's SQL failed the local check (%d of %d); asking for a correction (%d)", bad, G.nprobes, G.retries + 1);
         free(m);

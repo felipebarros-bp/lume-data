@@ -27,6 +27,7 @@
 #include "objed.h"
 #include "tdes.h"
 #include "dialog.h"
+#include "telemetry.h"
 #include "planview.h"
 #include "rptview.h"
 #include "settings.h"
@@ -266,6 +267,7 @@ void script_tick(App *a) {
         if (at) editor_select_range(a->editor, (int)(at - t), (int)(at - t) + (int)ql); else { printf("script: target not found: edselect %s\n", arg); fflush(stdout); }
         free(t);
     }
+    else if (!strcmp(cmd, "telemetrystate")) telemetry_dump();   /* consent and the session's counters */
     else if (!strcmp(cmd, "edscroll")) {   /* the active editor's horizontal scroll, its widest line and its text width (px) */
         float sx = 0, wd = 0, vw = 0; if (a->editor) editor_scroll_state(a->editor, &sx, &wd, &vw);
         printf("edscroll sx=%.0f widest=%.0f view=%.0f\n", sx, wd, vw); fflush(stdout);

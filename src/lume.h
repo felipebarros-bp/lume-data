@@ -157,6 +157,7 @@ typedef struct App {
     double last_frame_ms;       /* duration of the last frame, present included (harness "stat") */
     double last_present_ms;     /* of which SDL_RenderPresent: mostly waiting for vsync, not work */
     bool reduce_motion;         /* PNL-039: no smooth scrolling / animation (system setting or Window menu) */
+    bool telemetry;               /* Settings > Privacy: anonymous usage statistics (off unless the user turns it on) */
     char report_locale[8];        /* new reports: "pt-BR" / "en-US" ("" = Lume\'s default) */
 } App;
 

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 /* Settings screen: see settings.h. */
 #include "settings.h"
+#include "telemetry.h"
 #include "commands.h"
 #include "conn.h"
 #include "results.h"
@@ -19,8 +20,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { SEC_GENERAL, SEC_APPEARANCE, SEC_EDITOR, SEC_QUERY, SEC_RESULTS, SEC_REPORTS, SEC_GIT, SEC_INTELLIGENCE, SEC_N };
-static const char *const SEC_NAME[SEC_N] = { "General", "Appearance", "Editor", "Query Execution", "Results & Format", "Reports", "Source Control", "Lume Intelligence" };
+enum { SEC_GENERAL, SEC_APPEARANCE, SEC_EDITOR, SEC_QUERY, SEC_RESULTS, SEC_REPORTS, SEC_GIT, SEC_INTELLIGENCE, SEC_PRIVACY, SEC_N };
+static const char *const SEC_NAME[SEC_N] = { "General", "Appearance", "Editor", "Query Execution", "Results & Format", "Reports", "Source Control", "Lume Intelligence", "Privacy" };
 static struct {
     bool open; int sec; Input stash; bool stashed; float scroll, content_h; ScrollBar sb; int prev_focus;
     TextField f_fetch, f_hist; int field;   /* 1 fetch size, 2 history */
@@ -118,6 +119,18 @@ static bool chk(App *a, float x, float *y, float w, const char *label, bool v, c
     return t;
 }
 
+static void sec_privacy(App *a, float x, float *py, float w) {
+    float y = *py;
+    HEAD("Anonymous usage statistics");
+    if (chk(a, x, &y, w, "Share anonymous usage statistics", a->telemetry, "settings:telemetry")) { a->telemetry = !a->telemetry; telemetry_set_enabled(a->telemetry); }
+    NOTE("Off unless you turn it on. It helps decide what to fix and improve: how fast Lume starts, how often it stutters, which features are used.");
+    NOTE("Sent: the version and build, the operating system (name, major version, architecture) and, per session, counts and timings in coarse ranges (\"10-99 queries\", \"startup 0.5-1 s\", \"memory 100-250 MB\").");
+    NOTE("Never sent: SQL, data, names of connections, tables or files, hosts, users, paths, keys or prompts. No installation id either: every launch is a new, unrelated session.");
+    NOTE("Where: Aptabase, in the EU (Germany). It uses the IP address only to derive the country and does not store it. A session's summary is sent at the next launch, so quitting never waits on the network.");
+    HEAD("Exactly what is sent when Lume starts");
+    { char pv[1400]; telemetry_preview(pv, sizeof pv); float hh = results_draw_wrapped(a->font_mono ? a->font_mono : a->font_small, a->renderer, pv, rect_make(x, y, w, px(a, 200)), color_hex(T_TEXT_MUTED), 0, true); y += hh + px(a, 8); }
+    *py = y;
+}
 static void sec_general(App *a, float x, float *py, float w) {
     float y = *py;
     HEAD("Where Lume keeps things");
@@ -264,6 +277,7 @@ void settings_draw(App *a) {
     case SEC_REPORTS: sec_reports(a, x, &y, w); break;
     case SEC_GIT: sec_git(a, x, &y, w); break;
     case SEC_INTELLIGENCE: rptview_settings_intelligence(a, body, &y); break;
+    case SEC_PRIVACY: sec_privacy(a, x, &y, w); break;
     }
     clip_pop(r);
     S.content_h = y - y0 + px(a, 12);

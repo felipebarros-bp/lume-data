@@ -11,6 +11,7 @@
  *             candidate SQL opened as a copy, audit line without content (EPL-043..054 / 073..077)
  */
 #include "planview.h"
+#include "telemetry.h"
 #include "rptview.h"
 #include "ai.h"
 #include "commands.h"
@@ -96,6 +97,7 @@ static PView *new_slot(void) {
     return v;
 }
 void planview_explain(App *a, Connection *c, const char *stmt, int len, int mode, const char *note) {
+    telemetry_count(TM_PLAN);
     if (!c || !c->db) { app_status(a, "Explain: not connected"); return; }
     if (G.job) { app_status(a, "A plan is still being captured: wait or cancel it"); return; }
     int d = plan_dialect_for_driver(c->driver);
