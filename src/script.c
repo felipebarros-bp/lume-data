@@ -85,8 +85,16 @@ static void push_mouse(App *a, Uint32 type, float x, float y, int clicks, bool d
     SDL_PushEvent(&e);
 }
 
-/* Push a synthetic key-down for a spec such as "cmd+shift+Return": modifiers (cmd / gui, ctrl,
- * shift, alt) joined with '+', then an SDL key name. Logs unknown key names but still pushes. */
+/* "cmd" in a key spec is the platform's primary modifier (KM_PRIMARY): Cmd on macOS, Ctrl elsewhere,
+ * so the same script drives the same shortcut on every OS. "gui" is always the GUI key. */
+#ifdef __APPLE__
+#define SCRIPT_KMOD_PRIMARY SDL_KMOD_GUI
+#else
+#define SCRIPT_KMOD_PRIMARY SDL_KMOD_CTRL
+#endif
+
+/* Push a synthetic key-down for a spec such as "cmd+shift+Return": modifiers (cmd = primary, gui,
+ * ctrl, shift, alt) joined with '+', then an SDL key name. Logs unknown key names but still pushes. */
 static void push_key(App *a, const char *spec) {
     SDL_Keymod mod = 0;
     char name[64] = "";
@@ -95,7 +103,8 @@ static void push_key(App *a, const char *spec) {
         const char *plus = strchr(p, '+');
         if (!plus) { snprintf(name, sizeof name, "%s", p); break; }
         size_t n = plus - p;
-        if (!strncmp(p, "cmd", n) || !strncmp(p, "gui", n)) mod |= SDL_KMOD_GUI;
+        if (!strncmp(p, "cmd", n)) mod |= SCRIPT_KMOD_PRIMARY;
+        else if (!strncmp(p, "gui", n)) mod |= SDL_KMOD_GUI;
         else if (!strncmp(p, "ctrl", n)) mod |= SDL_KMOD_CTRL;
         else if (!strncmp(p, "shift", n)) mod |= SDL_KMOD_SHIFT;
         else if (!strncmp(p, "alt", n)) mod |= SDL_KMOD_ALT;

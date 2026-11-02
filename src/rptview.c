@@ -292,7 +292,7 @@ static RvDoc *create_report(App *a, const char *title) {
 static bool save_doc(App *a, RvDoc *d, const char *path) {
     if (d->read_mode) { set_msg(d, "%s", L(d, "Modo leitura: o relatório não é alterado", "Read mode: the report is not changed")); return false; }
     doc_paths(a, d);
-    if (path && *path) snprintf(d->path, sizeof d->path, "%s", path);
+    if (path && *path && path != d->path) snprintf(d->path, sizeof d->path, "%s", path);   /* never snprintf a buffer into itself: glibc empties it */
     char why[300];
     if (!rpt_save_atomic(&d->r, d->path, why, sizeof why)) { set_msg(d, "%s", why); return false; }
     /* version history next to the file (LI-050 / 074 lite): one copy per saved revision */

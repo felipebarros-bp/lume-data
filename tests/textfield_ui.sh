@@ -45,14 +45,13 @@ grep -q 'Query Focus' "$P/logs/lume.log" && echo "ok    a click on a palette row
 if [ -n "${CI:-}" ]; then echo "skip  selection pixels: CI renders with another colour profile (the selection itself is checked above)"; fi
 for shot in tf_dialog_keys tf_dialog_drag; do
   [ -n "${CI:-}" ] && break
-  sips -s format png "build/ui/$shot.bmp" --out "build/ui/$shot.png" >/dev/null 2>&1
   px=$(python3 -I -c "
 from PIL import Image
-im = Image.open('build/ui/$shot.png').convert('RGB'); w, h = im.size; s = w / 1280
+im = Image.open('build/ui/$shot.bmp').convert('RGB'); w, h = im.size; s = w / 1280
 box = im.crop((int(344 * s), int(248 * s), int(936 * s), int(276 * s)))   # the dialog's database search field
 print(sum(1 for p in box.getdata() if abs(p[0] - 0x2A) < 6 and abs(p[1] - 0x3A) < 6 and abs(p[2] - 0x5C) < 6))" 2>/dev/null)
   [ "${px:-0}" -gt 500 ] && echo "ok    $shot: the selection is drawn ($px px of the selection colour)" || { echo "FAIL  $shot: no visible selection (${px:-0} px)"; fails=$((fails + 1)); }
 done
-for f in build/ui/tf_*.bmp; do sips -s format png "$f" --out "${f%.bmp}.png" >/dev/null && rm "$f"; done
+for f in build/ui/tf_*.bmp; do command -v sips >/dev/null && sips -s format png "$f" --out "${f%.bmp}.png" >/dev/null && rm "$f"; done   # macOS: PNG copies; elsewhere the BMPs stay
 echo "TEXT FIELD UI: $([ $fails -eq 0 ] && echo OK || echo FAIL) ($fails failures)"
 exit $fails

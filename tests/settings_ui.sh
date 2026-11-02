@@ -23,6 +23,7 @@ expect "Editor: the formatter rule saved in sqlstyle.txt" 'grep -q "^\*.tabs=yes
 expect "the fast model is saved to ai.txt (and nothing else changes there; no key)" 'grep -q "^model_fast=claude-haiku-5-5$" $P/ai.txt && grep -q "^model=claude-opus-5-5$" $P/ai.txt && ! grep -qi "sk-" $P/ai.txt'
 expect "Forget removes only that connection: its consents and scope" '! grep -q "^shop1	" $P/ai-scope.txt && grep -q "^other	consent	schema,catvalues" $P/ai-scope.txt'
 expect "Esc closes it" 'printf "%s\n" "$out" | grep "^settingsstate" | sed -n 3p | grep -q "open=0"'
-expect "the macOS app menu Settings... item is enabled and opens Lume Settings" 'printf "%s\n" "$out" | grep -q "^nativesettings sent" && printf "%s\n" "$out" | grep "^settingsstate" | sed -n 4p | grep -q "open=1"'
+if [ "$(uname -s)" = Darwin ]; then expect "the macOS app menu Settings... item is enabled and opens Lume Settings" 'printf "%s\n" "$out" | grep -q "^nativesettings sent" && printf "%s\n" "$out" | grep "^settingsstate" | sed -n 4p | grep -q "open=1"'
+else echo "skip  the native app menu Settings... item is macOS only"; fi
 if [ $fails = 0 ]; then echo "SETTINGS UI: all passed"; else echo "SETTINGS UI: FAILED ($fails failures)"; fi
 exit $fails

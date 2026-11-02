@@ -421,7 +421,8 @@ static char *read_text_file(const char *p, size_t *len, char *why, size_t wn) {
 bool panels_tab_dirty_file(Panels *P, int id) { EdTab *t = tab_by_id(P, id); return t && t->path[0] && editor_revision(t->ed) != t->saved_rev; }
 const char *panels_tab_path(Panels *P, int id) { EdTab *t = tab_by_id(P, id); return t && t->path[0] ? t->path : NULL; }
 int panels_open_file_tab(Panels *P, App *a, const char *path) {
-    char abs[1024]; if (!realpath(path, abs)) snprintf(abs, sizeof abs, "%s", path);
+    /* realpath writes up to PATH_MAX bytes (4096 on Linux, where glibc's fortified realpath aborts on a smaller buffer) */
+    char abs[4096]; if (!realpath(path, abs)) snprintf(abs, sizeof abs, "%s", path);
     for (int i = 0; i < MAX_TABS; i++) if (P->tabs[i].used && !strcmp(P->tabs[i].path, abs)) { activate_tab(P, a, P->tabs[i].id, true); return P->tabs[i].id; }
     char why[1200]; size_t len = 0;
     char *text = read_text_file(abs, &len, why, sizeof why);
