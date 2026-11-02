@@ -3,7 +3,8 @@
 # The suites CI runs (GitHub-hosted runners): everything that needs no database server, no Docker
 # and no real AI (the AI suites talk to the loopback mocks only). Database suites (PostgreSQL,
 # Oracle, SQL Server, MySQL containers, the large-catalog test bed) stay in tests/run_all.sh, run on
-# a developer machine. Writes build/test-report-ci.md; exit 1 on any failure.
+# a developer machine; so does extract_check (its sandbox runs the host's python, which a CI image may not
+# have set up). Writes build/test-report-ci.md; exit 1 on any failure.
 # Usage: sh tests/run_ci.sh            (the list for this OS)
 #        LUME_CI_SUITES="a b" sh tests/run_ci.sh   (only those)
 cd "$(dirname "$0")/.."
@@ -13,7 +14,7 @@ OS=$(uname -s)
 HEADLESS="grid_check exec_check units_check objects_check tbl_check rpt_check toolbar_check outlog_check image_check about_check dock_check edit_check"
 case "$OS" in
   Darwin)
-    LIST="$HEADLESS schidx_check plan_check gitcore_check extract_check crash_check smoke
+    LIST="$HEADLESS schidx_check plan_check gitcore_check crash_check smoke
           about_ui ai_sql_ui conn_dialog_ui connect_fail_ui grid_scrollbar_ui new_query_ui results_tabs_ui output_select_ui
           settings_ui textfield_ui open_ui rpt_design_ui rpt_export_ui rpt_filter_ui rpt_theme_ui rpt_cardsql_ui rpt_aisql_ui" ;;
   Linux)

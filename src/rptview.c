@@ -5007,6 +5007,7 @@ bool rptview_drop_file(App *a, const char *path, SDL_WindowID win, float x, floa
 bool rptview_idle(App *a) {
     (void)a;
     if (G.sx_state == SX_BUILDING) return false;
+    if (G.vstate == 1) return false;   /* the assistant's own checks (plans, hypothetical index) still running */
     if (G.job || G.ai || G.testj || G.signing || G.mstate == 1 || G.schema_wait || G.sx_wait || G.sx_state == SX_BUILDING || G.ast == AS_THINKING || G.ast == AS_QUERYING || G.ast == AS_CHECKING) return false;
     for (int di = 0; di < MAX_DOCS; di++) if (G.docs[di]) for (int i = 0; i < MAX_DATA; i++) if (G.docs[di]->data[i].used && (G.docs[di]->data[i].status == RD_QUEUED || G.docs[di]->data[i].status == RD_RUNNING)) return false;
     return true;

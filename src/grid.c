@@ -677,7 +677,11 @@ static int local_offset_min(const Dt *dt) {
     time_t t = timegm(&tm) - dt->off_min * 60;
     struct tm lt;
     localtime_r(&t, &lt);
+#ifdef _WIN32   /* no tm_gmtoff: the local wall clock read back as if it were UTC, minus the instant */
+    return (int)((timegm(&lt) - t) / 60);
+#else
     return (int)(lt.tm_gmtoff / 60);
+#endif
 }
 
 /* Re-renders an ISO date / timestamp per the date style and time-zone mode into tmp. Returns

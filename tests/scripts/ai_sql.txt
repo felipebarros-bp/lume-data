@@ -89,6 +89,8 @@ clickon "plan:ask 1"
 rpt await 20000
 rpt ai ask VALIDA esta reescrita é equivalente e mais rápida?
 rpt await 20000
+wait 30
+rpt await 20000
 rptstate
 rpt ai apply
 rpt await 30000

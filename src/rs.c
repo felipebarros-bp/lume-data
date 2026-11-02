@@ -22,7 +22,7 @@
 #include <strings.h>
 
 /* Heap copy of a NUL-terminated string (no NULL check on malloc). */
-static char *dup(const char *s) { size_t n = strlen(s) + 1; char *d = malloc(n); memcpy(d, s, n); return d; }
+static char *rs_dup(const char *s) { size_t n = strlen(s) + 1; char *d = malloc(n); memcpy(d, s, n); return d; }
 
 /* See rs.h. */
 void rs_init(ResultSet *rs) { memset(rs, 0, sizeof *rs); rs->err_code = -1; rs->err_offset = -1; }
@@ -59,8 +59,8 @@ void rs_add_column(ResultSet *rs, const char *name, const char *type, int kind) 
     rs->cols = realloc(rs->cols, sizeof *rs->cols * n);
     rs->types = realloc(rs->types, sizeof *rs->types * n);
     rs->kinds = realloc(rs->kinds, sizeof *rs->kinds * n);
-    rs->cols[rs->ncols] = dup(name ? name : "");
-    rs->types[rs->ncols] = dup(type ? type : "");
+    rs->cols[rs->ncols] = rs_dup(name ? name : "");
+    rs->types[rs->ncols] = rs_dup(type ? type : "");
     rs->kinds[rs->ncols] = (uint8_t)kind;
     rs->ncols = n;
 }

@@ -403,6 +403,8 @@ static bool file_stat(const char *p, long long *mt, long long *sz) {
     struct stat sb; if (stat(p, &sb)) return false;
 #ifdef __APPLE__
     *mt = (long long)sb.st_mtimespec.tv_sec * 1000000000LL + sb.st_mtimespec.tv_nsec;
+#elif defined(_WIN32)
+    *mt = (long long)sb.st_mtime * 1000000000LL;   /* seconds only on Windows */
 #else
     *mt = (long long)sb.st_mtim.tv_sec * 1000000000LL + sb.st_mtim.tv_nsec;
 #endif

@@ -80,6 +80,7 @@ jobs:
         env:
           DYLD_FALLBACK_LIBRARY_PATH: ${{ runner.temp }}/sdl3/lib
           PKG_CONFIG_PATH: ${{ runner.temp }}/sdl3/lib/pkgconfig   # suites that compile their own checks against SDL3
+          CMAKE_PREFIX_PATH: ${{ runner.temp }}/sdl3                # the ASan build configures its own tree
         run: |
           brew list pkg-config >/dev/null 2>&1 || brew install pkg-config
           sh tests/run_ci.sh
