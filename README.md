@@ -16,14 +16,44 @@ Electron and without a runtime.
 - **Cross-platform.** macOS (universal DMG, signed with a Developer ID), Linux (x86_64, arm64), and
   Windows (in progress).
 
-## Motivation
+## Why I created Lume Data
 
-> _Draft: to be written by the author._
+For a long time, one thing has bothered me in my day-to-day work as a developer: **why is it so
+difficult to find a SQL IDE that is good, fast, modern, and free?** Some tools I tried were powerful
+but consumed a surprising amount of resources for simple tasks; others were free and open source,
+but sluggish, prone to freezes, or unfinished. I just wanted to open my tool, connect to a database,
+write my queries, and get work done.
 
-Day-to-day database work tends to be spread over heavy tools: one for queries, another for
-execution plans, another for reports, a browser tab for an AI chat that knows nothing about the
-database in front of you. Lume Data puts that work in one small native program that opens
-instantly, stays out of the way, and keeps the user in control of what leaves the machine.
+The inspiration goes back years, to when I discovered Linux and how it began: someone starting a
+project out of curiosity and sharing it so others could use it, study it, change it and make it
+better. **"That's amazing! This is what technology should be."** Throughout my career I have relied
+on countless open-source projects, built by people I will probably never meet. **I always wanted to
+do the same someday.**
+
+Later, working with databases every day, I found a commercial IDE that felt close to what I was
+looking for. But one thing kept bothering me: the cost. Not because commercial software isn't worth
+it, but because access to great tools shouldn't depend on someone's financial circumstances, least
+of all for people just getting started: the student writing their first `SELECT`, the person
+changing careers, anyone who can't afford another subscription. **I believe technology should
+expand human capabilities, not limit opportunities.**
+
+I tried contributing to an existing open-source project, and learned how hard deep changes are in a
+codebase with years of decisions behind it. So I asked myself: **"What if I started from scratch?"**
+What if performance, simplicity and user experience were principles from the very first line of
+code? That is how Lume Data was born, written in C with SDL, so I could control how it uses memory
+and CPU and how it responds. **Lightweight shouldn't mean limited**: an intelligent editor, object
+navigation, data editing, execution plans, Git, and AI that helps developers, analysts and people who
+have never written a line of SQL. The tool should work for the person, not the other way around.
+
+Lume Data is at the beginning of its journey, and I want it to grow in the open, with ideas,
+criticism and contributions. **I want someone starting out today to have access to a tool as good
+as the one used by an experienced professional at a large company**, without having to choose
+between quality and accessibility. If Lume Data helps someone learn SQL, solve a problem, or simply
+work with less frustration, it will already have been worth it. This is my way of giving back to
+everyone who shared their knowledge before me: **by creating something and sharing it with the
+world.**
+
+*Isabella Tessarotto, creator of Lume Data*
 
 ## What it does
 
