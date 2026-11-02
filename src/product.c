@@ -6,6 +6,7 @@
 #include <SDL3/SDL.h>
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
@@ -57,6 +58,8 @@ const LumeProduct *product_current(void) {
         p.docs_url = or_null(LUME_DOCS_URL);
         p.issues_url = or_null(LUME_ISSUES_URL);
         p.release_notes_url = or_null(LUME_RELEASE_NOTES_URL);
+        if (getenv("LUME_SCRIPT") && getenv("LUME_TEST_NO_LINKS"))   /* harness: a build without links */
+            p.website_url = p.docs_url = p.issues_url = p.release_notes_url = NULL;
         p.license_name = or_null(LUME_LICENSE_NAME);
         p.copyright = or_null(LUME_COPYRIGHT);
     }
@@ -161,6 +164,7 @@ bool url_open(const char *url, char *why, int n) {
     if (!url_allowed(url, why, n)) return false;
     /* the platform's own opener: no shell, no command line; it returns once the request is
      * handed to the system (the browser starts on its own) */
+    if (getenv("LUME_SCRIPT")) { printf("url-open %s\n", url); fflush(stdout); return true; }   /* harness: never a real browser */
     if (!SDL_OpenURL(url)) { snprintf(why, (size_t)n, "The browser could not be opened: %s", SDL_GetError()); return false; }
     return true;
 }

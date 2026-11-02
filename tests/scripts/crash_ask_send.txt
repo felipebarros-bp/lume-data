@@ -1,0 +1,6 @@
+# next launch, "ask each time": Send report
+wait 300
+tbmodal
+button "Send report"
+wait 120
+quit

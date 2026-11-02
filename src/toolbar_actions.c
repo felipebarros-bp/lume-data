@@ -23,6 +23,7 @@
  * the panels), drawing in toolbar_draw_overlay (on top).
  */
 #include "toolbar_int.h"
+#include "crashrep.h"
 #include "planview.h"
 #include "plan.h"
 #include <ctype.h>
@@ -456,6 +457,7 @@ static void confirm_answer(Toolbar *t, App *a, int b) {
         break;
     }
     case CF_WS_SWITCH: ws_switch(t, a, arg, b == 0); break;   /* Save / Discard */
+    case CF_CRASH: crashrep_answer(a, b < 0 ? 2 : b); break;   /* Send report / View report / Don't send (Esc: don't send) */
     case CF_CONN_FAILED: {   /* Retry / Edit connection... / Close */
         Connection *c = tb_conn_by_id(a, arg);
         if (c && b == 0) { a->pending_activate = c; app_connect_async(a, c, false); }
@@ -1025,6 +1027,11 @@ bool toolbar_flag(Toolbar *t, int which) { return t && (which == 0 ? t->prefs.vi
 const char *toolbar_workspace_dir(Toolbar *t) { return t ? t->ws_dir : ""; }
 
 /* A connect the user asked for failed: said in the middle of the screen, not only in the status bar */
+void toolbar_crash_prompt(Toolbar *t, App *a, const char *body) {
+    (void)a;
+    if (!t) return;
+    tba_confirm(t, CF_CRASH, "Lume Data closed unexpectedly", body, "Send report", "View report", "Don't send", "");
+}
 void toolbar_connect_failed(Toolbar *t, App *a, Connection *c) {
     (void)a;
     if (!t || !c || t->modal) return;   /* never over another question */

@@ -99,6 +99,8 @@ run_suite editor_hscroll_ui "UI harness: the SQL editor never scrolls sideways p
 run_suite chat_scroll_ui "UI harness: an approval taller than the chat opens at its title once and stays at the end once scrolled there" sh tests/chat_scroll_ui.sh
 run_suite conn_dialog_ui "UI harness: New Connection picks the database first (search), PROD suggests read-only, Test reports beside its button, editing changes the type through the picker" sh tests/conn_dialog_ui.sh
 run_suite conn_secrets_ui "UI harness: connection passwords live in the OS secret store (one-time move out of secrets.txt, back on the next launch, removed with the connection); fake password, test service" sh tests/conn_secrets_ui.sh
+run_suite telemetry_ui "UI harness: anonymous usage statistics are off by default; with consent only counts and ranges go out (loopback mock), never SQL, names, hosts, users or paths" sh tests/telemetry_ui.sh
+run_suite crash_report_ui "UI harness: crash reports with consent (ask by default: view / send / do not send; always; never), Sentry-format event with no path, user or host (loopback mock)" sh tests/crash_report_ui.sh
 run_suite connect_fail_ui "UI harness: a failed connect opens a dialog with the driver message and Retry / Edit connection / Close" sh tests/connect_fail_ui.sh
 run_suite ssh_tunnel_ui "UI harness: SSH tunnel through the system ssh (offline: ssh's refusal named in the dialog, option look-alike hosts refused, settings kept when switched off, no ssh left running)" sh tests/ssh_tunnel_ui.sh
 run_suite dock_check   "docking engine: transactions, undo, presets, persistence, corrupt layouts, drop targets, latency" sh tests/dock_check.sh

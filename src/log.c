@@ -31,6 +31,8 @@ static FILE *log_file;                 /* NULL until log_init succeeds */
 static int log_fd = -1;                /* same file, raw descriptor for the crash handler */
 static int log_level = LOG_INFO;   /* lowest level written; set once in log_init */
 static char log_file_path[1100];   /* absolute path of lume.log, "" when not open */
+static char crash_path[1100];      /* where the crash handler writes the report for the next launch (crashrep.c) */
+static char crash_head[300];       /* its first lines, composed at init: nothing is formatted inside the handler */
 static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER;   /* serialises writers and log_shutdown */
 static __thread char thread_name[24];  /* per-thread label shown in each line */
 
@@ -49,6 +51,19 @@ static const char *level_name(int level) {
 /* Only async-signal-safe calls in here: write(), backtrace(), backtrace_symbols_fd(),
  * signal(), raise(). No stdio, no malloc, no locks. */
 static void write_str(int fd, const char *s) { if (fd >= 0) (void)!write(fd, s, strlen(s)); }
+
+/* See log.h. Async-signal-safe: open / write / backtrace only; the header was composed at init. */
+void log_write_crash_report(int sig) {
+    int cfd = crash_path[0] ? open(crash_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600) : -1;
+    if (cfd < 0) return;
+    char sl[32]; snprintf(sl, sizeof sl, "signal=%d\n", sig);
+    write_str(cfd, crash_head); write_str(cfd, sl); write_str(cfd, "stack:\n");
+#ifndef _WIN32
+    void *frames[64]; int n = backtrace(frames, 64);
+    backtrace_symbols_fd(frames, n, cfd);
+#endif
+    fsync(cfd); close(cfd);
+}
 
 /* Fatal-signal handler: writes a header and a backtrace to the log (and to stderr), flushes
  * the file to disk, then re-raises the signal with the default action so the process still
@@ -71,6 +86,7 @@ static void crash_handler(int sig) {
     write_str(log_fd, "(no backtrace on Windows yet)\n");
 #endif
     write_str(log_fd, "----- end of backtrace -----\n");
+    log_write_crash_report(sig);   /* the report for the next launch (crashrep.c) */
     if (log_fd >= 0) fsync(log_fd);
     /* let the system finish the job: default action, macOS crash report, non-zero exit */
     signal(sig, SIG_DFL);
@@ -126,6 +142,8 @@ void log_init(const char *app_version) {
     resolve_dir(dir, sizeof dir);
     SDL_CreateDirectory(dir);
     snprintf(log_file_path, sizeof log_file_path, "%slume.log", dir);
+    snprintf(crash_path, sizeof crash_path, "%scrash-pending.txt", dir);
+    snprintf(crash_head, sizeof crash_head, "lume-crash 1\nversion=%s\nbuild=%s\nchannel=%s\n", app_version ? app_version : "", LUME_BUILD_ID, LUME_CHANNEL);
 
     /* rotation: one previous file is kept as lume.log.1 */
     struct stat st;
@@ -200,3 +218,6 @@ void log_write(int level, const char *fmt, ...) {
     log_writev(level, fmt, ap);
     va_end(ap);
 }
+
+/* See log.h. */
+const char *log_crash_path(void) { return crash_path; }
