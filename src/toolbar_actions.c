@@ -24,6 +24,7 @@
  */
 #include "toolbar_int.h"
 #include "crashrep.h"
+#include "update.h"
 #include "planview.h"
 #include "plan.h"
 #include <ctype.h>
@@ -458,6 +459,7 @@ static void confirm_answer(Toolbar *t, App *a, int b) {
     }
     case CF_WS_SWITCH: ws_switch(t, a, arg, b == 0); break;   /* Save / Discard */
     case CF_CRASH: crashrep_answer(a, b < 0 ? 2 : b); break;   /* Send report / View report / Don't send (Esc: don't send) */
+    case CF_UPDATE: update_answer(a, b < 0 ? 2 : b); break;   /* Download / Release Notes / Later / Skip This Version (Esc: later) */
     case CF_CONN_FAILED: {   /* Retry / Edit connection... / Close */
         Connection *c = tb_conn_by_id(a, arg);
         if (c && b == 0) { a->pending_activate = c; app_connect_async(a, c, false); }
@@ -812,7 +814,13 @@ static void modal_pass(Toolbar *t, App *a, bool draw) {
     if (t->modal == TM_NONE) return;
     Input saved = *in;
     if (draw) { in->mouse_pressed = false; in->mouse_rpressed = false; }
-    Rect box = t->modal == TM_CONFIRM ? dialog_box(a, 520, 230) : t->modal == TM_PARAMS ? dialog_box(a, 480, 120 + 40 * (float)t->nparams) :
+    float notes_h = 0;   /* an update offer with its notes: as tall as its text */
+    if (t->modal == TM_CONFIRM && t->cf_kind == CF_UPDATE && strstr(t->cf_body, "WHAT'S NEW")) {
+        float ch = 0;   /* a text line ~17 points, wrapping at ~95 characters; an empty line 10 (the drawing loop's paragraph gap) */
+        for (const char *q = t->cf_body, *ls = q; ; q++) if (!*q || *q == '\n') { ch += q == ls ? 10 : 17 * (float)(1 + (q - ls) / 95); ls = q + 1; if (!*q) break; }
+        notes_h = fminf(fminf(32 + ch + 80, 560), a->height / a->scale - 120);   /* title above, buttons below */
+    }
+    Rect box = t->modal == TM_CONFIRM ? (notes_h > 0 ? dialog_box(a, 600, fmaxf(notes_h, 230)) : dialog_box(a, 520, 230)) : t->modal == TM_PARAMS ? dialog_box(a, 480, 120 + 40 * (float)t->nparams) :
                t->modal == TM_SETTINGS ? dialog_box(a, 520, 250) : t->modal == TM_CUSTOMIZE ? dialog_box(a, 620, fminf(180 + 28 * (float)t->nitems, a->height / a->scale - 80)) :
                t->modal == TM_SESSION ? dialog_box(a, 560, 330) : t->modal == TM_NAME ? dialog_box(a, 420, 150) : dialog_box(a, 560, 440);
     t->modal_rect = box;
@@ -832,7 +840,7 @@ static void modal_pass(Toolbar *t, App *a, bool draw) {
             /* each paragraph wraps (a driver message is often longer than the box is wide) */
             while (*p && ly < box.y + box.h - px(a, 60)) {
                 const char *e = strchr(p, '\n'); int l = e ? (int)(e - p) : (int)strlen(p);
-                char seg[800]; snprintf(seg, sizeof seg, "%.*s", l, p);
+                char seg[800]; snprintf(seg, sizeof seg, "%.*s", l < 790 ? l : 790, p);
                 ly += (l ? results_draw_wrapped(a->font_small, r, seg, rect_make(x, ly, w, box.y + box.h - px(a, 60) - ly), color_hex(T_TEXT_MUTED), 0, true) : px(a, 8)) + px(a, 2);
                 p = e ? e + 1 : p + l;
             }
@@ -1027,6 +1035,13 @@ bool toolbar_flag(Toolbar *t, int which) { return t && (which == 0 ? t->prefs.vi
 const char *toolbar_workspace_dir(Toolbar *t) { return t ? t->ws_dir : ""; }
 
 /* A connect the user asked for failed: said in the middle of the screen, not only in the status bar */
+bool toolbar_update_prompt(Toolbar *t, App *a, const char *title, const char *body, int notice) {
+    (void)a;
+    if (!t || t->modal) return false;   /* never over another question */
+    if (notice) tba_confirm(t, CF_UPDATE, title, body, "OK", NULL, NULL, "");
+    else tba_confirm4(t, CF_UPDATE, title, body, "Download", "Release Notes", "Later", "Skip This Version", "");
+    return true;
+}
 void toolbar_crash_prompt(Toolbar *t, App *a, const char *body) {
     (void)a;
     if (!t) return;

@@ -1,0 +1,9 @@
+# Launch: offered; Skip This Version remembers it
+wait 30
+updateawait
+wait 30
+tbmodal
+button "Skip This Version"
+wait 30
+updatestate
+quit

@@ -1,0 +1,9 @@
+# Help > Check for Updates with a newer release: offered even when that version was skipped
+wait 30
+invoke app.check_updates
+updateawait
+wait 30
+tbmodal
+button "Release Notes"
+wait 10
+quit

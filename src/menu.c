@@ -290,6 +290,8 @@ static const MenuItem window_items[] = {
     SUB("Editor", w_editor_items),
 };
 static const MenuItem help_items[] = {
+    { "Check for Updates\xE2\x80\xA6", NULL, ACT_CHECK_UPDATES, true },
+    SEP,
     { "About Lume Data", NULL, ACT_ABOUT, true },
 };
 
