@@ -74,7 +74,9 @@ if [ -n "${LUME_SIGN_IDENTITY:-}" ] && { [ -n "${LUME_NOTARY_PROFILE:-}" ] || [ 
   else
     xcrun notarytool submit "$DMG" --key "$LUME_NOTARY_KEY" --key-id "$LUME_NOTARY_KEY_ID" --issuer "$LUME_NOTARY_ISSUER" --wait
   fi
-  xcrun stapler staple "$DMG"
+  # the ticket comes from Apple's CDN: retry a dropped connection a few times before giving up
+  ok=0; for try in 1 2 3 4; do if xcrun stapler staple "$DMG"; then ok=1; break; fi; echo "staple attempt $try failed; retrying"; sleep $((try * 15)); done
+  [ $ok = 1 ] || { echo "could not staple the notarization ticket (the DMG is notarized; Gatekeeper fetches the ticket online)"; exit 68; }
   spctl --assess --type open --context context:primary-signature -v "$DMG" || true
 fi
 shasum -a 256 "$DMG"
