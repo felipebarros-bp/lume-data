@@ -324,6 +324,7 @@ void app_disconnect(App *a, Connection *c) {
 
 /* Open the connection dialog for c, or for a new connection when c is NULL. */
 void app_edit_connection(App *a, Connection *c) { dialog_open(a->dialog, a, c); }
+void app_new_connection_in(App *a, const char *folder) { dialog_open_in_folder(a->dialog, a, folder); }
 
 /* Persist the connection list and rebuild the Explorer after an add / edit / delete. */
 void app_connections_changed(App *a) {

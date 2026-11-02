@@ -18,6 +18,8 @@ void dialog_destroy(Dialog *d);
 void dialog_open(Dialog *d, App *a, Connection *existing);   /* NULL = new */
 /* True while the dialog is shown. */
 bool dialog_is_open(Dialog *d);
+/* A new connection whose Folder field starts as `folder` (the Explorer's "New Connection Here"). */
+void dialog_open_in_folder(Dialog *d, App *a, const char *folder);
 void dialog_update(Dialog *d, App *a);     /* handles input; call before every other panel */
 void dialog_draw(Dialog *d, App *a);       /* overlay; call last */
 /* Result of the Browse file picker: fills the driver's file field and, when the name is

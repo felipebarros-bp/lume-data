@@ -142,6 +142,23 @@ void conn_set_value(Connection *c, const char *key, const char *value) {
     if (i >= 0) snprintf(c->values[i], CONN_VALUE_LEN, "%s", value ? value : "");
 }
 
+/* See conn.h. "  a // b /" -> "a/b". */
+void conn_folder_normalize(char *path, size_t n) {
+    char out[256]; size_t w = 0;
+    const char *p = path;
+    while (*p) {
+        while (*p == '/' || *p == ' ' || *p == '\t') p++;
+        const char *s = p; while (*p && *p != '/') p++;
+        const char *e = p; while (e > s && (e[-1] == ' ' || e[-1] == '\t')) e--;
+        if (e > s) {
+            if (w && w + 1 < sizeof out) out[w++] = '/';
+            for (const char *q = s; q < e && w + 1 < sizeof out; q++) out[w++] = (*q == '\n' || *q == '\r') ? ' ' : *q;
+        }
+    }
+    out[w] = 0;
+    snprintf(path, n, "%s", out);
+}
+
 /* Dispatches to the driver's location builder. */
 void conn_location(const Connection *c, char *buf, size_t n) {
     const DriverInfo *d = conn_driver(c);
@@ -265,6 +282,7 @@ ConnStore *conns_load(void) {
         else if (strcmp(line, "env_color") == 0) c->env_color = (uint32_t)strtoul(eq, NULL, 16) & 0xFFFFFF;
         else if (strcmp(line, "read_only") == 0) c->read_only = atoi(eq) != 0;
         else if (strcmp(line, "ai_conn") == 0) snprintf(c->ai_conn, sizeof c->ai_conn, "%s", eq);
+        else if (strcmp(line, "folder") == 0) { snprintf(c->folder, sizeof c->folder, "%s", eq); conn_folder_normalize(c->folder, sizeof c->folder); }
         else conn_set_value(c, line, eq);
     }
     fclose(f);
@@ -301,6 +319,7 @@ void conns_save(ConnStore *s) {
             if (c->env_color) fprintf(f, "env_color=%06X\n", (unsigned)c->env_color);
             if (c->read_only) fprintf(f, "read_only=1\n");
             if (c->ai_conn[0]) fprintf(f, "ai_conn=%s\n", c->ai_conn);
+            if (c->folder[0]) fprintf(f, "folder=%s\n", c->folder);
             for (int k = 0; d && k < d->nfields; k++)
                 if (d->fields[k].type != FIELD_PASSWORD) fprintf(f, "%s=%s\n", d->fields[k].key, c->values[k]);
         }

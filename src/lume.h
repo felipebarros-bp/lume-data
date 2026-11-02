@@ -187,6 +187,7 @@ void app_set_active(App *a, Connection *c);
 void app_prefs_save(App *a);
 void app_set_zoom(App *a, float z);       /* makes a connected c the active one (NULL = none) */
 void app_edit_connection(App *a, Connection *c);  /* opens the dialog; NULL = new connection */
+void app_new_connection_in(App *a, const char *folder);   /* the dialog for a new connection in that Explorer folder */
 void app_connections_changed(App *a);             /* saves the store and rebuilds the explorer */
 void app_open_path(App *a, const char *path);      /* File > Open / drop: query tab, report or database by the kind of file */
 void app_browse_file(App *a);                     /* native open-file dialog; result goes to the dialog or opens a file */

@@ -43,6 +43,7 @@ struct Dialog {
     int pick_sel;   /* keyboard selection in the picker (index into the shown list) */
     float pick_scroll; ScrollBar pick_sb;
     TextField name;   /* connection name editor */
+    TextField folder; /* Explorer folder ("a/b"), "" = top level */
     TextField fields[CONN_MAX_FIELDS];   /* one editor per driver field */
     int focus;                 /* 0 = name, 1.. = fields */
     int bad_field;   /* the field the last validation stopped at (+1; 0 none): outlined in red */
@@ -82,6 +83,13 @@ static void load_fields(Dialog *d) {
 }
 
 static void close_dialog(Dialog *d) { test_abandon(d); d->open = false; }
+/* Focus index of the Folder field: after the driver's fields (Tab: fields, Folder, then Name). */
+static int folder_focus(Dialog *d) { return 1 + drv(d)->nfields; }
+static TextField *focused_field(Dialog *d) {
+    if (d->focus == 0) return &d->name;
+    if (d->focus == folder_focus(d)) return &d->folder;
+    return &d->fields[d->focus - 1];
+}
 
 /* See dialog.h. The draft is a struct copy of the existing connection with its runtime
  * pointers cleared, so editing never touches the live connection. */
@@ -98,6 +106,7 @@ void dialog_open(Dialog *d, App *a, Connection *existing) {
     d->driver_idx = 0;
     for (int i = 0; i < n; i++) if (strcmp(all[i].id, d->draft.driver) == 0) d->driver_idx = i;
     textfield_set(&d->name, d->draft.name);
+    textfield_set(&d->folder, d->draft.folder);
     textfield_set(&d->search, "");
     load_fields(d);
     d->step = existing ? 1 : 0;   /* a new connection starts by choosing its database */
@@ -143,6 +152,8 @@ static void collect(Dialog *d) {
     /* an empty field takes the driver's default (shown as its placeholder); never a password */
     for (int i = 0; i < di->nfields; i++) snprintf(d->draft.values[i], CONN_VALUE_LEN, "%s", d->fields[i].buf[0] || di->fields[i].type == FIELD_PASSWORD ? d->fields[i].buf : di->fields[i].def);
     if (!d->draft.name[0]) conn_summary(&d->draft, d->draft.name, sizeof d->draft.name);
+    snprintf(d->draft.folder, sizeof d->draft.folder, "%s", d->folder.buf);
+    conn_folder_normalize(d->draft.folder, sizeof d->draft.folder);
 }
 
 /* Every non-password field must be filled; otherwise says which, outlines and focuses it. */
@@ -175,12 +186,14 @@ static void save(Dialog *d, App *a, bool connect) {
         memcpy(c->values, d->draft.values, sizeof c->values);
         c->demo = 0;
         c->env = d->draft.env; c->read_only = d->draft.read_only;
+        memcpy(c->folder, d->draft.folder, sizeof c->folder);
         if (was_open) connect = true;
     } else {
         c = conns_add(a->conns, d->draft.driver);
         snprintf(c->name, sizeof c->name, "%s", d->draft.name);
         memcpy(c->values, d->draft.values, sizeof c->values);
         c->env = d->draft.env; c->read_only = d->draft.read_only;
+        memcpy(c->folder, d->draft.folder, sizeof c->folder);
     }
     app_connections_changed(a);
     close_dialog(d);
@@ -343,7 +356,7 @@ static void frame(Dialog *d, App *a, bool live) {
     float w = px(a, 640), pad = px(a, 24), row = px(a, 40), fh = px(a, 30), lbl_w = px(a, 120);
     float h;
     if (d->step == 0) h = px(a, 470);
-    else h = pad + px(a, 34) + (d->target ? row : 0) + px(a, 24) + row * di->nfields + px(a, 30) + row * 2 + px(a, 26) + px(a, 30) + px(a, 50) + px(a, 52) + pad;
+    else h = pad + px(a, 34) + (d->target ? row : 0) + px(a, 24) + row * di->nfields + px(a, 30) + row * 3 + px(a, 26) + px(a, 30) + px(a, 50) + px(a, 52) + pad;
     if (h > a->height - px(a, 20)) h = a->height - px(a, 20);
     float x = (a->width - w) / 2, y = (a->height - h) / 2 - px(a, 10);
     Rect panel = rect_make(x, y, w, h); d->panel = panel;
@@ -403,7 +416,7 @@ static void frame(Dialog *d, App *a, bool live) {
 
     /* ---- the form ---- */
     test_poll(d, a);
-    int nfocus = 1 + di->nfields;
+    int nfocus = 2 + di->nfields;   /* name, the fields, Folder */
     if (live) for (int k = 0; k < in->nkeys; k++) {
         KeyPress *kp = &in->keys[k]; if (kp->used) continue;
         if (kp->key == SDLK_TAB) { int f = d->focus == 0 ? nfocus - 1 : d->focus - 1;   /* order on screen: fields, then name */
@@ -461,6 +474,13 @@ static void frame(Dialog *d, App *a, bool live) {
       Rect nr = rect_make(fx, cy, fw_full, fh);
       if (ui_textfield(a, &d->name, nr, ph2, d->focus == 0) && live) d->focus = 0;
       if (!live && d->focus == 0) draw_rect_outline(r, nr, px(a, 1), color_hex(T_ACCENT)); }
+    cy += row;
+    ui_label(a, rect_make(x + pad, cy, lbl_w, fh), "Folder", ALIGN_LEFT, T_TEXT_MUTED);
+    { Rect fr = rect_make(fx, cy, fw_full, fh); ui_record("conn:folder", fr);
+      bool f = d->focus == folder_focus(d);
+      if (ui_textfield(a, &d->folder, fr, "None (top level); \"/\" nests: Clients/Acme", f) && live) d->focus = folder_focus(d);
+      if (!live && f) draw_rect_outline(r, fr, px(a, 1), color_hex(T_ACCENT));
+      for (const char *p = d->folder.buf; *p; p++) sig = (sig ^ (unsigned char)*p) * 16777619u; }
     cy += row;
     ui_label(a, rect_make(x + pad, cy, lbl_w, fh), "Environment", ALIGN_LEFT, T_TEXT_MUTED);
     { static const char *const envs[] = { "None", "DEV", "HML", "PROD" };
@@ -541,7 +561,7 @@ void dialog_draw(Dialog *d, App *a) {
     frame(d, a, false);
     a->in = saved;
     if (!d->open) return;
-    TextField *f = d->step == 0 ? &d->search : d->focus == 0 ? &d->name : &d->fields[d->focus - 1];
+    TextField *f = d->step == 0 ? &d->search : focused_field(d);
     bool on = ((SDL_GetTicks() - f->blink) / 530) % 2 == 0;
     char shown[1024];
     if (f->password) { size_t p = 0; for (int i = 0; i < f->len && p + 3 < sizeof shown;) { uint32_t cp; i = utf8_next(f->buf, f->len, i, &cp); memcpy(shown + p, "\xE2\x80\xA2", 3); p += 3; } shown[p] = 0; }
@@ -553,11 +573,18 @@ void dialog_draw(Dialog *d, App *a) {
     app_wake_in(a, 530 - (Uint32)((SDL_GetTicks() - f->blink) % 530));
 }
 
+/* See dialog.h. */
+void dialog_open_in_folder(Dialog *d, App *a, const char *folder) {
+    dialog_open(d, a, NULL);
+    textfield_set(&d->folder, folder ? folder : "");
+}
+
 /* See dialog.h. Never prints a field value (a password could be one). */
 void dialog_dump(Dialog *d) {
     const DriverInfo *di = drv(d);
     int nkept = 0; for (int i = 0; i < di->nfields; i++) if (d->fields[i].buf[0]) nkept++;
     printf("dialogstate open=%d step=%d edit=%d focus=%d driver=%s filled=%d/%d env=%d ro=%d testing=%d msg_ok=%d msg=\"%s\"\n", d->open, d->step, d->target != NULL, d->focus, di->id,
            nkept, di->nfields, d->draft.env, d->draft.read_only, d->job != NULL, d->msg_ok, d->msg);
+    printf("dialogfolder \"%s\"\n", d->folder.buf);
     fflush(stdout);
 }

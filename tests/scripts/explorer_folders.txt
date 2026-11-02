@@ -1,0 +1,32 @@
+# Explorer folders: nested, closed by default, open state saved; rename / remove from the folder menu
+wait 300
+explorerdump
+node "Clients"
+wait 30
+node "Acme"
+wait 30
+explorerdump
+rnode "Acme"
+wait 60
+button "Rename Folder…"
+wait 60
+key cmd+a
+type Acme Corp
+wait 10
+key Return
+wait 60
+explorerdump
+rnode "Lab"
+wait 60
+button "Remove Folder (keeps its connections)"
+wait 60
+explorerdump
+wait 60
+rnode "Acme Corp"
+wait 60
+button "New Connection Here…"
+wait 60
+dialogstate
+key Escape
+wait 30
+quit

@@ -60,6 +60,7 @@ struct Connection {
     uint32_t env_color;         /* 0xRRGGBB, 0 = the environment's default colour */
     bool read_only;             /* "read-only in Lume": enforced as far as the driver allows, see db_set_read_only */
     char ai_conn[12];           /* the connection the assistant's SQL runs on (a SELECT-only login), "" = this one (BL-051) */
+    char folder[128];           /* Explorer folder, "/" between levels ("bepass/Palmeiras"); "" = top level */
     /* runtime */
     Db *db;   /* NULL while disconnected */
     DbTable *tables; int ntables;   /* catalog, owned; freed with db_tables_free */
@@ -109,6 +110,8 @@ const DriverInfo *conn_driver(const Connection *c);
 /* Builds the driver-specific location string (conninfo, path, ...) into buf; "" when the
  * driver is unknown. The result can contain the password: never log it. */
 void conn_location(const Connection *c, char *buf, size_t n);
+/* Tidies a folder path in place: segments trimmed, empty ones dropped, joined by "/" ("" = top level). */
+void conn_folder_normalize(char *path, size_t n);
 /* One-line summary for the explorer detail, e.g. "localhost:15432/syn". */
 void conn_summary(const Connection *c, char *buf, size_t n);
 

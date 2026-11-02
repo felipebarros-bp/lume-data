@@ -100,6 +100,7 @@ run_suite chat_scroll_ui "UI harness: an approval taller than the chat opens at 
 run_suite conn_dialog_ui "UI harness: New Connection picks the database first (search), PROD suggests read-only, Test reports beside its button, editing changes the type through the picker" sh tests/conn_dialog_ui.sh
 run_suite conn_secrets_ui "UI harness: connection passwords live in the OS secret store (one-time move out of secrets.txt, back on the next launch, removed with the connection); fake password, test service" sh tests/conn_secrets_ui.sh
 run_suite connect_fail_ui "UI harness: a failed connect opens a dialog with the driver message and Retry / Edit connection / Close" sh tests/connect_fail_ui.sh
+run_suite explorer_folders_ui "UI harness: Explorer folders (nested, closed until opened and remembered; rename / remove / new connection here from the folder menu)" sh tests/explorer_folders_ui.sh
 run_suite dock_check   "docking engine: transactions, undo, presets, persistence, corrupt layouts, drop targets, latency" sh tests/dock_check.sh
 run_suite panels_ui    "UI harness: panels shell, drag & drop, editor groups, layouts, native windows, perf, idle CPU" sh tests/panels_ui.sh
 run_suite textfield_ui "UI harness: text fields (word / line moves, selection, undo, clipboard, scroll, double / triple click)" sh tests/textfield_ui.sh
