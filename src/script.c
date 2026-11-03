@@ -360,7 +360,7 @@ void script_tick(App *a) {
     else if (!strcmp(cmd, "runtofile")) toolbar_run_to_file(a->toolbar, a, arg);
     else if (!strcmp(cmd, "tbnames")) toolbar_print_names(a->toolbar, a);
     else if (!strcmp(cmd, "menudump")) toolbar_dump_menu(a->toolbar);
-    else if (!strcmp(cmd, "tbmodal")) toolbar_dump_modal(a->toolbar);
+    else if (!strcmp(cmd, "tbmodal")) toolbar_dump_modal(a->toolbar, a->scale);
     else if (!strcmp(cmd, "palettedump")) { char q[96]; snprintf(q, sizeof q, "%s", arg[0] == '"' ? arg + 1 : arg); size_t ql = strlen(q); if (ql && q[ql - 1] == '"') q[ql - 1] = 0; panels_palette_dump(a->panels, a, q); }
     else if (!strcmp(cmd, "collisions")) { const char *x = NULL, *y = NULL; int n = commands_collisions(&x, &y); printf("collisions %d%s%s%s%s\n", n, n ? " " : "", n ? x : "", n ? " / " : "", n ? y : ""); fflush(stdout); }
     else if (!strcmp(cmd, "tbadd")) { bool ok = toolbar_add_action(a->toolbar, arg); printf("tbadd %s %s\n", arg, ok ? "ok" : "refused"); fflush(stdout); }

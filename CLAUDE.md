@@ -65,6 +65,8 @@ that touches `website/`. Each release freezes a version of it (the release workf
   calls the action directly (`td menu <id>`) skips the popup and hides bugs in it.
 - Assert on state dumps (`dgmstate`, `tdstate`, `explorerdump`...), not on timing.
 - Cover the failure paths too (refused input, a cancelled operation, an empty catalog).
+- Sizes in assertions and in layout rules are in **points**, never pixels: CI runners draw at 1x, a Retina
+  Mac at 2x. Check a layout-sensitive suite at 1x too with `LUME_UI_SCALE=0.5`.
 
 **Code rules that reviews keep catching**
 - **Processes:** `posix_spawn` with an argv (never a shell); option look-alikes refused and `--` before

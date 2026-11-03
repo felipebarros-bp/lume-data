@@ -69,7 +69,7 @@ static void draw_card(App *a, DgDoc *d, int i, Font *fh, Font *fr, float k) {
     if (d->lod == 0) {   /* boxes only: the header band shows where a table is; its name when it fits */
         float hh = fminf(rc.h, DG_HEAD_H * k);
         draw_rect(R, rect_make(rc.x, rc.y, rc.w, hh), color_alpha(C(n->color ? TAGC[n->color] : P->head), al));
-        if (rc.w >= 40 && rc.h > 6) { Font *ff = dg_font(a, 7); Rect tr = rect_make(rc.x + 2, rc.y + fmaxf(0, (fminf(rc.h, 20 * a->scale / 2) - font_height(ff)) / 2), rc.w - 4, font_height(ff)); draw_rect(R, tr, color_alpha(C(P->card), 200));
+        if (rc.w >= 20 * a->scale && rc.h > 3 * a->scale) {   /* in points: the same on every display */ Font *ff = dg_font(a, 7); Rect tr = rect_make(rc.x + 2, rc.y + fmaxf(0, (fminf(rc.h, 20 * a->scale / 2) - font_height(ff)) / 2), rc.w - 4, font_height(ff)); draw_rect(R, tr, color_alpha(C(P->card), 200));
             /* cut from the left: table names share prefixes, the end tells them apart */
             const char *nm = dgm_card_label(&d->d, i); char buf[DG_KEY + 8];
             if (font_width(ff, nm, -1) > tr.w) { const char *p = nm; while (*p && font_width(ff, p, -1) + font_width(ff, "\xE2\x80\xA6", -1) > tr.w) p++; snprintf(buf, sizeof buf, "\xE2\x80\xA6%s", p); nm = buf; }

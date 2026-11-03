@@ -1108,10 +1108,10 @@ void toolbar_dump_menu(Toolbar *t) {
     for (int i = 0; i < t->menu.n; i++) printf("menuitem %s%s\n", t->menu.labels[i] ? t->menu.labels[i] : "", t->menu.caption[i] ? "  [caption]" : t->menu.enabled[i] ? "" : "  [disabled]");
     fflush(stdout);
 }
-void toolbar_dump_modal(Toolbar *t) {
+void toolbar_dump_modal(Toolbar *t, float scale) {
     char body[2600]; snprintf(body, sizeof body, "%s", t->modal == TM_SESSION ? t->session_text : t->cf_body);
     for (char *p = body; *p; p++) if (*p == '\n') *p = '|';
-    printf("tbmodal kind=%d title=\"%s\" body=\"%s\" box=%.0fx%.0f\n", t->modal, t->modal == TM_CONFIRM ? t->cf_title : "", body, t->modal_rect.w, t->modal_rect.h);
+    printf("tbmodal kind=%d title=\"%s\" body=\"%s\" box=%.0fx%.0f\n", t->modal, t->modal == TM_CONFIRM ? t->cf_title : "", body, t->modal_rect.w / (scale > 0 ? scale : 1), t->modal_rect.h / (scale > 0 ? scale : 1));   /* points: the same on every display */
     fflush(stdout);
 }
 
