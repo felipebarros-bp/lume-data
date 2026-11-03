@@ -1,6 +1,6 @@
 ---
 title: ER diagrams
-sidebar_position: 1
+sidebar_position: 3
 ---
 
 # ER diagrams
@@ -16,6 +16,8 @@ An ER diagram in Lume shows **a part of your database**: the tables you are work
 | Right-click a connection, its **Tables** group or a schema > **New ER Diagram...** | a picker: the most connected tables, the ones you pick, an empty diagram, or the whole schema when it is small |
 | **Tools > New ER Diagram...** / **Open ER Diagram...** | the same, for the active connection / a saved diagram |
 
+Every diagram action is also in the [command palette](../workspace/navigation.md) under "Diagram:".
+
 Lume reads the structure in a few bulk queries (names, types, keys, comments: **never rows**), caches it, and never runs anything else on the connection. Diagrams are read-only: changing a table goes through the Table Designer, which shows the SQL before it runs.
 
 ## What you see
@@ -29,7 +31,7 @@ Lume reads the structure in a few bulk queries (names, types, keys, comments: **
 
 **Cmd+F** searches the **whole scope**, not only the cards drawn: tables, columns, constraints (foreign key names) and notes, with Contains / Prefix / Exact / Glob and Match case.
 
-- **Enter / Shift+Enter** go to the next / previous match and centre it.
+- **Enter / Shift+Enter** (or **F3 / Shift+F3**) go to the next / previous match and centre it.
 - Going to a table that is **not on the diagram yet adds exactly that table**.
 - `from:orders to:customers` finds the relations between two tables.
 
@@ -43,7 +45,7 @@ Lume reads the structure in a few bulk queries (names, types, keys, comments: **
 
 ## Organise
 
-- **Layout** arranges the cards around the table you started from (deterministic: the same diagram always lays out the same way). Drag cards to place them; **Pin** keeps one in place. **Cmd+Z** undoes a move.
+- **Layout** (**Shift+Cmd+L**) arranges the cards around the table you started from (deterministic: the same diagram always lays out the same way). Drag cards to place them; **Pin** keeps one in place. **Cmd+Z** undoes a move.
 - **Notes** and **group areas** (More > Add Note / Add Group Area) document the diagram.
 - **Virtual relations**: right-click a card > **Draw Virtual Relation...**, then click the other card. They are dashed, labelled "virtual", stored only in the diagram, and can be marked as verified with their evidence. They never create a foreign key.
 - **Business names**: right-click > Business Name... and the **Business names** toggle show the names your business uses, with the table name beside them.
@@ -53,7 +55,7 @@ The diagram is saved automatically in your workspace's `diagrams` folder (a read
 
 ## Export
 
-**Export...** on the toolbar: PNG, SVG, PDF, Mermaid, GraphML, draw.io or a self-contained HTML page (search, pan and zoom, no external requests), for the selection, the visible part or the whole diagram. **Copy as Image** puts the selection on the clipboard.
+**Export...** on the toolbar: PNG, SVG, PDF, Mermaid, GraphML, draw.io or a self-contained HTML page (search, pan and zoom, no external requests), for the selection, the visible part or the whole diagram. The PDF holds an image of the diagram (one page); for sharp vector output use SVG or HTML. **Copy as Image** (**Shift+Cmd+C**) puts the selection on the clipboard.
 
 ## Lume Intelligence
 
