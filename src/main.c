@@ -545,9 +545,12 @@ void app_input_event(App *a, const SDL_Event *e) {
         /* SDL already delivers x / y in the direction the user chose in System Settings
          * ("natural scrolling" sets direction = FLIPPED and pre-flips the values). Using them
          * as they come makes Lume scroll like every other macOS app; undoing the flip here
-         * inverted the trackpad. */
+         * inverted the trackpad.
+         * Axis convention differs, though: SDL's y > 0 means "toward the top" but x > 0 means
+         * "toward the right". Views treat both wheel_x and wheel_y as "toward the start"
+         * (scroll -= wheel), so x is negated here; without it sideways scrolling ran backwards. */
         float sx = e->wheel.x, sy = e->wheel.y;
-        in->wheel_x += sx * step;
+        in->wheel_x -= sx * step;
         in->wheel_y += sy * step;
         break;
     }

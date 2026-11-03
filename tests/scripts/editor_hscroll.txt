@@ -4,10 +4,10 @@ click 700 400
 key cmd+a
 type SELECT 1;
 wait 30
-wheel 700 400 0 -400
+wheel 700 400 0 400
 wait 30
 edscroll
-wheel 700 400 -3 -1
+wheel 700 400 -3 1
 wait 30
 edscroll
 key cmd+a
@@ -15,7 +15,7 @@ type SELECT 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 wait 30
 key cmd+Left
 wait 10
-wheel 700 400 0 -5000
+wheel 700 400 0 5000
 wait 30
 edscroll
 quit

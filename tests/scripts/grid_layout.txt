@@ -12,7 +12,7 @@ rhead 0
 wait 100
 menu "Wrap Text"
 wait 100
-wheel 700 700 0 -40
+wheel 700 700 0 40
 wait 100
 shot build/ui/wide.bmp
 quit
