@@ -668,7 +668,7 @@ bool tba_action(Toolbar *t, App *a, int act) {
     case ACT_QUICK_OPEN: open_list(t, a, LIST_QUICK_OPEN); return true;
     case ACT_PANEL_HISTORY: panels_show(a->panels, a, "lume.data.history"); return true;
     /* the toolbar itself */
-    case ACT_TOOLBAR_TOGGLE: t->prefs.visible = !t->prefs.visible; tb_mark_dirty(t); t->kb_mode = false; app_status(a, t->prefs.visible ? "Main toolbar shown" : "Main toolbar hidden: View > Appearance > Main Toolbar brings it back; menus and shortcuts keep working"); return true;
+    case ACT_TOOLBAR_TOGGLE: t->prefs.visible = !t->prefs.visible; tb_mark_dirty(t); t->kb_mode = false; app_status(a, t->prefs.visible ? "Main toolbar shown" : "Main toolbar hidden: View > Toolbar > Main Toolbar brings it back; menus and shortcuts keep working"); return true;
     case ACT_TOOLBAR_COMPACT: t->prefs.compact = !t->prefs.compact; tb_mark_dirty(t); return true;
     case ACT_TOOLBAR_LABELS: t->prefs.labels = !t->prefs.labels; tb_mark_dirty(t); return true;
     case ACT_TOOLBAR_CUSTOMIZE: t->before_customize = t->prefs; t->cust_sel = 0; t->modal = TM_CUSTOMIZE; return true;
@@ -676,7 +676,7 @@ bool tba_action(Toolbar *t, App *a, int act) {
         tba_confirm(t, CF_RESET_TOOLBAR, "Reset the toolbar?", "Restores the toolbar's visibility, order, added actions, compact mode and labels to the defaults.\nNot affected: connections, queries, result tabs, panel layouts.", "Reset Toolbar", "Cancel", NULL, "");
         return true;
     case ACT_TOOLBAR_FOCUS:
-        if (!t->prefs.visible) { app_status(a, "The main toolbar is hidden (View > Appearance > Main Toolbar)"); return true; }
+        if (!t->prefs.visible) { app_status(a, "The main toolbar is hidden (View > Toolbar > Main Toolbar)"); return true; }
         t->kb_mode = true; t->focus = 0; t->focus_return = a->focus; app_status(a, "Toolbar focus: arrows / Tab move, Enter activates, Down opens, Esc returns");
         return true;
     case ACT_TOOLBAR_EXPORT: {

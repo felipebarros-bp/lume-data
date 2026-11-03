@@ -746,15 +746,21 @@ static void load_fields(TdDoc *d) {
     }
 }
 /* a labelled text field bound to a model string: an edit is a draft change with one undo step per field */
+/* The designer's text field with the keyboard (one at a time across docs): a property field F_*,
+ * or TF_FILTER. While one has it, the read-only SQL preview (the tab's editor) must not see the
+ * typing: it would swallow it as "read-only". */
+enum { TF_FILTER = F_N };
+static struct { TdDoc *doc; int f; } TF = { NULL, -1 };
+static bool tf_focused(App *a, TdDoc *d, int f) { return TF.doc == d && TF.f == f && a->focus == FOCUS_EDITOR; }
+static bool tf_any(App *a, TdDoc *d) { return TF.doc == d && TF.f >= 0 && a->focus == FOCUS_EDITOR; }
+static void tf_focus(App *a, TdDoc *d, int f) { TF.doc = d; TF.f = f; a->focus = FOCUS_EDITOR; }
 static bool field(App *a, TdDoc *d, int f, Rect row, const char *label, const char *placeholder, char *model, int msize, bool enabled, const char *hint) {
     float lw = px(a, 130);
     ui_label(a, rect_make(row.x, row.y, lw, row.h), label, ALIGN_LEFT, T_TEXT_MUTED);
     Rect fr = rect_make(row.x + lw, row.y + px(a, 2), row.w - lw, row.h - px(a, 4));
     char tag[80]; snprintf(tag, sizeof tag, "td:%s", label); ui_record(tag, fr);
     if (!enabled) { draw_rrect(a->renderer, fr, px(a, 4), color_hex(T_BG)); ui_label(a, rect_inset(fr, px(a, 8), 0), model[0] ? model : placeholder, ALIGN_LEFT, T_TEXT_DIM); return false; }
-    static int focus_f = -1; static TdDoc *focus_d;
-    bool focused = focus_f == f && focus_d == d && a->focus == FOCUS_EDITOR;
-    if (ui_textfield(a, &d->f[f], fr, placeholder, focused)) { focus_f = f; focus_d = d; a->focus = FOCUS_EDITOR; }
+    if (ui_textfield(a, &d->f[f], fr, placeholder, tf_focused(a, d, f))) tf_focus(a, d, f);
     (void)hint;
     if (strcmp(d->f[f].buf, model)) {
         char key[64]; snprintf(key, sizeof key, "f%d:%d:%d", f, d->sel_kind, d->sel_id);
@@ -764,6 +770,29 @@ static bool field(App *a, TdDoc *d, int f, Rect row, const char *label, const ch
         return true;
     }
     return false;
+}
+/* The referenced table of a foreign key in the connection's catalog (columns loaded), NULL when unknown. */
+static DbTable *ref_table_of(App *a, TdDoc *d, const TdKey *k) {
+    Connection *c = conn_of(a, d->conn_id);
+    if (!c || !k->ref_table[0]) return NULL;
+    char full[300]; snprintf(full, sizeof full, "%s.%s", k->ref_schema, k->ref_table);
+    for (int i = 0; i < c->ntables; i++) {
+        const char *nm = c->tables[i].name, *dot = strrchr(nm, '.');
+        bool hit = !strcasecmp(nm, full) || (!dot && !strcasecmp(nm, k->ref_table)) || (dot && !strcasecmp(dot + 1, k->ref_table) && !strncasecmp(nm, k->ref_schema, (size_t)(dot - nm)) && (size_t)(dot - nm) == strlen(k->ref_schema));
+        if (!hit) continue;
+        if (!c->tables[i].cols_loaded && c->db && !c->db->busy) conn_load_columns(c, &c->tables[i]);
+        return &c->tables[i];
+    }
+    return NULL;
+}
+/* A new referenced table: the referenced columns become its primary key (in order), as far as they go. */
+static void ref_cols_from_pk(App *a, TdDoc *d, TdKey *k) {
+    DbTable *t = ref_table_of(a, d, k); if (!t) return;
+    int n = 0;
+    for (int i = 0; i < t->ncols && n < TD_MAXKC; i++) if (t->cols[i].pk) snprintf(k->ref_cols[n++], 128, "%s", t->cols[i].name);
+    if (!n) return;
+    k->nref = k->ncols > n ? k->ncols : n;
+    for (int i = n; i < k->nref; i++) k->ref_cols[i][0] = 0;
 }
 static bool check(App *a, TdDoc *d, Rect row, const char *label, bool *v, bool enabled) {
     char tag[80]; snprintf(tag, sizeof tag, "td:%s", label);
@@ -878,20 +907,77 @@ static void draw_props(App *a, TdDoc *d, Rect r) {
         NEXT();
         if (k->raw[0]) { info(a, row, T_YELLOW, "Not modelled by Lume (kept, can be removed, not edited): %s", k->raw); NEXT(); }
         if (k->kind != TK_CHECK) {
-            char cur[1000]; cols_text(d, k->cols, k->desc, k->ncols, cur, sizeof cur);
-            Rect cr = row; float lw = px(a, 130);
-            ui_label(a, rect_make(cr.x, cr.y, lw, cr.h), "Columns", ALIGN_LEFT, T_TEXT_MUTED);
-            Rect fr = rect_make(cr.x + lw, cr.y + px(a, 2), cr.w - lw, cr.h - px(a, 4)); ui_record("td:Columns", fr);
-            static bool cf; if (kenabled && ui_textfield(a, &d->f[F_KCOLS], fr, "a, b DESC (in order)", cf && a->focus == FOCUS_EDITOR)) { cf = true; a->focus = FOCUS_EDITOR; }
-            if (!kenabled) ui_label(a, rect_inset(fr, px(a, 8), 0), cur, ALIGN_LEFT, T_TEXT_DIM);
-            if (kenabled && strcmp(d->f[F_KCOLS].buf, cur)) {
-                int ids[TD_MAXKC]; bool ds[TD_MAXKC]; char bad[128];
-                int n = parse_cols(d, d->f[F_KCOLS].buf, ids, ds, TD_MAXKC, bad, sizeof bad);
-                char key[64]; snprintf(key, sizeof key, "kc:%d", k->id); push_undo(d, key);
-                k->ncols = n; for (int i = 0; i < n; i++) { k->cols[i] = ids[i]; k->desc[i] = ds[i]; }
-                if (k->kind == TK_FK) while (k->nref < n) k->ref_cols[k->nref++][0] = 0;
-                changed(d); d->f_loaded_rev = d->rev;
-                if (bad[0]) snprintf(d->banner, sizeof d->banner, "No column named %s in this table", bad);
+            Input *in = &a->in;
+            float lw = px(a, 130);
+            ui_label(a, rect_make(row.x, row.y, lw, row.h), k->kind == TK_FK ? "Columns \xE2\x86\x92 referenced" : "Columns", ALIGN_LEFT, T_TEXT_MUTED);
+            DbTable *rt = k->kind == TK_FK ? ref_table_of(a, d, k) : NULL;
+            for (int i = 0; i < k->ncols; i++) {
+                const TdCol *col = td_col(&d->draft, k->cols[i]);
+                float x = row.x + lw, bh = row.h - px(a, 6), by = row.y + px(a, 3);
+                char lab[200]; snprintf(lab, sizeof lab, "%d  %s", i + 1, col ? col->name : "?");
+                float nw = k->kind == TK_FK ? (row.w - lw) * 0.38f : (row.w - lw) - px(a, 150);
+                ui_label(a, rect_make(x + px(a, 4), row.y, nw, row.h), lab, ALIGN_LEFT, col ? T_TEXT : T_RED);
+                x += nw;
+                char tag[200];
+                if (k->kind == TK_FK) {   /* the referenced column of this one */
+                    ui_label(a, rect_make(x, row.y, px(a, 20), row.h), "\xE2\x86\x92", ALIGN_LEFT, T_TEXT_DIM);
+                    Rect rb = rect_make(x + px(a, 22), by, (row.w - lw) - nw - px(a, 22) - px(a, 104), bh);
+                    snprintf(tag, sizeof tag, "td:refcol:%d", i + 1); ui_record(tag, rb);
+                    const char *rc = i < k->nref && k->ref_cols[i][0] ? k->ref_cols[i] : NULL;
+                    char rl[160]; snprintf(rl, sizeof rl, "%s  \xE2\x96\xBE", rc ? rc : (rt ? "choose" : "choose a table first"));
+                    if (ui_button(a, rb, rl, rc ? BTN_NORMAL : BTN_QUIET, kenabled && rt)) {
+                        popup_open(&G.menu, rb.x, rb.y + rb.h); G.menu_doc = d;
+                        for (int c2 = 0; c2 < rt->ncols && c2 < 256 && G.menu.n < POPUP_MAX; c2++) {
+                            static char labs[POPUP_MAX][160]; snprintf(labs[G.menu.n], 160, "%s%s", rt->cols[c2].name, rt->cols[c2].pk ? "  (PK)" : "");
+                            popup_add(&G.menu, 3000 + i * 256 + c2, labs[G.menu.n], false, true);
+                        }
+                    }
+                    x = rb.x + rb.w + px(a, 4);
+                } else if (k->kind == TK_INDEX) {   /* ascending / descending */
+                    Rect db = rect_make(x, by, px(a, 52), bh); snprintf(tag, sizeof tag, "td:kcol:%d:order", i + 1); ui_record(tag, db);
+                    if (ui_button(a, db, k->desc[i] ? "DESC" : "ASC", BTN_QUIET, kenabled)) { push_undo(d, ""); k->desc[i] = !k->desc[i]; changed(d); d->f_loaded_rev = 0; }
+                    x += px(a, 56);
+                }
+                /* move up / down / remove */
+                Rect ub = rect_make(x, by, px(a, 30), bh), db2 = rect_make(x + px(a, 32), by, px(a, 30), bh), xb = rect_make(x + px(a, 64), by, px(a, 30), bh);
+                snprintf(tag, sizeof tag, "td:kcol:%d:up", i + 1); ui_record(tag, ub);
+                if (ui_button(a, ub, "\xE2\x86\x91", BTN_QUIET, kenabled && i > 0)) {
+                    push_undo(d, ""); int t = k->cols[i]; k->cols[i] = k->cols[i - 1]; k->cols[i - 1] = t; bool tb = k->desc[i]; k->desc[i] = k->desc[i - 1]; k->desc[i - 1] = tb;
+                    if (k->kind == TK_FK && i < k->nref) { char tr[128]; memcpy(tr, k->ref_cols[i], 128); memcpy(k->ref_cols[i], k->ref_cols[i - 1], 128); memcpy(k->ref_cols[i - 1], tr, 128); }
+                    changed(d); d->f_loaded_rev = 0;
+                }
+                snprintf(tag, sizeof tag, "td:kcol:%d:down", i + 1); ui_record(tag, db2);
+                if (ui_button(a, db2, "\xE2\x86\x93", BTN_QUIET, kenabled && i + 1 < k->ncols)) {
+                    push_undo(d, ""); int t = k->cols[i]; k->cols[i] = k->cols[i + 1]; k->cols[i + 1] = t; bool tb = k->desc[i]; k->desc[i] = k->desc[i + 1]; k->desc[i + 1] = tb;
+                    if (k->kind == TK_FK && i + 1 < k->nref) { char tr[128]; memcpy(tr, k->ref_cols[i], 128); memcpy(k->ref_cols[i], k->ref_cols[i + 1], 128); memcpy(k->ref_cols[i + 1], tr, 128); }
+                    changed(d); d->f_loaded_rev = 0;
+                }
+                snprintf(tag, sizeof tag, "td:kcol:%d:remove", i + 1); ui_record(tag, xb);
+                if (ui_button(a, xb, "", BTN_QUIET, kenabled)) {
+                    push_undo(d, "");
+                    memmove(&k->cols[i], &k->cols[i + 1], sizeof k->cols[0] * (size_t)(k->ncols - i - 1)); memmove(&k->desc[i], &k->desc[i + 1], sizeof k->desc[0] * (size_t)(k->ncols - i - 1)); k->ncols--;
+                    if (k->kind == TK_FK && i < k->nref) { memmove(&k->ref_cols[i], &k->ref_cols[i + 1], 128 * (size_t)(k->nref - i - 1)); k->nref--; }
+                    changed(d); d->f_loaded_rev = 0;
+                    break;
+                }
+                draw_cross(a->renderer, xb.x + xb.w / 2, xb.y + xb.h / 2, px(a, 7), fmaxf(1, px(a, 1.3f)), color_hex(kenabled ? T_TEXT_MUTED : T_TEXT_DIM));
+                NEXT();
+            }
+            /* add one of the table's columns not in the key yet */
+            {
+                Rect ab = rect_make(row.x + lw, row.y + px(a, 3), px(a, 150), row.h - px(a, 6)); ui_record("td:addcol", ab);
+                int left = 0; for (int c2 = 0; c2 < d->draft.ncols; c2++) { bool in_key = false; for (int j = 0; j < k->ncols; j++) if (k->cols[j] == d->draft.cols[c2].id) in_key = true; left += !in_key; }
+                if (ui_button(a, ab, k->ncols ? "Add column  \xE2\x96\xBE" : "Choose a column  \xE2\x96\xBE", k->ncols ? BTN_QUIET : BTN_NORMAL, kenabled && left > 0 && k->ncols < TD_MAXKC)) {
+                    popup_open(&G.menu, ab.x, ab.y + ab.h); G.menu_doc = d;
+                    for (int c2 = 0; c2 < d->draft.ncols && G.menu.n < POPUP_MAX; c2++) {
+                        bool in_key = false; for (int j = 0; j < k->ncols; j++) if (k->cols[j] == d->draft.cols[c2].id) in_key = true;
+                        if (in_key) continue;
+                        static char labs[POPUP_MAX][300]; snprintf(labs[G.menu.n], 300, "%s  %s", d->draft.cols[c2].name, d->draft.cols[c2].type);
+                        popup_add(&G.menu, 2000 + c2, labs[G.menu.n], false, true);
+                    }
+                }
+                if (!k->ncols) ui_label(a, rect_make(ab.x + ab.w + px(a, 10), row.y, row.w - lw - ab.w - px(a, 10), row.h), "a key needs at least one column", ALIGN_LEFT, T_TEXT_DIM);
+                (void)in;
             }
             NEXT();
         }
@@ -899,21 +985,38 @@ static void draw_props(App *a, TdDoc *d, Rect r) {
         if (k->kind == TK_FK) {
             char rt[300]; snprintf(rt, sizeof rt, "%s%s%s", k->ref_schema, k->ref_schema[0] ? "." : "", k->ref_table);
             char buf[300]; snprintf(buf, sizeof buf, "%s", rt);
-            if (field(a, d, F_REFTAB, row, "References", "schema.table", buf, sizeof buf, kenabled, NULL)) {
+            if (field(a, d, F_REFTAB, row, "References", "type to find a table", buf, sizeof buf, kenabled, NULL)) {
                 k = td_key(&d->draft, d->sel_id);
                 char *dot = strchr(buf, '.');
                 if (dot) { snprintf(k->ref_schema, sizeof k->ref_schema, "%.*s", (int)(dot - buf), buf); snprintf(k->ref_table, sizeof k->ref_table, "%s", dot + 1); }
                 else { snprintf(k->ref_schema, sizeof k->ref_schema, "%s", d->draft.schema); snprintf(k->ref_table, sizeof k->ref_table, "%s", buf); }
+                if (ref_table_of(a, d, k)) ref_cols_from_pk(a, d, k);
             }
             NEXT();
             k = td_key(&d->draft, d->sel_id);
-            char rc[1000]; int w = 0; rc[0] = 0; for (int i = 0; i < k->nref; i++) w += snprintf(rc + w, sizeof rc - (size_t)w, "%s%s", i ? ", " : "", k->ref_cols[i]);
-            char rcb[1000]; snprintf(rcb, sizeof rcb, "%s", rc);
-            if (field(a, d, F_REFCOLS, row, "Referenced columns", "id (same count, same order)", rcb, sizeof rcb, kenabled, NULL)) {
-                k = td_key(&d->draft, d->sel_id); k->nref = 0;
-                for (char *t = strtok(rcb, ","); t && k->nref < TD_MAXKC; t = strtok(NULL, ",")) { while (*t == ' ') t++; char *e = t + strlen(t); while (e > t && e[-1] == ' ') *--e = 0; snprintf(k->ref_cols[k->nref++], 128, "%s", t); }
+            {   /* suggestions: tables of the connection containing what was typed (until one is chosen) */
+                Connection *cc = conn_of(a, d->conn_id);
+                const char *q = d->f[F_REFTAB].buf;
+                if (kenabled && cc && q[0] && !ref_table_of(a, d, k)) {
+                    int shown = 0;
+                    for (int i = 0; i < cc->ntables && shown < 6; i++) {
+                        if (cc->tables[i].is_view || !strcasestr(cc->tables[i].name, q)) continue;
+                        Rect sr = rect_make(row.x + px(a, 130), row.y + px(a, 2), row.w - px(a, 130), row.h - px(a, 4));
+                        char tag[300]; snprintf(tag, sizeof tag, "td:reftable:%s", cc->tables[i].name); ui_record(tag, sr);
+                        if (ui_button(a, sr, cc->tables[i].name, BTN_QUIET, true)) {
+                            push_undo(d, "");
+                            const char *nm = cc->tables[i].name, *dt = strrchr(nm, '.');
+                            if (dt) { snprintf(k->ref_schema, sizeof k->ref_schema, "%.*s", (int)(dt - nm), nm); snprintf(k->ref_table, sizeof k->ref_table, "%s", dt + 1); }
+                            else { snprintf(k->ref_schema, sizeof k->ref_schema, "%s", d->draft.schema); snprintf(k->ref_table, sizeof k->ref_table, "%s", nm); }
+                            ref_cols_from_pk(a, d, k);
+                            changed(d); d->f_loaded_rev = 0;
+                        }
+                        NEXT(); shown++;
+                    }
+                    if (!shown) { info(a, row, T_YELLOW, "No table of this connection matches \"%s\"", q); NEXT(); }
+                }
             }
-            NEXT();
+            k = td_key(&d->draft, d->sel_id);
             k = td_key(&d->draft, d->sel_id);
             static const char *acts[] = { "No action", "Restrict", "Cascade", "Set null", "Set default" };
             static const char *codes[] = { "", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT" };
@@ -970,8 +1073,7 @@ static void draw_tree(App *a, TdDoc *d, Rect r) {
     bool can_move = en && d->sel_kind == SEL_COL && (d->is_new || !td_col_c(&d->orig, d->sel_id) || td_caps(d->dialect, d->version).column_order == TCAP_YES);
     if (ui_button(a, rect_make(tb.x + 2 * bw, tb.y, bw, bh), "^", BTN_QUIET, can_move)) { push_undo(d, ""); if (td_move_col(&d->draft, d->sel_id, -1)) changed(d); }
     if (ui_button(a, rect_make(tb.x + 3 * bw, tb.y, bw, bh), "v", BTN_QUIET, can_move)) { push_undo(d, ""); if (td_move_col(&d->draft, d->sel_id, 1)) changed(d); }
-    static bool ff;
-    if (ui_textfield(a, &d->filter, rect_make(tb.x + 4 * bw + px(a, 6), tb.y, tb.w - 4 * bw - px(a, 6), bh), "Filter columns", ff && a->focus == FOCUS_EDITOR)) { ff = true; a->focus = FOCUS_EDITOR; }
+    if (ui_textfield(a, &d->filter, rect_make(tb.x + 4 * bw + px(a, 6), tb.y, tb.w - 4 * bw - px(a, 6), bh), "Filter columns", tf_focused(a, d, TF_FILTER))) tf_focus(a, d, TF_FILTER);
     static Row rows[2048];
     int n = build_rows(d, rows, 2048);
     float rh = px(a, M_ROW);
@@ -1041,6 +1143,7 @@ static void draw_tree(App *a, TdDoc *d, Rect r) {
 void tdes_tab_body(App *a, TdDoc *d, struct Editor *ed, Rect body) {
     SDL_Renderer *R = a->renderer; Input *in = &a->in;
     G.a = a;
+    if (in->mouse_pressed && !in->mouse_consumed && TF.doc == d) TF.f = -1;   /* a click anywhere drops the field focus; a field clicked below takes it again */
     replan(d);
     { char ttl[160]; title_of(d, ttl, sizeof ttl); panels_set_tab_title(a->panels, d->tab_id, ttl); }
     draw_rect(R, body, color_hex(T_EDITOR_BG));
@@ -1133,7 +1236,12 @@ void tdes_tab_body(App *a, TdDoc *d, struct Editor *ed, Rect body) {
     Rect tg = rect_make(pvh.x + pvh.w - px(a, 90), pvh.y + px(a, 2), px(a, 84), pvh.h - px(a, 4));
     if (ui_button(a, tg, d->preview_open ? "Collapse" : "Expand", BTN_QUIET, true)) d->preview_open = !d->preview_open;
     if (ed && d->preview_rev != d->plan_rev + 1) { editor_set_read_only(ed, false); editor_set_text(ed, d->script ? d->script : ""); editor_set_read_only(ed, true); d->preview_rev = d->plan_rev + 1; }
-    if (d->preview_open && ed) editor_update(ed, a, rect_make(pv.x, pv.y + pvh.h, pv.w, pv.h - pvh.h));
+    if (d->preview_open && ed) {
+        Rect pe = rect_make(pv.x, pv.y + pvh.h, pv.w, pv.h - pvh.h);
+        if (a->in.mouse_pressed && !a->in.mouse_consumed && rect_contains(pe, a->in.mouse_x, a->in.mouse_y) && TF.doc == d) TF.f = -1;   /* a click in the preview takes the keyboard back */
+        if (tf_any(a, d)) { int sf = a->focus; a->focus = FOCUS_NONE; editor_update(ed, a, pe); a->focus = sf; }   /* a field is typing: the preview only draws */
+        else editor_update(ed, a, pe);
+    }
     /* structure | properties, resizable by window width (TBL-004) */
     Rect mid = rect_make(body.x, y, body.w, pv.y - y);
     float lw = body.w < px(a, 700) ? body.w * 0.45f : fmaxf(px(a, 260), body.w * 0.34f);
@@ -1359,6 +1467,21 @@ static void run_menu(App *a, TdDoc *d, int id) {
     case 1008: push_undo(d, "revert"); td_free(&d->draft); td_copy(&d->draft, &d->orig); changed(d); break;
     case 1009: restore_removed(d); break;
     default:
+        if (id >= 2000 && id < 3000 && d->sel_kind == SEL_KEY) {   /* Add column (the key's column picker) */
+            TdKey *k = td_key(&d->draft, d->sel_id); int ci = id - 2000;
+            if (k && ci < d->draft.ncols && k->ncols < TD_MAXKC) {
+                push_undo(d, ""); k->cols[k->ncols] = d->draft.cols[ci].id; k->desc[k->ncols] = false; k->ncols++;
+                if (k->kind == TK_FK) { while (k->nref < k->ncols) k->ref_cols[k->nref++][0] = 0; if (!k->ref_cols[k->ncols - 1][0]) ref_cols_from_pk(a, d, k); }
+                changed(d); d->f_loaded_rev = 0;
+            }
+            break;
+        }
+        if (id >= 3000 && d->sel_kind == SEL_KEY) {   /* a referenced column */
+            TdKey *k = td_key(&d->draft, d->sel_id); int pos = (id - 3000) / 256, rc = (id - 3000) % 256;
+            DbTable *rt = k ? ref_table_of(a, d, k) : NULL;
+            if (k && rt && pos < TD_MAXKC && rc < rt->ncols) { push_undo(d, ""); while (k->nref <= pos) k->ref_cols[k->nref++][0] = 0; snprintf(k->ref_cols[pos], 128, "%s", rt->cols[rc].name); changed(d); d->f_loaded_rev = 0; }
+            break;
+        }
         if (id >= 1100 && id < 1100 + TK_NKINDS) add_key(d, id - 1100);
         else if (id >= 1110 && id <= 1114) { int kind = id - 1110; if (kind == TK_PK && td_pk(&d->draft)) { TdKey *pk = td_pk(&d->draft); if (pk->ncols < TD_MAXKC && !td_col_in_kind(&d->draft, d->sel_id, TK_PK)) { push_undo(d, ""); pk->cols[pk->ncols++] = d->sel_id; changed(d); } } else add_key(d, kind); }
     }

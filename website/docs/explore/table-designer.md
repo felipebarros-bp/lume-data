@@ -26,7 +26,8 @@ The designer is a tab: you can keep working elsewhere. A dot on the tab means un
 The tree on the left has groups: **Columns**, **Primary Key**, **Unique Keys**, **Foreign Keys**, **Checks**, **Indexes**. Right-click a group to add one (**Add Column**, **Add Foreign Key**, **Add Index**...), right-click an item to move, duplicate or remove it. Select an item to edit its properties on the right.
 
 - **Columns**: name, data type (the database's types, or free text), not null, default, identity, generated (stored / virtual where supported), comment, collation.
-- **Foreign keys**: referenced table and columns, **On delete** / **On update** (Oracle has no ON UPDATE), deferrable where supported.
+- **Key columns** (primary, unique and foreign keys, indexes) are picked, not typed: **Choose a column ▾** (then **Add column ▾**) lists the table's columns not yet in the key; each picked column has **↑** / **↓** to change its position and **×** to remove it. For an index, each column also toggles **ASC** / **DESC**.
+- **Foreign keys**: in **References**, type part of a table name and pick it from the suggestions (the connection's tables); the referenced columns are filled from that table's primary key, and each one can be changed with its own column menu. **On delete** / **On update** (Oracle has no ON UPDATE), deferrable where supported.
 - **Checks**: an expression, optionally checking existing rows when added.
 - **Indexes**: unique, method, included columns and a partial **Where** where supported.
 - **Suggest** fills a name following `{table}_{columns}_{kind}`.

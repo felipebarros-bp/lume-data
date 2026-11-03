@@ -1,0 +1,47 @@
+# The key editors pick columns instead of typing them: Add column, reorder, remove; a foreign key's
+# References suggests the connection's tables and fills the referenced columns from its primary key.
+wait 300
+td open "Shop" main orders
+wait 300
+rbutton "tdrow:Unique Keys"
+wait 10
+menu "Add Unique"
+wait 10
+button "td:addcol"
+wait 10
+menu "status"
+wait 10
+button "td:addcol"
+wait 10
+menu "customer_id"
+wait 10
+tdstate
+button "td:kcol:2:up"
+wait 10
+tdstate
+button "td:kcol:1:remove"
+wait 10
+tdstate
+rbutton "tdrow:Foreign Keys"
+wait 10
+menu "Add Foreign Key"
+wait 10
+button "td:addcol"
+wait 10
+menu "customer_id"
+wait 10
+button "td:References"
+wait 10
+type "cust"
+wait 10
+button "td:reftable:customers"
+wait 10
+tdstate
+button "tdrow:status"
+wait 10
+button "td:Name"
+wait 10
+type "_code"
+wait 10
+tdstate
+quit

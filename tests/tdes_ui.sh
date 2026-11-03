@@ -68,5 +68,17 @@ expect "TBL: right-click Foreign Keys > Add Foreign Key adds one (clicked in the
 expect "TBL: right-click Unique Keys > Add Unique Key adds one" '[ "$(nth "$out" 3 | sed -n "s/.* keys=\([0-9]*\).*/\1/p")" = $((k0 + 2)) ]'
 expect "TBL: right-click Columns > Add Column adds one" '[ "$(nth "$out" 4 | sed -n "s/.* cols=\([0-9]*\).*/\1/p")" = $((c0 + 1)) ]'
 
+# key columns are picked, not typed; a foreign key's References suggests tables and fills its primary key
+sqlite3 "$P/shop.db" "CREATE TABLE IF NOT EXISTS orders(id INTEGER PRIMARY KEY, customer_id INTEGER, status TEXT);"
+out=$(LUME_PREF_DIR=$P LUME_SCRIPT=tests/scripts/td_keycols.txt ./build/lume 2>&1)
+printf '%s\n' "$out" > build/td_keycols.out
+expect "every script target found (key column pickers)" '[ "$(printf "%s\n" "$out" | grep -c "target not found")" = 0 ]'
+blk() { printf '%s\n' "$1" | awk -v n="$2" '/^tdstate/{k++} k==n'; }
+expect "Unique: Add column twice gives (status, customer_id) in that order" 'blk "$out" 1 | grep -q "UNIQUE.*\"status\", \"customer_id\""'
+expect "Unique: moving the second column up gives (customer_id, status)" 'blk "$out" 2 | grep -q "UNIQUE.*\"customer_id\", \"status\""'
+expect "Unique: removing the first column leaves (status)" 'blk "$out" 3 | grep -q "UNIQUE.*(\"status\")"'
+expect "Foreign key: customer_id picked, References suggests customers, the referenced column is its primary key" 'blk "$out" 4 | grep -q "FOREIGN KEY (\"customer_id\") REFERENCES \"customers\" *(\"id\")"'
+expect "typing reaches the designer's fields (the read-only SQL preview no longer swallows it): a column renamed by typing" 'blk "$out" 5 | grep -q "^tdchange \[~\] Rename column status -> status_code"'
+
 echo "TDES UI: $([ $fails = 0 ] && echo passed || echo "FAILED ($fails failures)")"
 [ $fails = 0 ]
