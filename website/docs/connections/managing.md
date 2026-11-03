@@ -32,6 +32,19 @@ PostgreSQL, MySQL / MariaDB, SQL Server and Oracle need their client library on 
 
 Saving an edit to a connected connection offers **Save & Reconnect**.
 
+## Organise connections in folders
+
+Give a connection a **Folder** in its dialog to group it in the Explorer. A `/` nests folders: `Clients/Acme` puts it in **Acme** inside **Clients**. Spaces and empty levels are tidied (` Clients // Acme ` becomes `Clients/Acme`); leave it empty for the top level.
+
+- Folders come first at each level (by name), then the connections; each folder shows how many connections it holds.
+- Folders start closed; Lume remembers which ones you opened.
+- Right-click a folder:
+  - **New Connection Here...** opens the dialog with that folder filled in.
+  - **Rename Folder...** edits the name in place (Enter applies, Esc cancels); its connections follow.
+  - **Remove Folder (keeps its connections)** moves its connections up one level; nothing is deleted.
+  - **Expand All Folders** / **Collapse All Folders**.
+- **Duplicate Connection...** keeps the folder of the original.
+
 ## Connect and disconnect
 
 - **Connect**: double-click the connection, right-click > **Connect**, or **Cmd+D**. Connecting runs in the background: the window keeps working, and the toolbar shows *connecting*. **Cancel Connect** (toolbar datasource menu) stops it.
