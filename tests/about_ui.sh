@@ -48,7 +48,7 @@ expect "ABOUT-026: Copy Version copies \"0.1.0 (build <commit>)\": the git commi
 
 # The links this build ships with (GitHub): all reachable, each opens its page (never a real browser here)
 out=$(LUME_PREF_DIR=$P LUME_SCRIPT=tests/scripts/about_links.txt ./build/lume 2>&1)
-expect "ABOUT links: Website, Documentation, Report an Issue and Release Notes open the GitHub pages" 'printf "%s\n" "$out" | grep -qx "url-open https://tessarotto21.github.io/lume-data" && printf "%s\n" "$out" | grep -qx "url-open https://tessarotto21.github.io/lume-data/docs" && printf "%s\n" "$out" | grep -qx "url-open https://github.com/tessarotto21/lume-data/issues/new/choose" && printf "%s\n" "$out" | grep -qx "url-open https://github.com/tessarotto21/lume-data/releases"'
+expect "ABOUT links: Website, Documentation, Report an Issue and Release Notes open the website, the docs and GitHub" 'printf "%s\n" "$out" | grep -qx "url-open https://lume-data.org" && printf "%s\n" "$out" | grep -qx "url-open https://lume-data.org/docs" && printf "%s\n" "$out" | grep -qx "url-open https://github.com/tessarotto21/lume-data/issues/new/choose" && printf "%s\n" "$out" | grep -qx "url-open https://github.com/tessarotto21/lume-data/releases"'
 expect "ABOUT links: the last one opened says so" 'nth "$out" aboutstate 2 | grep -q "note=\"Opened in the browser\""'
 
 # ABOUT-002: the symbol asset missing -> monochrome fallback, logged, the About still opens
