@@ -9,9 +9,11 @@ cmake --build build >/dev/null || { echo "FAIL  build"; exit 1; }
 fails=0
 expect() { if eval "$2"; then echo "ok    $1"; else echo "FAIL  $1"; fails=$((fails + 1)); fi; }
 REQ=build/update_requests.jsonl; P=build/update-prefs
+# the version being built (the release workflow sets it in CMakeLists.txt before building)
+V=$(sed -n "s/^project(lume VERSION \([0-9.]*\).*/\1/p" CMakeLists.txt)
 mock() {   # mock <tag | none | error>: (re)starts the fake GitHub, exports LUME_UPDATE_URL
   [ -n "${mpid:-}" ] && { kill $mpid 2>/dev/null; wait $mpid 2>/dev/null; }
-  pf=build/update_mock.port; rm -f $pf; python3 -I tests/tools/update_mock.py "$1" "$REQ" > $pf & mpid=$!
+  pf=build/update_mock.port; rm -f $pf; python3 -I tests/tools/update_mock.py "$1" "$REQ" "v$V" > $pf & mpid=$!
   for i in 1 2 3 4 5 6 7 8 9 10; do [ -s $pf ] && break; sleep 0.2; done
   export LUME_UPDATE_URL="http://127.0.0.1:$(head -1 $pf)/repos/tessarotto21/lume-data/releases?per_page=20"
 }
@@ -29,7 +31,7 @@ esac
 fresh; mock v9.0.0
 out=$(run update_auto)
 expect "launch: the automatic check asks GitHub's releases API (User-Agent Lume Data, GitHub's JSON)" '[ "$(reqs)" = 1 ] && grep -q "\"path\": \"/repos/tessarotto21/lume-data/releases?per_page=20\"" $REQ && grep -q "\"ua\": \"Lume Data\"" $REQ && grep -q "application/vnd.github+json" $REQ'
-expect "a newer version is offered: Download / Release Notes / Later / Skip This Version" 'printf "%s\n" "$out" | grep "^tbmodal" | head -1 | grep -q "title=\"Lume Data 9.0.0 is available\"" && printf "%s\n" "$out" | grep "^tbmodal" | head -1 | grep -q "You have version 0.1.0"'
+expect "a newer version is offered: Download / Release Notes / Later / Skip This Version" 'printf "%s\n" "$out" | grep "^tbmodal" | head -1 | grep -q "title=\"Lume Data 9.0.0 is available\"" && printf "%s\n" "$out" | grep "^tbmodal" | head -1 | grep -qF "You have version $V"'
 m1=$(printf "%s\n" "$out" | grep "^tbmodal" | head -1)
 expect "what's new: every version newer than this one, newest first, Markdown as plain text" 'printf "%s" "$m1" | grep -qF "WHAT'"'"'S NEW|9.0.0|What'"'"'s new||• Faster result grid|• Fixed the export dialog||8.5.0|Fixes|• Saved queries reopen at the right line"'
 expect "with what's new, the dialog is wider and as tall as its notes (more than the plain 230 points)" 'h=$(printf "%s" "$m1" | sed -n "s/.*box=\([0-9]*\)x\([0-9]*\).*/\2/p"); w=$(printf "%s" "$m1" | sed -n "s/.*box=\([0-9]*\)x.*/\1/p"); [ "$w" -gt 550 ] && [ "$h" -gt 230 ] && [ "$h" -le 560 ]'
@@ -55,7 +57,7 @@ n=$(reqs); printf 'update_check=0\n' > $P/settings.txt; sed -i.bak "s/^last=.*/l
 out=$(run update_idle)
 expect "Settings > Privacy off: no automatic request" '[ "$(reqs)" = "$n" ] && printf "%s\n" "$out" | grep "^updatestate" | grep -q "checks=0"'
 # 6. same version / no release published / an error: silent at launch, said when asked
-fresh; mock v0.1.0
+fresh; mock current
 out=$(run update_idle)
 expect "launch, same version: no dialog" '[ "$(reqs)" = 1 ] && printf "%s\n" "$out" | grep "^tbmodal" | grep -q "kind=0"'
 printf 'update_check=0\n' > $P/settings.txt

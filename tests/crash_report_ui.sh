@@ -28,7 +28,7 @@ expect "Don't send: deleted, nothing sent" '! pending && [ ! -s $REQ ]'
 run tests/scripts/crash_sim.txt >/dev/null
 out=$(run tests/scripts/crash_ask_send.txt); sleep 1
 expect "Send report: posted to the store endpoint with the project's key, then deleted" 'grep -q "\"path\": \"/api/29464/store/\"" $REQ && grep -q "sentry_key=dc45" $REQ && ! pending'
-expect "the event: release, OS, arch, the signal and named frames" 'grep -q "lume-data@0.1.0" $REQ && grep -q "SIGSEGV" $REQ && grep -q "log_write_crash_report" $REQ'
+expect "the event: release, OS, arch, the signal and named frames" 'grep -qF "lume-data@$(sed -n "s/^project(lume VERSION \([0-9.]*\).*/\1/p" CMakeLists.txt)" $REQ && grep -q "SIGSEGV" $REQ && grep -q "log_write_crash_report" $REQ'
 expect "nothing private: no path, user name, host name or home folder" '! grep -qE "/Users/|/home/|$(whoami)|$(hostname -s)|$HOME|$PWD" $REQ'
 # 3. never: dropped silently
 n0=$(wc -l < $REQ); printf 'crash_reports=2\n' > $P/settings.txt
