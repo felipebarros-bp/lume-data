@@ -22,6 +22,7 @@
 #include "theme.h"
 #include "ui.h"
 #include "results.h"
+#include "sshtun.h"
 #include <ctype.h>
 #include <math.h>
 
@@ -47,6 +48,7 @@ struct Dialog {
     TextField folder; /* Explorer folder ("a/b"), "" = top level */
     TextField fields[CONN_MAX_FIELDS];   /* one editor per driver field */
     TextField ssh[4];          /* SSH tunnel: host, port, user, key file */
+    char trust_fp[96];         /* the last test met an unknown SSH host key: its fingerprint, offered to trust */
     int focus;                 /* 0 = name, 1..nfields = fields, then the SSH fields (when shown) */
     int bad_field;   /* the field the last validation stopped at (+1; 0 none): outlined in red */
     char msg[256];   /* result of Test / validation, beside the Test button ("" = none) */
@@ -100,6 +102,12 @@ static TextField *field_at(Dialog *d, int idx) {
     return &d->name;
 }
 
+static void copy_ssh(Connection *c, const Connection *from) {
+    c->ssh = from->ssh;
+    memcpy(c->ssh_host, from->ssh_host, sizeof c->ssh_host); memcpy(c->ssh_port, from->ssh_port, sizeof c->ssh_port);
+    memcpy(c->ssh_user, from->ssh_user, sizeof c->ssh_user); memcpy(c->ssh_key, from->ssh_key, sizeof c->ssh_key);
+}
+
 /* See dialog.h. The draft is a struct copy of the existing connection with its runtime
  * pointers cleared, so editing never touches the live connection. */
 void dialog_open(Dialog *d, App *a, Connection *existing) {
@@ -118,7 +126,7 @@ void dialog_open(Dialog *d, App *a, Connection *existing) {
     textfield_set(&d->folder, d->draft.folder);
     textfield_set(&d->search, "");
     load_fields(d);
-    d->draft.tunnel = NULL;
+    d->draft.tunnel = NULL; d->draft.ssh_trust[0] = 0; d->trust_fp[0] = 0;
     textfield_set(&d->ssh[SSH_HOST], d->draft.ssh_host); textfield_set(&d->ssh[SSH_PORT], d->draft.ssh_port);
     textfield_set(&d->ssh[SSH_USER], d->draft.ssh_user); textfield_set(&d->ssh[SSH_KEY], d->draft.ssh_key);
     d->step = existing ? 1 : 0;   /* a new connection starts by choosing its database */
@@ -149,6 +157,9 @@ void dialog_open_copy(Dialog *d, App *a, const Connection *src) {
     textfield_set(&d->name, d->draft.name);
     snprintf(d->draft.folder, sizeof d->draft.folder, "%s", src->folder);   /* the copy sits next to the original */
     textfield_set(&d->folder, d->draft.folder);
+    copy_ssh(&d->draft, src);   /* the tunnel settings too (no secret in them: key file path only) */
+    textfield_set(&d->ssh[SSH_HOST], d->draft.ssh_host); textfield_set(&d->ssh[SSH_PORT], d->draft.ssh_port);
+    textfield_set(&d->ssh[SSH_USER], d->draft.ssh_user); textfield_set(&d->ssh[SSH_KEY], d->draft.ssh_key);
     load_fields(d);
     d->step = 1;   /* straight to the fields: the database is already chosen */
     d->ro_touched = true;
@@ -217,12 +228,6 @@ static bool validate(Dialog *d) {
     return true;
 }
 /* The draft's SSH settings into a saved connection. */
-static void copy_ssh(Connection *c, const Connection *from) {
-    c->ssh = from->ssh;
-    memcpy(c->ssh_host, from->ssh_host, sizeof c->ssh_host); memcpy(c->ssh_port, from->ssh_port, sizeof c->ssh_port);
-    memcpy(c->ssh_user, from->ssh_user, sizeof c->ssh_user); memcpy(c->ssh_key, from->ssh_key, sizeof c->ssh_key);
-}
-
 /* Writes the draft into the edited connection (or a new one) and closes the dialog.
  * A connection that was open is disconnected first and reconnected afterwards; `connect`
  * also connects a closed one. Does nothing but report when validation fails. */
@@ -275,13 +280,17 @@ static void test_start(Dialog *d) {
     if (!th) { memset(&j->c, 0, sizeof j->c); free(j); snprintf(d->msg, sizeof d->msg, "Could not start the test."); d->msg_ok = false; return; }
     SDL_DetachThread(th);
     d->job = j;
-    d->msg[0] = 0;
+    d->msg[0] = 0; d->trust_fp[0] = 0;
 }
 static void test_poll(Dialog *d, App *a) {
     if (!d->job) return;
     if (SDL_GetAtomicInt(&d->job->state) != 1) { app_wake_in(a, 120); return; }
     TestJob *j = d->job; d->job = NULL;
+    d->draft.ssh_trust[0] = 0;   /* an approval counts for one attempt */
+    char type[64];
     if (j->ok) snprintf(d->msg, sizeof d->msg, "\xE2\x9C\x93 Connected in %llu ms.", (unsigned long long)j->ms);
+    else if (sshtun_unknown_key(j->err, d->trust_fp, sizeof d->trust_fp, type, sizeof type))
+        snprintf(d->msg, sizeof d->msg, "Unknown SSH host key %s %s. Trust it only if it matches the fingerprint your server administrator gives you.", type, d->trust_fp);
     else {   /* the driver's message on one line */
         size_t k = 0; bool sp = false;
         for (const char *p = j->err; *p && k + 2 < sizeof d->msg; p++) { if (*p == '\n' || *p == '\r' || *p == '\t' || *p == ' ') { sp = k > 0; continue; } if (sp) { d->msg[k++] = ' '; sp = false; } d->msg[k++] = *p; }
@@ -595,7 +604,7 @@ static void frame(Dialog *d, App *a, bool live) {
     draw_text_fit(a->font_small, r, "Lume refuses writes; the database login itself is unchanged.", -1, rect_make(fx, cy + fh - px(a, 2), fw_full, px(a, 18)), color_hex(T_TEXT_DIM), ALIGN_LEFT);
     cy += row + px(a, 20);
     /* Test: a tool, with its result beside it (cleared when a field changes) */
-    if (live && d->sig && sig != d->sig && !d->job && d->msg[0] && !d->bad_field) d->msg[0] = 0;
+    if (live && d->sig && sig != d->sig && !d->job && d->msg[0] && !d->bad_field) { d->msg[0] = 0; d->trust_fp[0] = 0; }
     if (live) { d->sig = sig; if (d->bad_field && field_at(d, d->bad_field)->buf[0]) d->bad_field = 0; }
     Rect tb = rect_make(x + pad, cy, px(a, 140), px(a, 30)); ui_record("conn:test", tb);
     if (ui_button(a, tb, d->job ? "Testing\xE2\x80\xA6" : "Test connection", BTN_NORMAL, !d->job) && live) test_start(d);
@@ -605,7 +614,17 @@ static void frame(Dialog *d, App *a, bool live) {
         else { float t = (float)(SDL_GetTicks() % 1000) / 1000.0f; float dx = cb.x + cb.w + px(a, 12);
                for (int k = 0; k < 3; k++) draw_rrect(r, rect_make(dx + k * px(a, 10), cy + px(a, 12), px(a, 6), px(a, 6)), px(a, 3), color_alpha(color_hex(T_ACCENT), (int)(80 + 175 * (0.5f + 0.5f * sinf((t - k * 0.2f) * 6.283f))))); }
     } else if (d->msg[0]) {
-        Rect mr = rect_make(tb.x + tb.w + px(a, 12), cy - px(a, 4), w - pad * 2 - tb.w - px(a, 12), px(a, 40));
+        float mx = tb.x + tb.w + px(a, 12);
+        if (d->trust_fp[0] && !d->msg_ok) {   /* an unknown SSH host key: approved here, by its fingerprint */
+            Rect trb = rect_make(mx, cy, px(a, 130), px(a, 30)); ui_record("conn:trust", trb);
+            if (ui_button(a, trb, "Trust Host Key", BTN_NORMAL, true) && live) {
+                snprintf(d->draft.ssh_trust, sizeof d->draft.ssh_trust, "%s", d->trust_fp);
+                d->trust_fp[0] = 0;
+                test_start(d);
+            }
+            mx += trb.w + px(a, 12);
+        }
+        Rect mr = rect_make(mx, cy - px(a, 4), x + w - pad - mx, px(a, 40));
         results_draw_wrapped(a->font_small, r, d->msg, mr, color_hex(d->msg_ok ? T_GREEN : T_RED), 0, !live);
         ui_record("conn:msg", mr);
     }
@@ -645,6 +664,9 @@ static void frame(Dialog *d, App *a, bool live) {
         if (!rect_contains(panel, in->mouse_x, in->mouse_y)) a->want_cursor = CURSOR_ARROW;
     }
 }
+
+/* See dialog.h. */
+bool dialog_testing(Dialog *d) { return d && d->job != NULL; }
 
 /* See dialog.h. */
 void dialog_update(Dialog *d, App *a) {

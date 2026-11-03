@@ -1,0 +1,9 @@
+# SSH tunnel end to end, run 2: the server's host key changed: refused, no trust question
+wait 300
+dnode "tunnel e2e"
+awaitconn "tunnel e2e" 30000
+wait 30
+tbmodal
+button "Close"
+wait 30
+quit

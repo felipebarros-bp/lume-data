@@ -71,6 +71,7 @@ struct Connection {
     /* runtime */
     Db *db;   /* NULL while disconnected */
     struct SshTunnel *tunnel;   /* the running tunnel of the open Db, NULL without one */
+    char ssh_trust[96];         /* an unknown SSH host key the user approved ("SHA256:..."), for the next connect; never saved */
     DbTable *tables; int ntables;   /* catalog, owned; freed with db_tables_free */
     bool columns_lazy;      /* big schema: columns are loaded on demand */
     char error[256];   /* last connect / refresh error, "" when fine */

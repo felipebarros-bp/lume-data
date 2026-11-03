@@ -1,0 +1,20 @@
+# SSH tunnel end to end, run 3: Test connection in the dialog shows the unknown key's fingerprint and
+# Trust Host Key approves exactly that key
+wait 300
+rnode "tunnel e2e"
+wait 60
+button "Edit Connection…"
+wait 60
+button "Test connection"
+wait 5
+dialogawait 30000
+wait 10
+dialogstate
+button "Trust Host Key"
+wait 5
+dialogawait 30000
+wait 10
+dialogstate
+button "Cancel"
+wait 30
+quit

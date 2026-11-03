@@ -275,6 +275,12 @@ void script_tick(App *a) {
     else if (!strcmp(cmd, "updatestate")) update_dump();
     else if (!strcmp(cmd, "dgm")) dgmview_cmd(a, arg);        /* ER diagrams: dgm <op> [args] (dgmview.c) */
     else if (!strcmp(cmd, "dgmstate")) dgmview_dump(a);
+    else if (!strcmp(cmd, "dialogawait")) {   /* repeat until the connection dialog's Test connection ends (or the deadline) */
+        static Uint64 ddeadline; int ms = atoi(arg);
+        if (!ddeadline) ddeadline = now + (Uint64)(ms > 0 ? ms : 30000);
+        if (dialog_testing(a->dialog) && now < ddeadline) { cur--; next_at = now + 50; }
+        else { if (dialog_testing(a->dialog)) { printf("script: target not found: dialogawait timed out\n"); fflush(stdout); } ddeadline = 0; }
+    }
     else if (!strcmp(cmd, "dgmawait")) {   /* repeat until the active diagram's catalog is read and laid out (or the deadline) */
         static Uint64 gdeadline; int ms = atoi(arg);
         if (!gdeadline) gdeadline = now + (Uint64)(ms > 0 ? ms : 30000);

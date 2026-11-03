@@ -58,6 +58,7 @@
 #include "exec.h"
 #include "update.h"
 #include "dgmview.h"
+#include "sshtun.h"
 #include <stdarg.h>
 
 /* LUME_VERSION comes from CMake (project VERSION): the single source for About, Copy Info and the log. */
@@ -1142,6 +1143,7 @@ int main(int argc, char **argv) {
     /* modules; the panels shell comes last because it registers the others as panels */
     a->completer = complete_create();
     a->conns = conns_load();
+    sshtun_init(a->conns ? a->conns->dir : "");   /* stops tunnels a killed earlier run left behind */
     a->update_check = true;   /* on unless turned off (Settings > Privacy) */
     app_prefs_load(a); g_prefs_sig = prefs_sig(a); g_prefs_loaded = true;   /* the settings saved last time */
     a->dialog = dialog_create();

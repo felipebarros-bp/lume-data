@@ -44,6 +44,7 @@
 #include "panels.h"
 #include "results.h"
 #include "theme.h"
+#include "sshtun.h"
 
 /* ---- helpers ---------------------------------------------------------------------- */
 
@@ -464,6 +465,15 @@ static void confirm_answer(Toolbar *t, App *a, int b) {
         Connection *c = tb_conn_by_id(a, arg);
         if (c && b == 0) { a->pending_activate = c; app_connect_async(a, c, false); }
         else if (c && b == 1) app_edit_connection(a, c);
+        break;
+    }
+    case CF_SSH_TRUST: {   /* Trust and Connect / Edit connection... / Cancel */
+        Connection *c = tb_conn_by_id(a, arg);
+        char fp[96];
+        if (c && b == 0 && sshtun_unknown_key(c->error, fp, sizeof fp, NULL, 0)) {
+            snprintf(c->ssh_trust, sizeof c->ssh_trust, "%s", fp);   /* this exact key, on this connect */
+            a->pending_activate = c; app_connect_async(a, c, false);
+        } else if (c && b == 1) app_edit_connection(a, c);
         break;
     }
     default: break;
@@ -1051,6 +1061,15 @@ void toolbar_connect_failed(Toolbar *t, App *a, Connection *c) {
     (void)a;
     if (!t || !c || t->modal) return;   /* never over another question */
     char title[160], body[700];
+    char fp[96], type[64];
+    if (c->ssh && sshtun_unknown_key(c->error, fp, sizeof fp, type, sizeof type)) {   /* never accepted silently: the user compares */
+        snprintf(title, sizeof title, "Trust the SSH host %s?", c->ssh_host);
+        snprintf(body, sizeof body, "Lume has not connected to this SSH host before. Its host key fingerprint is:\n\n%s %s\n\n"
+                 "Compare it with the fingerprint your server administrator gives you, and trust it only if they match. "
+                 "Lume then adds it to your known_hosts; if the server shows a different key later, the connection is refused.", type, fp);
+        tba_confirm(t, CF_SSH_TRUST, title, body, "Trust and Connect", "Edit connection...", "Cancel", c->id);
+        return;
+    }
     snprintf(title, sizeof title, "Could not connect to %s", c->name);
     /* the driver's message, tidied: its line breaks and indentation become single spaces */
     char err[500]; size_t k = 0; bool sp = false;

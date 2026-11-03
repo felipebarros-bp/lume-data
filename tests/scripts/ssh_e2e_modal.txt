@@ -1,0 +1,23 @@
+# SSH tunnel end to end, run 1: an unknown host key is asked about with its fingerprint (never accepted
+# silently); Trust and Connect connects through it; a second connection then uses the known key
+wait 300
+dnode "tunnel e2e"
+awaitconn "tunnel e2e" 30000
+wait 30
+tbmodal
+button "Trust and Connect"
+wait 10
+awaitconn "tunnel e2e" 30000
+wait 30
+tbmodal
+button "Close"
+wait 30
+rawsql "tunnel pg" SELECT 1
+rnode "tunnel e2e"
+wait 60
+button "Duplicate Connection…"
+wait 60
+dialogstate
+button "Cancel"
+wait 30
+quit

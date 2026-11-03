@@ -45,6 +45,33 @@ Give a connection a **Folder** in its dialog to group it in the Explorer. A `/` 
   - **Expand All Folders** / **Collapse All Folders**.
 - **Duplicate Connection...** keeps the folder of the original.
 
+## Connect through an SSH tunnel
+
+For PostgreSQL, MySQL, MariaDB, SQL Server and Oracle, tick **Use SSH tunnel** in the connection dialog when the database is only reachable through an SSH server (a bastion or jump host). Fill in:
+
+| Field | What to enter |
+|---|---|
+| SSH host | the SSH server, or a `Host` name from your `~/.ssh/config` |
+| Port | the SSH port; empty means 22 or what your `~/.ssh/config` says |
+| SSH user | the SSH login; empty means `~/.ssh/config` or your login name |
+| Key file | a private key (`~/` works); empty means your SSH agent or `~/.ssh/config` |
+
+The database **Host** and **Port** stay the ones as seen from the SSH server (often `localhost` or an internal name).
+
+- Lume uses your system's `ssh`, so `~/.ssh/config` (aliases, `ProxyJump`), the SSH agent and your keys work as they do in a terminal.
+- Key-based login only: Lume never asks for an SSH password. A key with a passphrase works when the passphrase is in your agent (on macOS, the Keychain).
+- The tunnel opens when the connection connects and closes with it. If Lume quits or crashes, its tunnels stop; after a forced quit, the next launch stops the ones left behind.
+- Turning **Use SSH tunnel** off keeps the SSH settings for later. **Duplicate Connection...** copies them too.
+
+### Trusting a new SSH server
+
+The first time Lume connects to an SSH server your computer does not know yet, it does not trust it silently. It shows the server's **host key fingerprint** (for example `ssh-ed25519 SHA256:...`):
+
+- after a connect: in a **Trust the SSH host ...?** dialog, with **Trust and Connect**;
+- in the connection dialog: **Test connection** shows the fingerprint, with **Trust Host Key**.
+
+Compare it with the fingerprint your server administrator gives you, and trust it only if they match. Lume then adds that exact key to your `~/.ssh/known_hosts`. If the server later shows a different key, the connection is refused with *Host key verification failed*: check with your administrator before changing `known_hosts`.
+
 ## Connect and disconnect
 
 - **Connect**: double-click the connection, right-click > **Connect**, or **Cmd+D**. Connecting runs in the background: the window keeps working, and the toolbar shows *connecting*. **Cancel Connect** (toolbar datasource menu) stops it.
@@ -66,6 +93,7 @@ Passwords are stored in the operating system's secret store under "Lume Data": K
 The message names the cause. The most common ones:
 
 - **Client library not found**: install the library for that database or point the variable named in the message at it ([Install](../getting-started/install.md#database-client-libraries)).
+- **SSH tunnel: ...**: the message is `ssh`'s own (host not reachable, key refused, host key changed). Check the SSH fields and try the same login with `ssh` in a terminal.
 - **Authentication failed / host not reachable**: the server's own message is shown. Use **Test connection** in the dialog to try again without saving.
 
 See also [Troubleshooting](../troubleshooting.md).

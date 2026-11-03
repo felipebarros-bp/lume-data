@@ -24,6 +24,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+#include "sshtun.h"
 
 #define LOG_ROTATE_BYTES (5L << 20)   /* rotate when the file grows past 5 MB */
 
@@ -87,6 +88,7 @@ static void crash_handler(int sig) {
 #endif
     write_str(log_fd, "----- end of backtrace -----\n");
     log_write_crash_report(sig);   /* the report for the next launch (crashrep.c) */
+    sshtun_kill_all();             /* no ssh tunnel outlives Lume */
     if (log_fd >= 0) fsync(log_fd);
     /* let the system finish the job: default action, macOS crash report, non-zero exit */
     signal(sig, SIG_DFL);

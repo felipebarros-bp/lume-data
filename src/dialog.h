@@ -28,4 +28,5 @@ void dialog_draw(Dialog *d, App *a);       /* overlay; call last */
 /* Result of the Browse file picker: fills the driver's file field and, when the name is
  * still empty, names the connection after the file. */
 void dialog_file_chosen(Dialog *d, const char *path);
+bool dialog_testing(Dialog *d);   /* harness: Test connection is running */
 void dialog_dump(Dialog *d);   /* harness: "dialogstate open=.. step=.. driver=.. ..." */

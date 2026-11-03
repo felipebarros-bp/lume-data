@@ -557,6 +557,7 @@ bool conn_poll(Connection *c) {
     ConnAttempt *t = c->attempt;
     if (!t || !__atomic_load_n(&t->done, __ATOMIC_SEQ_CST)) return false;
     c->attempt = NULL;
+    c->ssh_trust[0] = 0;   /* an approved host key counts for one attempt (it is in known_hosts now) */
     if (!t->db) {
         snprintf(c->error, sizeof c->error, "%s", t->err[0] ? t->err : "Could not connect");
         c->state = CONN_FAILED; c->state_since = SDL_GetTicks();
@@ -616,7 +617,7 @@ Db *conn_open(const Connection *c, struct SshTunnel **tun, char *err, size_t err
     char loc[2048];
     if (c->ssh && conn_supports_ssh(d)) {
         const char *dh = conn_value(c, "host"); int dp = atoi(conn_value(c, "port"));
-        SshSpec sp = { c->ssh_host, c->ssh_user, c->ssh_key, atoi(c->ssh_port) };
+        SshSpec sp = { c->ssh_host, c->ssh_user, c->ssh_key, atoi(c->ssh_port), c->ssh_trust };
         int lport = 0;
         *tun = sshtun_open(&sp, dh, dp, 20, &lport, err, errlen);
         if (!*tun) return NULL;
