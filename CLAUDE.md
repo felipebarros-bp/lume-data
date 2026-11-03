@@ -36,7 +36,7 @@
 ## User documentation (website/)
 
 The public documentation is the Docusaurus site in `website/`, published to GitHub Pages
-(https://tessarotto21.github.io/lume-data) by `.github/workflows/docs.yml` on every push to `main`
+(https://lume-data.org, custom domain set in the repository's Pages settings) by `.github/workflows/docs.yml` on every push to `main`
 that touches `website/`. Each release freezes a version of it (the release workflow).
 
 - **Every user-facing change updates the docs in the same commit**: a new feature gets its page
