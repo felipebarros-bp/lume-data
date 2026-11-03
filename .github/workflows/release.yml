@@ -306,6 +306,8 @@ jobs:
             mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-sdl3
             mingw-w64-ucrt-x86_64-sqlite3
+      - name: Version ${{ needs.version.outputs.version }}
+        run: sed -i "s/^project(lume VERSION [0-9.]*/project(lume VERSION ${{ needs.version.outputs.version }}/" CMakeLists.txt && grep -n "^project(lume" CMakeLists.txt
       - name: Build Lume
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLUME_CHANNEL="${{ inputs.channel }}"
