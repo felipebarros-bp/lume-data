@@ -86,6 +86,8 @@ typedef struct NsInfo {
     bool system, exists_known, exists;
     /* tables of a schema not covered by the connection's list (DBX-090) */
     NsTable *tables; int ntables; bool tables_loaded, tables_loading, tables_more; char tables_err[200];
+    bool tables_cancel;       /* the user asked to stop the running listing */
+    int tables_secs;          /* seconds the running listing has taken so far (shown while loading) */
     uint32_t tables_serial;   /* unique per load: the Explorer's table cache follows it */
 } NsInfo;
 
@@ -209,6 +211,12 @@ void nsx_search(NsState *s, const char *text, bool substring, bool objects, cons
 void nsx_search_clear(NsState *s);
 void nsx_probe(NsState *s, const char *name);       /* Verify Visible Objects */
 void nsx_load_tables(NsState *s, const char *name);
+/* Stops listing a schema's tables: drops it from the queue, or asks the running read to stop
+ * (ns_pump cancels it). The schema then shows "Listing cancelled" with Retry. */
+void nsx_cancel_tables(NsState *s, const char *name);
+/* A schema's table listing is opened by the user and waits for large catalogs (all_tables on a
+ * schema with many grants can take minutes); it still has a ceiling so a stuck read ends. */
+#define NSX_TABLES_BUDGET_MS (10 * 60 * 1000)
 void nsx_discover(NsState *s);                      /* opt-in bounded discovery */
 /* loaded names, featured first, newline separated (Copy Loaded Names); returns the count */
 int nsx_copy_loaded(NsState *s, char *out, int n);

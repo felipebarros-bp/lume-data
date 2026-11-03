@@ -433,6 +433,7 @@ static int req_timeout(NsState *s, int kind) {
     switch (kind) {
     case NSR_COUNT: return 2000;                 /* only when cheap: past its budget the count stays unknown */
     case NSR_DISCOVER: return 10000;
+    case NSR_TABLES: return s->prefs.timeout_ms > NSX_TABLES_BUDGET_MS ? s->prefs.timeout_ms : NSX_TABLES_BUDGET_MS;
     case NSR_SCOPE: case NSR_NAMES: return s->prefs.timeout_ms > 5000 ? s->prefs.timeout_ms : 5000;
     default: return s->prefs.timeout_ms;
     }
@@ -766,10 +767,23 @@ void nsx_probe(NsState *s, const char *n) {
 void nsx_load_tables(NsState *s, const char *n) {
     NsInfo *in = nsx_info(s, n, true);
     if (in->tables_loaded || in->tables_loading) return;
-    in->tables_loading = true; in->tables_err[0] = 0;
+    in->tables_loading = true; in->tables_err[0] = 0; in->tables_cancel = false; in->tables_secs = 0;
     char *sql = sqlbuf(); s->ad->tables_sql(n, 5001, sql, 16384);   /* 5000 shown; more = "use Find Objects" */
     push(s, NSR_TABLES, s->count_gen, n, sql, 5000, NULL);
     s->rev++;
+}
+void nsx_cancel_tables(NsState *s, const char *n) {
+    NsInfo *in = nsx_info(s, n, false);
+    if (!in || !in->tables_loading) return;
+    for (int i = 0; i < s->nq; i++) {
+        if (s->queue[i].kind != NSR_TABLES || strcmp(s->queue[i].key, n)) continue;
+        free(s->queue[i].sql); free(s->queue[i].aux);
+        memmove(s->queue + i, s->queue + i + 1, sizeof *s->queue * (size_t)(s->nq - i - 1)); s->nq--;
+        in->tables_loading = false; snprintf(in->tables_err, sizeof in->tables_err, "cancelled");
+        s->rev++;
+        return;
+    }
+    if (s->has_running && s->running.kind == NSR_TABLES && !strcmp(s->running.key, n)) in->tables_cancel = true;
 }
 void nsx_discover(NsState *s) {
     if (!s->ad->caps.discovery || s->discover_loading) return;
@@ -826,6 +840,7 @@ bool nsx_running_stale(NsState *s) {
     if (r->kind == NSR_SEARCH || r->kind == NSR_OBJSEARCH) return r->gen != s->search.gen;
     if (r->kind == NSR_PAGE) return r->gen != s->pager.gen;
     if (r->kind == NSR_COUNT || r->kind == NSR_NAMES) return r->gen != s->count_gen;
+    if (r->kind == NSR_TABLES) { NsInfo *in = nsx_info(s, r->key, false); return in && in->tables_cancel; }
     return false;
 }
 
@@ -958,7 +973,7 @@ void nsx_complete(NsState *s, const ResultSet *rs, const char *err, bool timed_o
     }
     case NSR_TABLES: {
         NsInfo *in = nsx_info(s, r.key, true);
-        in->tables_loading = false;
+        in->tables_loading = false; in->tables_cancel = false;
         if (!ok) { snprintf(in->tables_err, sizeof in->tables_err, "%s", why); break; }
         int take = rs->nrows > r.limit ? r.limit : rs->nrows;
         in->tables = calloc((size_t)(take ? take : 1), sizeof *in->tables); in->ntables = take;

@@ -245,6 +245,26 @@ int main(void) {
     nsx_load_tables(s, "USR_000001"); drain(s, &now);
     in = nsx_info(s, "USR_000001", false);
     EXPECT(in->tables_loaded && in->ntables == 2 && in->tables[1].is_view && !strcmp(in->tables[0].name, "USR_000001.T1"), "DBX-090: expanding a schema loads its table / view names only");
+    {   /* a large catalog: the listing waits minutes, not the 5 s of other reads; Cancel stops it */
+        nsx_load_tables(s, "USR_000002");
+        const NsReq *q = nsx_next_request(s, now);
+        EXPECT(q && q->kind == NSR_TABLES && q->timeout_ms >= 10 * 60 * 1000 && q->timeout_ms > s->prefs.timeout_ms,
+               "a schema's table listing waits up to 10 minutes (%d ms), other catalog reads keep their %d ms", q ? q->timeout_ms : 0, s->prefs.timeout_ms);
+        NsInfo *i2 = nsx_info(s, "USR_000002", false);
+        EXPECT(!nsx_running_stale(s), "the running listing is not cancelled on its own");
+        nsx_cancel_tables(s, "USR_000002");
+        EXPECT(i2->tables_loading && i2->tables_cancel && nsx_running_stale(s), "Cancel on a running listing asks the read to stop (the Explorer cancels the statement)");
+        nsx_complete(s, NULL, NULL, false, true, 1500, now);
+        EXPECT(!i2->tables_loading && !i2->tables_cancel && !strcmp(i2->tables_err, "cancelled") && !i2->tables_loaded, "a cancelled listing shows \"Listing cancelled\" (Retry), never an empty schema");
+        nsx_load_tables(s, "USR_000003"); nsx_load_tables(s, "USR_000004");
+        q = nsx_next_request(s, now);
+        NsInfo *i4 = nsx_info(s, "USR_000004", false);
+        nsx_cancel_tables(s, "USR_000004");
+        EXPECT(q && !strcmp(q->key, "USR_000003") && !i4->tables_loading && !strcmp(i4->tables_err, "cancelled") && s->nq == 0, "Cancel on a queued listing drops it before it runs");
+        { ResultSet r = rs2(); row(&r, "USR_000003.T1", "0", ""); nsx_complete(s, &r, NULL, false, false, 5, now); rs_free(&r); }
+        nsx_load_tables(s, "USR_000004"); drain(s, &now);   /* Retry */
+        EXPECT(i4->tables_loaded && !i4->tables_err[0], "Retry after a cancel lists the schema");
+    }
 
     /* discovery: opt-in, bounded, capped (DBX-093 / 097) */
     int oq = object_queries;

@@ -103,6 +103,16 @@ if [ -z "$LUME_SKIP_ORACLE" ] && docker ps --format '{{.Names}}' | grep -qx dbv-
   expect "DBX-091 / 107: Verify Visible Objects on SYSTEM (ALL_OBJECTS, one owner)" 'props "$out" 1 | grep -q "Has visible objects"'
   expect "DBX-095: the container (FREEPDB1) is part of the scope" 'props "$out" 2 | grep -q "in FREEPDB1"'
   expect "no Oracle password in logs or preferences" '! grep -rqF "$OPW" $O/logs $O/schemas.txt 2>/dev/null'
+  # a schema whose table listing is slow (a real 60 s statement): it waits past the 5 s budget of
+  # other catalog reads, shows the elapsed time and Cancel; Cancel stops it; Retry starts it again
+  rm -rf $O/logs $O/schemas.txt
+  out=$(LUME_TEST_SLOW_TABLES_S=60 LUME_PREF_DIR=$O LUME_SCRIPT=tests/scripts/nsx_ora_slow.txt ./build/lume 2>&1)
+  syn() { printf '%s\n' "$out" | grep '^explorer rows' | sed -n "$1p" | grep -oE 'SYN_FAT \|\.\.\.[^|]*\|\.\.\.[^|]*'; }
+  expect "every script target found (Oracle, slow listing)" '[ "$(missing "$out")" = 0 ]'
+  expect "a slow table listing keeps running past 5 s: \"Loading… N s\" and Cancel under the schema ($(syn 1))" 'syn 1 | grep -qE "Loading… [4-9] s \|\.\.\.Cancel"'
+  expect "Run in the editor meanwhile says the Explorer holds the session and where to cancel" 'grep -q "status: The Explorer is still listing tables on this connection" $O/logs/lume.log'
+  expect "Cancel stops the running statement (well before its 60 s): \"Listing cancelled\" and Retry, never an empty schema" 'syn 2 | grep -q "Listing cancelled |...Retry"'
+  expect "Retry lists the schema again" 'syn 3 | grep -q "Loading… |...Cancel"'
   unset OPW
 else echo "skip  Oracle scenarios: dbv-oracle / Instant Client not available"; fi
 

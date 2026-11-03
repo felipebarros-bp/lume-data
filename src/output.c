@@ -250,6 +250,7 @@ int output_run_opts(Output *o, App *a, Db *db, const char *sql, int len, uint32_
     /* one execution per session: a second Run on the same connection (a double click, a
      * repeated shortcut) is refused, other sessions may run in parallel (TBR-021 / 025) */
     if (job_of_db(o, db)) { app_status(a, "A statement is still running on %s: wait for it or cancel it (\xE2\x8C\x98.)", a->active ? a->active->name : "this connection"); return 0; }
+    if (explorer_reading(a, db)) { app_status(a, "The Explorer is still listing tables on this connection: wait for it, or click Cancel under the schema"); return 0; }
     if (o->njobs >= OUT_MAX_JOBS) { app_status(a, "%d executions are running: wait for one to finish", OUT_MAX_JOBS); return 0; }
     if (len < 0) len = (int)strlen(sql);
     OutLog *l = output_current(o, a);

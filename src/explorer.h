@@ -20,6 +20,8 @@ void explorer_destroy(Explorer *e);
 void explorer_rebuild(Explorer *e, App *a);
 /* Reloads the active connection's tables, then rebuilds. */
 void explorer_refresh(Explorer *e, App *a);
+bool explorer_reading(App *a, Db *db);
+void explorer_dump_rows(Explorer *e);     /* test harness */   /* the Explorer is reading the catalog on this session */
 /* Per-frame input handling and drawing of the panel inside `bounds` (pixels). May switch
  * the active connection, connect, open a preview or the connection dialog. */
 void explorer_update(Explorer *e, App *a, Rect bounds);

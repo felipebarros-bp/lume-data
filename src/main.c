@@ -128,6 +128,7 @@ void app_wake_in(App *a, Uint32 ms) {
 void app_run_sql_mode(App *a, Db *db, const char *sql, int len, const char *title, int mode, const char *qtable) {
     if (!db) db = a->db;
     if (!db) { app_status(a, "No connection. Open a database first."); return; }
+    if (explorer_reading(a, db)) { app_status(a, "The Explorer is still listing tables on this connection: wait for it, or click Cancel under the schema"); return; }
     if (__atomic_load_n(&db->busy, __ATOMIC_SEQ_CST)) { app_status(a, "The connection is busy with a running statement (\xE2\x8C\x98. cancels it)"); return; }
     ResultSet rs;
     db->drv->exec(db, sql, len, a->fetch_size, &rs);

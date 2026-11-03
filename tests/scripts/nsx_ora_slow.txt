@@ -1,0 +1,24 @@
+# Oracle: a schema whose table listing is slow (LUME_TEST_SLOW_TABLES_S): the node shows the elapsed
+# time and Cancel; Cancel stops the running statement; Retry starts it again
+wait 500
+dnode "ora DEV"
+wait 2000
+nsx "ora DEV" await 40000
+nsx "ora DEV" system 0
+nsx "ora DEV" await
+nsx "ora DEV" expand
+nsx "ora DEV" await
+dnode "SYN_FAT"
+wait 4500
+explorerdump rows
+click 700 300
+type SELECT 1 FROM dual
+key cmd+Return
+wait 300
+node "Cancel"
+wait 1500
+explorerdump rows
+node "Retry"
+wait 300
+explorerdump rows
+quit

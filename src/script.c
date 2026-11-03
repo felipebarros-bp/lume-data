@@ -256,7 +256,7 @@ void script_tick(App *a) {
         }
     }
     else if (!strcmp(cmd, "aboutstate")) about_dump(a);
-    else if (!strcmp(cmd, "explorerdump")) explorer_dump(a->explorer);
+    else if (!strcmp(cmd, "explorerdump")) { if (!strcmp(arg, "rows")) explorer_dump_rows(a->explorer); else explorer_dump(a->explorer); }
     else if (!strcmp(cmd, "nativesettings")) {   /* clicks the native app menu's Settings... item (macOS) */
         bool ok = macos_trigger_settings();
         printf("nativesettings %s\n", ok ? "sent" : "missing"); fflush(stdout);

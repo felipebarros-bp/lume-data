@@ -52,7 +52,7 @@ typedef enum { NODE_CONN, NODE_GROUP, NODE_TABLE, NODE_COLUMN, NODE_OBJECT, NODE
 /* Schema Explorer roles of a group */
 enum { NR_NONE, NR_ROOT, NR_OTHERS };
 /* action rows */
-enum { ACT_NONE, ACT_SEARCH_OTHERS, ACT_LOAD_MORE, ACT_RETRY_PAGE, ACT_RETRY_TABLES, ACT_RETRY_SCOPE };
+enum { ACT_NONE, ACT_SEARCH_OTHERS, ACT_LOAD_MORE, ACT_RETRY_PAGE, ACT_RETRY_TABLES, ACT_RETRY_SCOPE, ACT_CANCEL_TABLES };
 
 /* One row of the tree. Owns its label, detail and children. */
 typedef struct Node {
@@ -269,6 +269,15 @@ static NsRun *run_slot(const char *id) {
     NsRun *r = &runs[nruns++]; memset(r, 0, sizeof *r); snprintf(r->id, sizeof r->id, "%s", id);
     return r;
 }
+/* true while the Explorer's own catalog read holds this session (a long table listing) */
+bool explorer_reading(App *a, Db *db) {
+    for (int i = 0; db && a->conns && i < a->conns->n; i++) {
+        Connection *c = a->conns->items[i];
+        if (c->db != db) continue;
+        for (int k = 0; k < nruns; k++) if (!strcmp(runs[k].id, c->id) && runs[k].job && runs[k].kind == NSR_TABLES) return true;
+    }
+    return false;
+}
 static void run_stop(NsRun *r) {
     if (!r || !r->job) return;
     exec_cancel(r->job);
@@ -376,6 +385,10 @@ static void ns_pump(App *a) {
             if (exec_running(r->job)) {
                 double el = exec_elapsed_ms(r->job);
                 if (!r->cancel && (el > s->running.timeout_ms || nsx_running_stale(s))) { r->timed_out = el > s->running.timeout_ms; exec_cancel(r->job); r->cancel = true; }
+                if (s->running.kind == NSR_TABLES) {   /* the schema's "Loading... N s" follows the clock */
+                    NsInfo *in = nsx_info(s, s->running.key, false);
+                    if (in && in->tables_secs != (int)(el / 1000)) { in->tables_secs = (int)(el / 1000); s->rev++; }
+                }
                 app_wake_in(a, 50);
                 continue;
             }
@@ -384,9 +397,10 @@ static void ns_pump(App *a) {
             bool ok = got && rs.ok && !rs.error[0] && !rs.cancelled;
             int pages = s->m.pages;
             double ms = exec_elapsed_ms(r->job);
+            int budget = s->running.timeout_ms;
             nsx_complete(s, ok ? &rs : NULL, ok ? NULL : got && rs.error[0] ? rs.error : "the statement did not run", r->timed_out, r->cancel && !r->timed_out, ms, now);
             if (s->m.pages != pages) LOG_I("explorer: %s page %d: %d names loaded in total, %.0f ms", s->ad->label, s->pager.pages, s->pager.n, ms);   /* counts, no names (DBX-114) */
-            if (r->timed_out) LOG_I("explorer: catalog read stopped at its budget (%d ms)", s->prefs.timeout_ms);
+            if (r->timed_out) LOG_I("explorer: catalog read stopped at its budget (%d ms)", budget);
             rs_free(&rs); exec_free(r->job); r->job = NULL; r->cancel = r->timed_out = false;
         }
         if (c->db->busy) { if (nsx_busy(s)) app_wake_in(a, 200); continue; }   /* the editor owns the session: wait */
@@ -394,6 +408,13 @@ static void ns_pump(App *a) {
         if (!q) { uint64_t due = nsx_next_due(s); if (due) app_wake_in(a, due > now ? (Uint32)(due - now) : 0); continue; }
         if (caps_sql_may_write(q->sql, -1)) { nsx_complete(s, NULL, "refused: a catalog statement must be a plain read", false, false, 0, now); continue; }   /* OBJ-080 style guard */
         const char *sql = q->sql;
+        /* tests only (under the harness): LUME_TEST_SLOW_TABLES_S makes an Oracle table listing a
+         * really slow statement (DBMS_SESSION.SLEEP), so a suite can watch "Loading... N s" and Cancel it */
+        char slow[17000]; const char *ss = getenv("LUME_TEST_SLOW_TABLES_S");
+        if (q->kind == NSR_TABLES && ss && atoi(ss) > 0 && getenv("LUME_SCRIPT") && !strcmp(c->driver, "oracle")) {
+            snprintf(slow, sizeof slow, "WITH FUNCTION lume_slow RETURN NUMBER IS BEGIN DBMS_SESSION.SLEEP(%d); RETURN 1; END; "
+                     "SELECT q.* FROM (%s) q WHERE lume_slow() = 1", atoi(ss), q->sql); sql = slow;
+        }
         int fetch = q->limit + 2 > 10 ? q->limit + 2 : 10;
         r->job = exec_start_list(c->db, &sql, 1, fetch, true, false);
         r->kind = q->kind;
@@ -526,7 +547,16 @@ static void fill_schema(Node *n) {
     } else {
         NsInfo *in = nsx_info(s, n->sname, false);
         if (!in || (!in->tables_loaded && !in->tables_loading && !in->tables_err[0])) { nsx_load_tables(s, n->sname); in = nsx_info(s, n->sname, false); }
-        if (in && in->tables_loading) add_msg(n, "Loading\xE2\x80\xA6");
+        if (in && in->tables_loading) {
+            /* large catalogs can take minutes: the elapsed time shows it is still working, Cancel stops it */
+            char m[64];
+            if (in->tables_cancel) snprintf(m, sizeof m, "Cancelling\xE2\x80\xA6");
+            else if (in->tables_secs >= 3) snprintf(m, sizeof m, "Loading\xE2\x80\xA6 %d s", in->tables_secs);
+            else snprintf(m, sizeof m, "Loading\xE2\x80\xA6");
+            add_msg(n, m);
+            if (!in->tables_cancel) add_action(n, "Cancel", ACT_CANCEL_TABLES, n->sname);
+        }
+        else if (in && !strcmp(in->tables_err, "cancelled")) { add_msg(n, "Listing cancelled"); add_action(n, "Retry", ACT_RETRY_TABLES, n->sname); }
         else if (in && in->tables_err[0]) { char m[260]; snprintf(m, sizeof m, "Could not list tables: %s", in->tables_err); add_msg(n, m); add_action(n, "Retry", ACT_RETRY_TABLES, n->sname); }
         else if (in && in->tables_loaded) {
             ExtTables *x = ext_get(c->id, in);
@@ -978,6 +1008,7 @@ static void run_action(Explorer *e, App *a, Node *n) {
     case ACT_RETRY_PAGE: s->pager.failed = false; s->pager.started = s->pager.n > 0; nsx_load_more(s); break;
     case ACT_RETRY_TABLES: if (n->sname) { nsx_refresh_schema(s, n->sname); nsx_load_tables(s, n->sname); } break;
     case ACT_RETRY_SCOPE: nsx_refresh(s); break;
+    case ACT_CANCEL_TABLES: if (n->sname) { nsx_cancel_tables(s, n->sname); s->rev++; app_wake_in(a, 0); } break;
     }
 }
 
@@ -1842,6 +1873,13 @@ void explorer_dump(Explorer *e) {
         if (n->kind == NODE_FOLDER) printf("%c%s(%s)", n->expanded ? '-' : '+', n->label, n->detail ? n->detail : "0");
         else printf("%s", n->label);
     }
+    printf("\n"); fflush(stdout);
+}
+
+/* Test harness: every visible row ("explorerdump rows"): depth dots, then the label */
+void explorer_dump_rows(Explorer *e) {
+    printf("explorer rows");
+    for (int i = 0; i < e->nvis; i++) { Node *n = e->vis[i]; printf(" |"); for (int d = 0; d < n->depth; d++) putchar('.'); printf("%s", n->label); }
     printf("\n"); fflush(stdout);
 }
 
