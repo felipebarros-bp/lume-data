@@ -118,6 +118,9 @@ extern const DbDriver db_sqlite_driver;
 Db *db_open(const DbDriver *drv, const char *location, char *err, size_t errlen);
 /* Closes the driver connection and frees the Db. NULL is accepted. */
 void db_close(Db *db);
+/* Seconds a driver waits to reach its server (Settings > Query Execution > Timeouts, default 10).
+ * PostgreSQL, MySQL and SQL Server honour it; Oracle uses its client's own setting. */
+extern int db_connect_timeout_s;
 /* Frees a table array returned by list_tables, including any loaded columns. */
 void db_tables_free(DbTable *tables, int count);
 /* Frees an array returned by list_fks. */

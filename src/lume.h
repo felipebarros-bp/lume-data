@@ -135,6 +135,15 @@ typedef struct App {
     Panels *panels;             /* workspace shell: docking, panel bar, editor tabs (panels.h) */
     Output *output;             /* execution output (docs/execution-output.md) */
     bool continue_on_error;     /* script policy: run the remaining statements after a failure */
+    /* timeouts (Settings; settings.txt): 0 query = no limit */
+    int query_timeout_s;        /* each editor statement; cancelled when it runs longer */
+    int connect_timeout_s;      /* reaching the database server (PostgreSQL, MySQL, SQL Server) */
+    int ssh_timeout_s;          /* opening an SSH tunnel */
+    int explorer_timeout_s;     /* Explorer catalog reads (a connection's own value wins) */
+    int explorer_list_min;      /* listing one schema's tables */
+    int report_timeout_s;       /* each report query */
+    int git_timeout_min;        /* fetch / pull / push and other network git operations */
+    int git_clone_min;          /* clone */
     Menu *menu;                 /* menu bar */
     Completer *completer;       /* SQL autocompletion (complete.h) */
     ConnStore *conns;           /* saved connections (conn.h) */

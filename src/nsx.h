@@ -216,7 +216,10 @@ void nsx_load_tables(NsState *s, const char *name);
 void nsx_cancel_tables(NsState *s, const char *name);
 /* A schema's table listing is opened by the user and waits for large catalogs (all_tables on a
  * schema with many grants can take minutes); it still has a ceiling so a stuck read ends. */
-#define NSX_TABLES_BUDGET_MS (10 * 60 * 1000)
+#define NSX_TABLES_BUDGET_MS (10 * 60 * 1000)   /* default; Settings > Schema Explorer changes it */
+/* Settings > Schema Explorer: default catalog read timeout and the table-listing budget, in ms
+ * (values below 500 / 1000 are ignored). A connection's own timeout_ms (> 0) wins for reads. */
+void nsx_set_timeouts(int read_ms, int tables_ms);
 void nsx_discover(NsState *s);                      /* opt-in bounded discovery */
 /* loaded names, featured first, newline separated (Copy Loaded Names); returns the count */
 int nsx_copy_loaded(NsState *s, char *out, int n);

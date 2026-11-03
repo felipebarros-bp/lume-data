@@ -1,0 +1,12 @@
+# Settings > Query Execution: a statement that passes the query timeout is cancelled (settings.txt sets 2 s)
+wait 500
+click 700 300
+key cmd+a
+type WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c LIMIT 2000000000) SELECT count(*) AS n FROM c;
+key cmd+Return
+wait 5000
+key cmd+a
+type SELECT 42 AS answer;
+key cmd+Return
+wait 800
+quit

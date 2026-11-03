@@ -71,7 +71,7 @@
 #define MAX_DATA 96
 #define ROW_PT 34.0f
 #define GAP_PT 10.0f
-#define QUERY_TIMEOUT_S 30
+#define QUERY_TIMEOUT_S 30   /* default; Settings > Reports changes it (App.report_timeout_s) */
 #define MAX_ROWS 10000
 
 enum { RD_QUEUED, RD_RUNNING, RD_OK, RD_ERROR, RD_TIMEOUT, RD_CANCELLED };
@@ -440,10 +440,11 @@ static void start_next(App *a) {
             /* the compiled query goes through the policy too (defense in depth); a user's SQL table always does */
             if (!sqlguard_check(x->sql, dial, why, sizeof why)) { x->status = RD_ERROR; snprintf(x->err, sizeof x->err, "refused by the read-only policy: %s", why); audit(a, "validate_query_policy", d, "refused", 0, ""); continue; }
             char note[300];
-            G.nst = sqlguard_wrap(dial, x->sql, G.timeout_s, G.stmts, 6, &G.res, &G.fin, note, sizeof note);
+            int lim = G.timeout_s > 0 ? G.timeout_s : a->report_timeout_s > 0 ? a->report_timeout_s : QUERY_TIMEOUT_S;   /* harness override, else Settings */
+            G.nst = sqlguard_wrap(dial, x->sql, lim, G.stmts, 6, &G.res, &G.fin, note, sizeof note);
             G.job = exec_start_list(c->db, (const char *const *)G.stmts, G.nst, MAX_ROWS, true, G.fin);
             if (!G.job) { sqlguard_free(G.stmts, G.nst); G.nst = 0; return; }   /* session busy: try again next frame */
-            G.job_doc = d; G.job_slot = i; snprintf(G.job_conn, sizeof G.job_conn, "%s", x->conn); G.job_t0 = now_s(); G.job_timeout = G.timeout_s;   /* the limit in force when it started */
+            G.job_doc = d; G.job_slot = i; snprintf(G.job_conn, sizeof G.job_conn, "%s", x->conn); G.job_t0 = now_s(); G.job_timeout = lim;   /* the limit in force when it started */
             x->status = RD_RUNNING; d->queries++;
             G.out_exec = output_obj_begin(a->output, a, c, "Report query (read-only)", G.nst);
             output_obj_event(a->output, a, c, G.out_exec, 0, OL_INFO, note, NULL);
@@ -3675,7 +3676,9 @@ theme_done:
         if (v->ai_sql) add_step("propose_sql_query", ST_DONE, sql, "%s %s: %s (SQL written by the AI from the shared schema: NOT certified; checked locally, no rows read)", rpt_kind_name(v->kind), v->id, v->title[0] ? v->title : "SQL");
         else add_step("propose_sql_query", ST_DONE, sql, "%s %s: %s%s%s%s%s (compiled by Lume from the catalog)", rpt_kind_name(v->kind), v->id, md ? md->name : v->metric, v->dim[0] ? " by " : "", v->dim, v->grain >= 0 ? " per " : "", v->grain >= 0 ? sem_grain_name(v->grain) : "");
         bool ok = sqlguard_check(sql, dialect_of_conn(a, conn), why, sizeof why);
-        add_step("validate_query_policy", ok ? ST_OK : ST_REFUSED, NULL, "%s: %s", v->id, ok ? (v->ai_sql ? "read-only, one statement, read-only transaction, timeout 30 s, max 10000 rows" : "read-only, one statement, catalog columns only, timeout 30 s, max 10000 rows") : why);
+        int lim_s = G.timeout_s > 0 ? G.timeout_s : a->report_timeout_s > 0 ? a->report_timeout_s : QUERY_TIMEOUT_S;
+        char pol[160]; snprintf(pol, sizeof pol, "read-only, one statement, %s, timeout %d s, max 10000 rows", v->ai_sql ? "read-only transaction" : "catalog columns only", lim_s);
+        add_step("validate_query_policy", ok ? ST_OK : ST_REFUSED, NULL, "%s: %s", v->id, ok ? pol : why);
         if (!ok) continue;
         RvData *have = find_data(d, conn, sql);
         add_step("execute_readonly_query", have && have->status == RD_OK ? ST_CACHED : ST_PENDING, NULL, "%s: %s", v->id, have && have->status == RD_OK ? "already loaded: no new query" : "runs after your approval");
@@ -4668,7 +4671,7 @@ static void inv(void *ud, const LumeCtx *c) {
     else if (what == 6) { load_catalog(a); app_status(a, "Semantic catalog reloaded: %d metric(s)%s%s", G.cat.nm, G.cat.err[0] ? " - " : "", G.cat.err); }
 }
 void rptview_init(App *a) {
-    G.a = a; G.timeout_s = QUERY_TIMEOUT_S; G.qpos = -1;
+    G.a = a; G.timeout_s = 0; G.qpos = -1;   /* 0: Settings > Reports */
     ag_ctx_default(&G.cx);
     conn_add_close_hook(on_close_conn);
     panels_add_module("lume.reports", as_module_init);
@@ -4764,7 +4767,7 @@ void rptview_cmd(App *a, const char *arg) {
     if (!strcmp(op, "open")) { char p[1024] = "", m[16] = ""; sscanf(rest, "%1023s %15s", p, m); open_report(a, p, !strcmp(m, "read")); return; }
     if (!strcmp(op, "catalog")) { load_catalog(a); return; }
     if (!strcmp(op, "fromresult")) { new_from_result(a); return; }
-    if (!strcmp(op, "timeout")) { G.timeout_s = atoi(rest) > 0 ? atoi(rest) : QUERY_TIMEOUT_S; return; }
+    if (!strcmp(op, "timeout")) { G.timeout_s = atoi(rest) > 0 ? atoi(rest) : 0; return; }   /* 0: back to Settings */
     if (!strcmp(op, "ai")) {
         char sub[32] = "", r2[900] = ""; sscanf(rest, "%31s %899[^\n]", sub, r2);
         if (!strcmp(sub, "ask")) { textfield_set(&G.q, r2); G.choice[0] = 0; ai_send(a, d); }

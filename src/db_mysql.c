@@ -107,7 +107,7 @@ static void split_location(const char *loc, MyConn *c) {
 static MYSQL *connect_with(MyConn *c, char *err, size_t n) {
     MYSQL *m = my.init(NULL);
     if (!m) { snprintf(err, n, "out of memory"); return NULL; }
-    unsigned timeout = 10;
+    unsigned timeout = db_connect_timeout_s > 0 ? (unsigned)db_connect_timeout_s : 10;
     my.options(m, 0 /* MYSQL_OPT_CONNECT_TIMEOUT */, &timeout);
     if (!my.real_connect(m, c->host[0] ? c->host : "127.0.0.1", c->user, c->pass, c->dbname[0] ? c->dbname : NULL, c->port, NULL, 0)) {
         snprintf(err, n, "%s", my.error(m)); my.close(m); return NULL;

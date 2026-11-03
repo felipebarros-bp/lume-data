@@ -182,12 +182,14 @@ static void job_free(Job *j) {
     gitc_out_free(&j->out); gitc_out_free(&j->r_status); gitc_out_free(&j->r_name); gitc_out_free(&j->r_email); gitc_out_free(&j->r_remote);
     memset(j, 0, sizeof *j);
 }
+static int g_net_ms = 120000, g_clone_ms = 30 * 60 * 1000;
+void gitview_set_timeouts(int net_ms, int clone_ms) { if (net_ms >= 10000) g_net_ms = net_ms; if (clone_ms >= 60000) g_clone_ms = clone_ms; }
 static bool busy_op(void) { for (int i = 0; i < MAX_JOBS; i++) if (G.jobs[i].used && !G.jobs[i].refresh) return true; return false; }
 static Job *job_new(const char *logical, JobDone done) {
     Repo *r = cur_repo();
     for (int i = 0; i < MAX_JOBS; i++) if (!G.jobs[i].used) {
         Job *j = &G.jobs[i]; memset(j, 0, sizeof *j); j->used = true;
-        snprintf(j->logical, sizeof j->logical, "%s", logical); j->done = done; j->timeout_ms = 120000;
+        snprintf(j->logical, sizeof j->logical, "%s", logical); j->done = done; j->timeout_ms = g_net_ms;
         if (r) snprintf(j->cwd, sizeof j->cwd, "%s", r->root);
         return j;
     }
@@ -491,7 +493,7 @@ static void do_clone(App *a, const char *url, const char *dest) {
         if (!empty) { say(true, "%s is not empty: choose a new or empty folder", dest); return; }
     }
     Job *j = op("git.clone", "Clone"); if (!j) return;
-    j->done = clone_done; snprintf(j->arg, sizeof j->arg, "%s", dest); j->iarg = !existed; j->timeout_ms = 30 * 60 * 1000;
+    j->done = clone_done; snprintf(j->arg, sizeof j->arg, "%s", dest); j->iarg = !existed; j->timeout_ms = g_clone_ms;
     j->cwd[0] = 0;
     job_args(j, "clone", "--", url, dest, NULL);
     job_start(a, j);

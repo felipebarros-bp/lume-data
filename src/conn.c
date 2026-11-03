@@ -57,8 +57,10 @@ static const FieldSpec mysql_fields[] = {
 /* SQLite location: the database file path as typed (":memory:" for an in-memory db). */
 static void sqlite_location(const Connection *c, char *buf, size_t n) { snprintf(buf, n, "%s", conn_value(c, "path")); }
 
+int conn_ssh_timeout_s = 20;
+
 /* PostgreSQL location: a libpq conninfo string ("host='h' port='5432' ..."), with quotes and
- * backslashes escaped, plus fixed options (UTF-8, application name, 10 s connect timeout).
+ * backslashes escaped, plus fixed options (UTF-8, application name) and the connect timeout from Settings.
  * Empty fields are left out so libpq applies its own defaults. */
 static void pg_location(const Connection *c, char *buf, size_t n) {
     /* libpq conninfo; values with spaces or quotes are quoted */
@@ -73,7 +75,7 @@ static void pg_location(const Connection *c, char *buf, size_t n) {
         for (const char *q = v; *q && p < n - 3; q++) { if (*q == '\'' || *q == '\\') buf[p++] = '\\'; buf[p++] = *q; }
         p += snprintf(buf + p, n - p, "' "); if (p >= n) p = n - 1;
     }
-    snprintf(buf + p, n - p, "client_encoding='UTF8' application_name='Lume' connect_timeout='10'");
+    snprintf(buf + p, n - p, "client_encoding='UTF8' application_name='Lume' connect_timeout='%d'", db_connect_timeout_s > 0 ? db_connect_timeout_s : 10);
 }
 
 /* Oracle location: "user\npassword\n//host:port/service", the three-line format that
@@ -619,7 +621,7 @@ Db *conn_open(const Connection *c, struct SshTunnel **tun, char *err, size_t err
         const char *dh = conn_value(c, "host"); int dp = atoi(conn_value(c, "port"));
         SshSpec sp = { c->ssh_host, c->ssh_user, c->ssh_key, atoi(c->ssh_port), c->ssh_trust };
         int lport = 0;
-        *tun = sshtun_open(&sp, dh, dp, 20, &lport, err, errlen);
+        *tun = sshtun_open(&sp, dh, dp, conn_ssh_timeout_s, &lport, err, errlen);
         if (!*tun) return NULL;
         Connection *via = malloc(sizeof *via);
         if (!via) { sshtun_close(*tun); *tun = NULL; snprintf(err, errlen, "out of memory"); return NULL; }

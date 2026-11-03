@@ -15,6 +15,28 @@ key cmd+a
 type 2000
 button "Apply"
 wait 20
+clickon "settings:qtimeout#2"
+wait 20
+clickon "settings:sec Connections"
+wait 30
+clickon "settings:ctimeout#1"
+wait 20
+clickon "settings:sshtimeout#2"
+wait 20
+shot __OUT__/settings_connections.bmp
+clickon "settings:sec Schema Explorer"
+wait 30
+clickon "settings:etimeout#2"
+wait 20
+clickon "settings:elist#2"
+wait 20
+shot __OUT__/settings_explorer.bmp
+clickon "settings:sec Source Control"
+wait 30
+clickon "settings:gtimeout#1"
+wait 20
+clickon "settings:gclone#2"
+wait 20
 clickon "settings:sec Results & Format"
 wait 30
 clickon "settings:group"
@@ -25,6 +47,8 @@ clickon "settings:tabs"
 wait 20
 clickon "settings:sec Reports"
 wait 30
+clickon "settings:rtimeout#1"
+wait 20
 shot __OUT__/settings_reports.bmp
 clickon "settings:sec Lume Intelligence"
 wait 30

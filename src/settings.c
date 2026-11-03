@@ -20,8 +20,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { SEC_GENERAL, SEC_APPEARANCE, SEC_EDITOR, SEC_QUERY, SEC_RESULTS, SEC_REPORTS, SEC_GIT, SEC_INTELLIGENCE, SEC_PRIVACY, SEC_N };
-static const char *const SEC_NAME[SEC_N] = { "General", "Appearance", "Editor", "Query Execution", "Results & Format", "Reports", "Source Control", "Lume Intelligence", "Privacy" };
+enum { SEC_GENERAL, SEC_APPEARANCE, SEC_EDITOR, SEC_CONN, SEC_QUERY, SEC_RESULTS, SEC_EXPLORER, SEC_REPORTS, SEC_GIT, SEC_INTELLIGENCE, SEC_PRIVACY, SEC_N };
+static const char *const SEC_NAME[SEC_N] = { "General", "Appearance", "Editor", "Connections", "Query Execution", "Results & Format", "Schema Explorer", "Reports", "Source Control", "Lume Intelligence", "Privacy" };
 static struct {
     bool open; int sec; Input stash; bool stashed; float scroll, content_h; ScrollBar sb; int prev_focus;
     TextField f_fetch, f_hist; int field;   /* 1 fetch size, 2 history */
@@ -108,9 +108,18 @@ static int seg(App *a, float x, float *y, float w, const char *label, const char
     ui_label(a, rect_make(x, *y, w, px(a, 18)), label, ALIGN_LEFT, T_TEXT_MUTED); *y += px(a, 20);
     float sw = fminf(w, px(a, 110) * (float)n);
     Rect r = rect_make(x, *y, sw, px(a, 28)); ui_record(tag, r);
+    float ew = (r.w - px(a, 4)) / (float)n;   /* each choice as "<tag>#<i>" (the harness picks one; same layout as ui_segmented) */
+    for (int i = 0; i < n; i++) { char t[64]; snprintf(t, sizeof t, "%s#%d", tag, i); ui_record(t, rect_make(r.x + px(a, 2) + (float)i * ew, r.y + px(a, 2), ew, r.h - px(a, 4))); }
     int k = ui_segmented(a, r, opts, n, cur);
     *y += px(a, 36);
     return k >= 0 && k != cur ? k : -1;
+}
+/* seg over values: returns the value picked (another one), or -1. A value set by hand in
+ * settings.txt that is not among the choices shows with nothing selected. */
+static int segv(App *a, float x, float *y, float w, const char *label, const char *const *opts, const int *vals, int n, int cur, const char *tag) {
+    int c = -1; for (int i = 0; i < n; i++) if (vals[i] == cur) c = i;
+    int k = seg(a, x, y, w, label, opts, n, c, tag);
+    return k >= 0 ? vals[k] : -1;
 }
 static bool chk(App *a, float x, float *y, float w, const char *label, bool v, const char *tag) {
     Rect r = rect_make(x, *y, w, px(a, 22)); ui_record(tag, r);
@@ -189,10 +198,35 @@ static void sec_query(App *a, float x, float *py, float w) {
     static const char *const bud[] = { "64 MB", "256 MB", "1 GB", "4 GB" }; static const int bv[] = { 64, 256, 1024, 4096 };
     int cb = -1; for (int i = 0; i < 4; i++) if (a->results_budget_mb == bv[i]) cb = i;
     int k = seg(a, x, &y, w, "Memory for results (older tabs give their rows back first)", bud, 4, cb, "settings:budget"); if (k >= 0) a->results_budget_mb = bv[k];
+    HEAD("Timeout");
+    { static const char *const o[] = { "No limit", "30 s", "5 min", "30 min" }; static const int v[] = { 0, 30, 300, 1800 };
+      int k = segv(a, x, &y, w, "Each statement in the editor; past it the execution is cancelled, as with Stop", o, v, 4, a->query_timeout_s, "settings:qtimeout"); if (k >= 0) a->query_timeout_s = k; }
     HEAD("Scripts");
     if (chk(a, x, &y, w, "Continue after an error (otherwise the script stops at the first failing statement)", a->continue_on_error, "settings:continue")) a->continue_on_error = !a->continue_on_error;
     HEAD("Protection");
     NOTE("Always on, per connection (Edit connection > environment and read-only): on PROD, SQL that may write or a script of several statements asks first; read-only connections refuse writes; Explain Analyze of a write is refused on PROD / read-only.");
+    *py = y;
+}
+static void sec_connections(App *a, float x, float *py, float w) {
+    float y = *py;
+    HEAD("Timeouts");
+    { static const char *const o[] = { "10 s", "30 s", "1 min", "2 min" }; static const int v[] = { 10, 30, 60, 120 };
+      int k = segv(a, x, &y, w, "Reaching the database server", o, v, 4, a->connect_timeout_s, "settings:ctimeout"); if (k >= 0) a->connect_timeout_s = k; }
+    NOTE("PostgreSQL, MySQL / MariaDB and SQL Server. Oracle uses its client's own setting (sqlnet.ora). Applies to the next connect.");
+    { static const char *const o[] = { "20 s", "1 min", "2 min" }; static const int v[] = { 20, 60, 120 };
+      int k = segv(a, x, &y, w, "Opening an SSH tunnel", o, v, 3, a->ssh_timeout_s, "settings:sshtimeout"); if (k >= 0) a->ssh_timeout_s = k; }
+    NOTE("Connections themselves (host, user, SSH, environment, read-only) are edited from the Explorer: Edit connection.");
+    *py = y;
+}
+static void sec_explorer(App *a, float x, float *py, float w) {
+    float y = *py;
+    HEAD("Timeouts");
+    { static const char *const o[] = { "5 s", "15 s", "30 s", "2 min" }; static const int v[] = { 5, 15, 30, 120 };
+      int k = segv(a, x, &y, w, "Reading the catalog (columns, indexes, properties, search)", o, v, 4, a->explorer_timeout_s, "settings:etimeout"); if (k >= 0) a->explorer_timeout_s = k; }
+    { static const char *const o[] = { "2 min", "10 min", "30 min", "1 h" }; static const int v[] = { 2, 10, 30, 60 };
+      int k = segv(a, x, &y, w, "Listing a schema's tables", o, v, 4, a->explorer_list_min, "settings:elist"); if (k >= 0) a->explorer_list_min = k; }
+    NOTE("While a listing runs, the schema shows Loading\xE2\x80\xA6 with the seconds elapsed and a Cancel; it uses the connection's session, so the editor waits for it.");
+    NOTE("The tree's own options (what is shown, page size, pinned schemas) are per connection: the Explorer's Options menu.");
     *py = y;
 }
 static void sec_results(App *a, float x, float *py, float w) {
@@ -223,6 +257,9 @@ static void sec_reports(App *a, float x, float *py, float w) {
     int cur = !strcmp(a->report_locale, "en-US") ? 1 : 0;
     int k = seg(a, x, &y, w, "Language and number / date format of new reports (each report keeps its own)", lc, 2, cur, "settings:rlocale"); if (k >= 0) snprintf(a->report_locale, sizeof a->report_locale, "%s", k ? "en-US" : "pt-BR");
     NOTE("The look of new reports comes from the workspace theme (Brand Kit) when there is one: Report > Theme.");
+    HEAD("Timeout");
+    { static const char *const o[] = { "30 s", "2 min", "10 min" }; static const int v[] = { 30, 120, 600 };
+      int k = segv(a, x, &y, w, "Each report query (read-only); past it the query is cancelled and the visual shows the timeout", o, v, 3, a->report_timeout_s, "settings:rtimeout"); if (k >= 0) a->report_timeout_s = k; }
     *py = y;
 }
 static void sec_git(App *a, float x, float *py, float w) {
@@ -230,6 +267,11 @@ static void sec_git(App *a, float x, float *py, float w) {
     HEAD("Pull");
     static const char *const pm[] = { "Fast-forward only", "Merge", "Rebase" };
     int k = seg(a, x, &y, w, "Strategy", pm, 3, gitview_pull_mode(a), "settings:pull"); if (k >= 0) gitview_set_pull_mode(a, k);
+    HEAD("Timeouts");
+    { static const char *const o[] = { "2 min", "10 min", "30 min" }; static const int v[] = { 2, 10, 30 };
+      int k = segv(a, x, &y, w, "Fetch, pull, push and other operations on the remote", o, v, 3, a->git_timeout_min, "settings:gtimeout"); if (k >= 0) a->git_timeout_min = k; }
+    { static const char *const o[] = { "30 min", "1 h", "2 h" }; static const int v[] = { 30, 60, 120 };
+      int k = segv(a, x, &y, w, "Clone", o, v, 3, a->git_clone_min, "settings:gclone"); if (k >= 0) a->git_clone_min = k; }
     HEAD("Identity");
     char m[400]; snprintf(m, sizeof m, "Commits as %s. Lume reads it from git config and never changes it (git config user.name / user.email).", gitview_identity());
     NOTE(m);
@@ -279,7 +321,9 @@ void settings_draw(App *a) {
     case SEC_GENERAL: sec_general(a, x, &y, w); break;
     case SEC_APPEARANCE: sec_appearance(a, x, &y, w); break;
     case SEC_EDITOR: sec_editor(a, x, &y, w); break;
+    case SEC_CONN: sec_connections(a, x, &y, w); break;
     case SEC_QUERY: sec_query(a, x, &y, w); break;
+    case SEC_EXPLORER: sec_explorer(a, x, &y, w); break;
     case SEC_RESULTS: sec_results(a, x, &y, w); break;
     case SEC_REPORTS: sec_reports(a, x, &y, w); break;
     case SEC_GIT: sec_git(a, x, &y, w); break;

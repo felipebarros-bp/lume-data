@@ -304,8 +304,14 @@ static uint64_t fnv(uint64_t h, const char *s) { for (; *s; s++) { h ^= (unsigne
 static NsState *reg[64]; static int nreg;
 static char prefs_dir[1024];
 
+/* Settings > Schema Explorer: catalog reads and a schema's table listing, for every connection */
+static int g_read_ms = 5000, g_tables_ms = NSX_TABLES_BUDGET_MS;
+void nsx_set_timeouts(int read_ms, int tables_ms) {
+    if (read_ms >= 500) g_read_ms = read_ms;
+    if (tables_ms >= 1000) g_tables_ms = tables_ms;
+}
 static void prefs_default(NsPrefs *p) {
-    p->mode = NSM_COMPACT; p->auto_cap = 20; p->page_size = 100; p->timeout_ms = 5000; p->kinds = NSK_ALL;
+    p->mode = NSM_COMPACT; p->auto_cap = 20; p->page_size = 100; p->timeout_ms = 0; p->kinds = NSK_ALL;
     p->show_system = false; p->auto_recent = true; p->auto_known = true; p->discover = false;
 }
 static NsState *state_new(const char *conn_id) {
@@ -414,7 +420,7 @@ void nsx_load(void) {
         if (!strcmp(k, "mode")) p->mode = !strcmp(v, "all") ? NSM_ALL : !strcmp(v, "pinned") ? NSM_PINNED : NSM_COMPACT;
         else if (!strcmp(k, "auto_cap")) p->auto_cap = atoi(v);
         else if (!strcmp(k, "page_size")) p->page_size = atoi(v) >= 10 ? atoi(v) : 100;
-        else if (!strcmp(k, "timeout_ms")) p->timeout_ms = atoi(v) >= 500 ? atoi(v) : 5000;
+        else if (!strcmp(k, "timeout_ms")) p->timeout_ms = atoi(v) >= 500 && atoi(v) != 5000 ? atoi(v) : 0;   /* 5000: the old fixed default, now Settings' */
         else if (!strcmp(k, "kinds")) p->kinds = atoi(v) & NSK_ALL ? atoi(v) & NSK_ALL : NSK_ALL;
         else if (!strcmp(k, "system")) p->show_system = atoi(v) != 0;
         else if (!strcmp(k, "auto_recent")) p->auto_recent = atoi(v) != 0;
@@ -430,12 +436,13 @@ void nsx_load(void) {
 /* ---- requests ---- */
 
 static int req_timeout(NsState *s, int kind) {
+    int read = s->prefs.timeout_ms > 0 ? s->prefs.timeout_ms : g_read_ms;   /* a connection's own value wins */
     switch (kind) {
     case NSR_COUNT: return 2000;                 /* only when cheap: past its budget the count stays unknown */
     case NSR_DISCOVER: return 10000;
-    case NSR_TABLES: return s->prefs.timeout_ms > NSX_TABLES_BUDGET_MS ? s->prefs.timeout_ms : NSX_TABLES_BUDGET_MS;
-    case NSR_SCOPE: case NSR_NAMES: return s->prefs.timeout_ms > 5000 ? s->prefs.timeout_ms : 5000;
-    default: return s->prefs.timeout_ms;
+    case NSR_TABLES: return read > g_tables_ms ? read : g_tables_ms;
+    case NSR_SCOPE: case NSR_NAMES: return read > 5000 ? read : 5000;
+    default: return read;
     }
 }
 /* queues a request unless an identical one is queued or running (coalescing, DBX-119) */
@@ -728,7 +735,7 @@ void nsx_set_option(NsState *s, const char *k, int v) {
     NsPrefs *p = &s->prefs;
     if (!strcmp(k, "auto_cap")) p->auto_cap = v < 0 ? 0 : v > 200 ? 200 : v;
     else if (!strcmp(k, "page_size")) p->page_size = v < 10 ? 10 : v > 1000 ? 1000 : v;
-    else if (!strcmp(k, "timeout_ms")) p->timeout_ms = v < 500 ? 500 : v > 120000 ? 120000 : v;
+    else if (!strcmp(k, "timeout_ms")) p->timeout_ms = v <= 0 ? 0 : v < 500 ? 500 : v > 120000 ? 120000 : v;   /* 0: follow Settings */
     else if (!strcmp(k, "auto_recent")) p->auto_recent = v != 0;
     else if (!strcmp(k, "auto_known")) p->auto_known = v != 0;
     else if (!strcmp(k, "discover")) { p->discover = v != 0; if (p->discover && s->scope_known) nsx_discover(s); }

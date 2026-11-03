@@ -163,6 +163,7 @@ bool conn_load_columns(Connection *c, DbTable *t);
  * sshtun_close after db_close; NULL otherwise). Blocking. The location (which may hold the password)
  * is built and wiped here, never logged. */
 Db *conn_open(const Connection *c, struct SshTunnel **tun, char *err, size_t errlen);
+extern int conn_ssh_timeout_s;   /* opening an SSH tunnel (Settings, default 20) */
 /* Whether the driver can go through an SSH tunnel (it has host and port fields). */
 bool conn_supports_ssh(const DriverInfo *d);
 /* Opens and closes immediately; for the dialog's Test button. */

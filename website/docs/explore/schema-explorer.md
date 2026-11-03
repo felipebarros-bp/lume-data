@@ -47,7 +47,7 @@ Pinning or moving a schema never touches your open tabs.
 
 A schema's table list shows its first 5,000 tables and views; beyond that it says so and points to **Find Objects...**.
 
-On a large database, listing a schema's tables can take a while (Oracle checks your grants on every table). The schema shows **Loading... 12 s** while it works, and keeps waiting for up to 10 minutes. Click **Cancel** under the schema to stop it; it then says **Listing cancelled** with **Retry**. While the list loads, the connection's session is busy: running a query in the editor on the same connection asks you to wait or cancel the listing.
+On a large database, listing a schema's tables can take a while (Oracle checks your grants on every table). The schema shows **Loading... 12 s** while it works, and keeps waiting for up to 10 minutes (change it in [Settings > Schema Explorer](../settings.md#schema-explorer)). Click **Cancel** under the schema to stop it; it then says **Listing cancelled** with **Retry**. While the list loads, the connection's session is busy: running a query in the editor on the same connection asks you to wait or cancel the listing.
 
 ## Views, routines and other objects
 

@@ -25,6 +25,10 @@
 #define DLSYM(h, s) ((void *)GetProcAddress((HMODULE)(h), s))
 #else
 #include <dlfcn.h>
+
+/* db.h: defined here, not in db.c, because every build of the network drivers links db_pg.c and
+ * some (NO_SQLITE) leave db.c out */
+int db_connect_timeout_s = 10;
 #define DLOPEN(p) dlopen(p, RTLD_NOW | RTLD_LOCAL)
 #define DLSYM(h, s) dlsym(h, s)
 #endif

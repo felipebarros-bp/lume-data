@@ -241,6 +241,22 @@ int main(void) {
     nsx_featured(s);
     EXPECT(nsx_is_featured(s, "USR_000001") && (nsx_featured_flags(s, "USR_000001") & NSF_AUTO), "DBX-086: a schema with objects found by a probe may be auto-highlighted");
 
+    {   /* Settings > Schema Explorer: catalog reads and the table listing follow Settings; a connection's own value wins */
+        nsx_set_timeouts(15000, 30 * 60 * 1000);
+        nsx_probe(s, "USR_000003");
+        const NsReq *q = nsx_next_request(s, now);
+        EXPECT(q && q->kind == NSR_PROBE && q->timeout_ms == 15000, "a catalog read follows Settings (%d ms)", q ? q->timeout_ms : 0);
+        nsx_complete(s, NULL, NULL, true, false, 1, now); drain(s, &now);   /* the peeked request ends (cancelled) */
+        nsx_set_option(s, "timeout_ms", 8000);
+        nsx_probe(s, "USR_000004"); q = nsx_next_request(s, now);
+        EXPECT(q && q->timeout_ms == 8000, "a connection's own read timeout wins over Settings (%d ms)", q ? q->timeout_ms : 0);
+        nsx_complete(s, NULL, NULL, true, false, 1, now); drain(s, &now);   /* the peeked request ends (cancelled) */
+        nsx_set_option(s, "timeout_ms", 0);
+        nsx_load_tables(s, "USR_000005"); q = nsx_next_request(s, now);
+        EXPECT(q && q->kind == NSR_TABLES && q->timeout_ms == 30 * 60 * 1000, "a schema's table listing follows Settings (%d ms)", q ? q->timeout_ms : 0);
+        nsx_complete(s, NULL, NULL, true, false, 1, now); drain(s, &now);   /* the peeked request ends (cancelled) */
+        nsx_set_timeouts(5000, NSX_TABLES_BUDGET_MS);
+    }
     /* tables of a schema (DBX-090) */
     nsx_load_tables(s, "USR_000001"); drain(s, &now);
     in = nsx_info(s, "USR_000001", false);

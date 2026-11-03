@@ -79,6 +79,7 @@ typedef struct OutJob {
     SqlStmt dparts[64]; int ndparts;   /* statements of display, matched by index */
     char *export_path;           /* Execute to File: the first result is written there, or NULL */
     const void *editor;          /* the query tab's editor that started it (compared, never dereferenced) */
+    int timed_cur; double timed_t0; bool timed_out;   /* query timeout: statement watched, when it was first seen running (monotonic s), cancelled by it */
 } OutJob;
 #define OUT_MAX_JOBS 8
 
@@ -490,6 +491,15 @@ static void statement_done(Output *o, App *a, OutJob *oj, OutLog *l, int i) {
 /* Drains one job: statements finished since the last frame go to its log; when the worker is
  * done, records the transaction change, closes the execution, appends history, refreshes the
  * explorer after DDL / DML and frees the job. Returns true when the job is over (slot free). */
+static double now_s(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec + ts.tv_nsec / 1e9; }
+/* "30 s", "5 min", "1 h 30 min" */
+static const char *fmt_secs(int s) {
+    static char b[32];
+    if (s < 60 || s % 60) snprintf(b, sizeof b, "%d s", s);
+    else if (s < 3600 || s % 3600) snprintf(b, sizeof b, s >= 3600 ? "%d h %d min" : "%d min", s >= 3600 ? s / 3600 : s / 60, (s % 3600) / 60);
+    else snprintf(b, sizeof b, "%d h", s / 3600);
+    return b;
+}
 static bool pump_job(Output *o, App *a, OutJob *oj) {
     ExecJob *j = oj->j;
     OutLog *l = job_log(o, oj);
@@ -500,7 +510,22 @@ static bool pump_job(Output *o, App *a, OutJob *oj) {
     while ((i = exec_next_done(j)) >= 0) { emit_started(o, oj, l, i); statement_done(o, a, oj, l, i); o->dirty = true; }
     int cur = __atomic_load_n(&j->cur, __ATOMIC_SEQ_CST);
     if (cur >= 0 && cur < j->n) emit_started(o, oj, l, cur);
-    if (exec_running(j)) { app_wake_in(a, 100); return false; }
+    if (exec_running(j)) {
+        /* Settings > Query Execution: each statement gets query_timeout_s, timed from when this
+         * thread first sees it running; past it the execution is cancelled like Stop */
+        if (a->query_timeout_s > 0 && !exec_cancelling(j) && cur >= 0 && cur < j->n) {
+            double t = now_s();
+            if (cur != oj->timed_cur || oj->timed_t0 <= 0) { oj->timed_cur = cur; oj->timed_t0 = t; }
+            else if (t - oj->timed_t0 > a->query_timeout_s) {
+                oj->timed_out = true;
+                char m[200]; snprintf(m, sizeof m, "Statement %d ran longer than the query timeout (%s, Settings > Query Execution): cancelling", cur + 1, fmt_secs(a->query_timeout_s));
+                outlog_push(l, j->exec_id, cur + 1, OT_DB_MESSAGE, OL_WARNING, m);
+                LOG_W("execution %d: statement %d passed the query timeout (%d s): cancel requested", j->exec_id, cur + 1, a->query_timeout_s);
+                exec_cancel(j); o->dirty = true;
+            }
+        }
+        app_wake_in(a, 100); return false;
+    }
     /* finished: transaction state is read from the driver now that the connection is free */
     Db *db = j->db;
     int tx = db->drv->tx_state ? db->drv->tx_state(db) : -1;
@@ -511,7 +536,7 @@ static bool pump_job(Output *o, App *a, OutJob *oj) {
     int overall = exec_overall(j);
     outlog_exec_finish(l, j->exec_id, overall, exec_elapsed_ms(j));
     history_append(o, a, l->session_name[0] ? l->session_name : "no connection", overall, exec_elapsed_ms(j), j->n, oj->display ? oj->display : j->text, oj->display ? (int)strlen(oj->display) : j->len);   /* parameters: the template only */
-    if (overall == ES_CANCELLED) { app_status(a, "Execution #%d on %s cancelled after %.1f s", j->exec_id, oj->conn_name, exec_elapsed_ms(j) / 1000.0); results_show_output(a->results, true); output_mark_seen(o, a); }
+    if (overall == ES_CANCELLED) { if (oj->timed_out) app_status(a, "Execution #%d on %s cancelled by the query timeout (%s, Settings > Query Execution)", j->exec_id, oj->conn_name, fmt_secs(a->query_timeout_s)); else app_status(a, "Execution #%d on %s cancelled after %.1f s", j->exec_id, oj->conn_name, exec_elapsed_ms(j) / 1000.0); results_show_output(a->results, true); output_mark_seen(o, a); }
     if (oj->touched_schema) explorer_refresh(a->explorer, a);
     app_execution_finished(a, db, j->exec_id, overall);
     exec_free(j); free(oj->display); free(oj->export_path);

@@ -30,4 +30,6 @@ void gitview_dump(App *a);
 bool gitview_idle(App *a);
 int gitview_pull_mode(App *a);                /* Settings: 0 fast-forward only, 1 merge, 2 rebase */
 void gitview_set_pull_mode(App *a, int m);
+/* Settings > Source Control: time allowed for network operations (fetch, pull, push...) and clone */
+void gitview_set_timeouts(int net_ms, int clone_ms);
 const char *gitview_identity(void);          /* read from git config; Lume never changes it */

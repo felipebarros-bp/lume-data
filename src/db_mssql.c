@@ -118,7 +118,6 @@ static bool ms_load(char *err, size_t n) {
 #undef L
     if (tds.init() != SUCCEED) { snprintf(err, n, "FreeTDS: dbinit failed"); tds.lib = NULL; return false; }
     tds.errhandle(on_err); tds.msghandle(on_msg);
-    tds.setlogintime(10);
     return true;
 }
 
@@ -127,6 +126,7 @@ static DBPROCESS *open_with(const char *loc, MsConn *c, char *err, size_t n) {
     char tmp[1024]; snprintf(tmp, sizeof tmp, "%s", loc);
     char *f[5] = { 0 }; int i = 0; char *s = tmp;
     while (i < 5) { f[i++] = s; char *nl = strchr(s, '\n'); if (!nl) break; *nl = 0; s = nl + 1; }
+    tds.setlogintime(db_connect_timeout_s > 0 ? db_connect_timeout_s : 10);   /* Settings may change it between connects */
     LOGINREC *lg = tds.login();
     tds.setlname(lg, f[2] ? f[2] : "", DBSETUSER);
     tds.setlname(lg, f[3] ? f[3] : "", DBSETPWD);

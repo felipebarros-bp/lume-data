@@ -42,7 +42,7 @@ Every card has **Como foi calculado?** ("how was this calculated?"): the source 
 
 ## Read-only by design
 
-Report queries are checked before they run: one statement, `SELECT` / `WITH` only, no writes, no functions with side effects. They then run inside a read-only transaction that is always rolled back (SQL Server has no such transaction; Lume says so, and a read-only login is recommended there). Each query has a 30-second timeout and returns at most 10,000 rows. Results are cached, so changing a chart's type, the theme or undoing never queries again.
+Report queries are checked before they run: one statement, `SELECT` / `WITH` only, no writes, no functions with side effects. They then run inside a read-only transaction that is always rolled back (SQL Server has no such transaction; Lume says so, and a read-only login is recommended there). Each query has a timeout (30 seconds by default; [Settings > Reports](../settings.md#reports)) and returns at most 10,000 rows. Results are cached, so changing a chart's type, the theme or undoing never queries again.
 
 ## Not available yet
 
