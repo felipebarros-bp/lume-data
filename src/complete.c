@@ -46,6 +46,8 @@ typedef struct { char *key; float count; double last; } Entry;
 struct Completer {
     DbTable *tables; int ntables;
     bool (*load_cols)(void *ctx, DbTable *t); void *load_ctx;
+    bool (*load_fks)(void *ctx, const char *table, DbFk **out, int *n);
+    DbFk **fks; int *nfks; unsigned char *fks_state;   /* per table: 0 not read, 1 read */
     Entry *ent; int nent, cap;      /* open addressing, linear probe */
     char path[1024];
     bool dirty;
@@ -408,6 +410,8 @@ Completer *complete_create(void) { return calloc(1, sizeof(Completer)); }
 void complete_destroy(Completer *c) {
     if (c->dirty) store_save(c);
     store_clear(c);
+    for (int i = 0; c->fks && i < c->ntables; i++) if (c->fks[i]) db_fks_free(c->fks[i], c->nfks[i]);
+    free(c->fks); free(c->nfks); free(c->fks_state);
     free(c);
 }
 
@@ -417,7 +421,10 @@ void complete_set_schema(Completer *c, DbTable *tables, int ntables, const char 
                          bool (*load_cols)(void *ctx, DbTable *t), void *ctx) {
     if (c->dirty) store_save(c);
     store_clear(c);
+    for (int i = 0; c->fks && i < c->ntables; i++) if (c->fks[i]) db_fks_free(c->fks[i], c->nfks[i]);
+    free(c->fks); free(c->nfks); free(c->fks_state); c->fks = NULL; c->nfks = NULL; c->fks_state = NULL;
     c->tables = tables; c->ntables = ntables;
+    if (ntables > 0) { c->fks = calloc((size_t)ntables, sizeof *c->fks); c->nfks = calloc((size_t)ntables, sizeof *c->nfks); c->fks_state = calloc((size_t)ntables, 1); }
     c->load_cols = load_cols; c->load_ctx = ctx;
     g_c = c;
     c->path[0] = 0;
@@ -430,6 +437,13 @@ void complete_set_schema(Completer *c, DbTable *tables, int ntables, const char 
         store_load(c);
     }
     SDL_free(pref);
+}
+
+void complete_set_fk_loader(Completer *c, bool (*load_fks)(void *ctx, const char *table, DbFk **out, int *n)) { c->load_fks = load_fks; }
+static void ensure_fks(Completer *c, int t) {
+    if (!c->fks || t < 0 || t >= c->ntables || c->fks_state[t]) return;
+    c->fks_state[t] = 1;
+    if (c->load_fks && !c->tables[t].is_view && !c->load_fks(c->load_ctx, c->tables[t].name, &c->fks[t], &c->nfks[t])) { c->fks[t] = NULL; c->nfks[t] = 0; c->fks_state[t] = 0; }   /* busy or failed: asked again next time */
 }
 
 /* Save the usage file once SAVE_DEBOUNCE_MS passed since the first unsaved change. Returns true
@@ -563,6 +577,65 @@ static void add_columns(Gen *g, int table, bool show_table) {
 }
 
 /* Add every table and view; usage includes a bonus for tables often joined with those in scope. */
+/* How a table is named in this statement: its alias, else its name without the schema. */
+static const char *qual_of(Scope *sc, Completer *c, int t) {
+    for (int i = 0; i < sc->naliases; i++) if (sc->aliases[i].table == t) return sc->aliases[i].alias;
+    const char *n = c->tables[t].name, *dot = strrchr(n, '.');
+    return dot ? dot + 1 : n;
+}
+static bool same_table(const char *fk_target, const char *name) {
+    const char *a = strrchr(fk_target, '.'), *b = strrchr(name, '.');
+    return !strcasecmp(fk_target, name) || !strcasecmp(a ? a + 1 : fk_target, b ? b + 1 : name);
+}
+/* "JOIN b ON |": the conditions linking b to the tables before it. Real foreign keys first (every
+ * pair of a composite key, either direction); then columns with exactly the same name that are a
+ * primary key on at least one side (no naming convention assumed). */
+static void add_join_conditions(Gen *g, Scope *sc, int joined) {
+    Completer *c = g->c;
+    char text[240], detail[96], done[24][240]; int nd = 0;
+    const char *qb = qual_of(sc, c, joined);
+    ensure_fks(c, joined);
+    for (int si = 0; si < sc->ntables; si++) {
+        int t = sc->tables[si]; if (t == joined) continue;
+        const char *qa = qual_of(sc, c, t);
+        ensure_fks(c, t);
+        for (int dir = 0; dir < 2; dir++) {   /* 0: joined -> t, 1: t -> joined */
+            int from = dir ? t : joined, to = dir ? joined : t;
+            const char *qf = dir ? qa : qb, *qt = dir ? qb : qa;
+            DbFk *f = c->fks ? c->fks[from] : NULL; int nf = c->nfks ? c->nfks[from] : 0;
+            for (int i = 0; i < nf; i++) {
+                if (!same_table(f[i].to_table, c->tables[to].name)) continue;
+                bool first = true; for (int q = 0; q < i; q++) if (f[q].name && f[i].name && !strcmp(f[q].name, f[i].name) && same_table(f[q].to_table, f[i].to_table)) first = false;
+                if (!first) continue;
+                size_t w = 0; int pairs = 0;
+                for (int q = i; q < nf && w < sizeof text - 8; q++) {
+                    bool same = q == i || (f[q].name && f[i].name && !strcmp(f[q].name, f[i].name));
+                    if (!same || !same_table(f[q].to_table, f[i].to_table)) continue;
+                    /* written with the joined table first: "b.x = a.y" */
+                    if (dir == 0) w += (size_t)snprintf(text + w, sizeof text - w, "%s%s.%s = %s.%s", pairs ? " AND " : "", qf, f[q].from_col, qt, f[q].to_col ? f[q].to_col : f[q].from_col);
+                    else w += (size_t)snprintf(text + w, sizeof text - w, "%s%s.%s = %s.%s", pairs ? " AND " : "", qt, f[q].to_col ? f[q].to_col : f[q].from_col, qf, f[q].from_col);
+                    pairs++;
+                }
+                snprintf(detail, sizeof detail, "foreign key%s%s%s", f[i].name && f[i].name[0] ? " " : "", f[i].name ? f[i].name : "", pairs > 1 ? " (composite)" : "");
+                if (nd < 24) snprintf(done[nd++], sizeof done[0], "%s", text);
+                add(g, text, detail, NULL, CAND_COLUMN, 3.0f);
+            }
+        }
+        /* same column name, a primary key on at least one side */
+        ensure_cols(c, &c->tables[joined]); ensure_cols(c, &c->tables[t]);
+        DbTable *B = &c->tables[joined], *A = &c->tables[t];
+        for (int i = 0; i < B->ncols; i++) for (int j = 0; j < A->ncols; j++) {
+            if (strcasecmp(B->cols[i].name, A->cols[j].name) || !(B->cols[i].pk || A->cols[j].pk)) continue;
+            if (B->cols[i].pk && A->cols[j].pk && !strcasecmp(B->cols[i].name, "id")) continue;   /* each table's own "id": not a relation */
+            snprintf(text, sizeof text, "%s.%s = %s.%s", qb, B->cols[i].name, qa, A->cols[j].name);
+            bool dup = false; for (int q = 0; q < nd; q++) if (strstr(done[q], text)) dup = true;
+            if (dup) continue;
+            snprintf(detail, sizeof detail, "same column name (key in %s)", A->cols[j].pk ? qa : qb);
+            add(g, text, detail, NULL, CAND_COLUMN, 1.0f);
+        }
+    }
+}
+
 static void add_tables(Gen *g) {
     char key[160];
     for (int i = 0; i < g->c->ntables; i++) {
@@ -683,6 +756,15 @@ int complete_query(Completer *c, const char *s, int len, int cursor, bool explic
         if (table >= 0) add_columns(&g, table, false);
     } else if (prev >= 0 && table_ctx) {
         add_tables(&g);
+    } else if (prev >= 0 && kw_is(s, &tk[prev], "ON") && sc.ntables >= 2) {
+        /* the table joined by this ON: the identifier after the closest JOIN before it */
+        int joined = -1;
+        for (int i = prev - 1; i >= 0 && joined < 0; i--) if (kw_is(s, &tk[i], "JOIN") && i + 1 < ntok && tk[i + 1].type == TK_IDENT) {
+            int j = i + 1; while (j + 2 < ntok && tk[j + 1].type == TK_DOT && tk[j + 2].type == TK_IDENT) j += 2;
+            joined = find_table(c, s + tk[i + 1].start, tk[j].end - tk[i + 1].start);
+        }
+        if (joined >= 0) add_join_conditions(&g, &sc, joined);
+        if (plen > 0 || explicit || !g.n) for (int i = 0; i < sc.ntables; i++) add_columns(&g, sc.tables[i], sc.ntables > 1);
     } else if (plen == 0 && !explicit && prev >= 0 && sc.ntables > 0 && expects_column(s, &tk[prev])) {
         /* "UPDATE t SET ", "WHERE ", "INSERT INTO t (": columns of the tables in scope */
         for (int i = 0; i < sc.ntables; i++) add_columns(&g, sc.tables[i], sc.ntables > 1);

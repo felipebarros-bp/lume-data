@@ -27,13 +27,14 @@
 #include <stdint.h>
 
 typedef struct SxCol { char *name, *type, *comment; bool pk, notnull; } SxCol;
-typedef struct SxFk { char *cols, *ref_table; int ref; } SxFk;   /* ref: index of the referenced table, -1 unknown */
+typedef struct SxFk { char *cols, *ref_table; int ref; char *name, *ref_cols; } SxFk;   /* ref: index of the referenced table, -1 unknown; name: constraint (NULL unknown); ref_cols: referenced columns, same order as cols */
 typedef struct SxTable {
     char *schema, *name, *comment;
     bool is_view;
     SxCol *cols; int ncols, capcols;
     SxFk *fks; int nfks, capfks;
     int nrefs;                 /* how many tables reference it (hubs) */
+    char *uniques;             /* unique keys: column sets "a,b;c" (NULL none known) */
     char *usage;               /* words of the user's own queries that use it (query history): local only, never rendered */
     /* precomputed words for picking (built lazily, see schidx_words) */
     char (*w)[24]; unsigned char *wcat; int nw;
@@ -56,18 +57,22 @@ void schidx_table_comment(SchIdx *x, int ti, const char *comment);
 void schidx_add_col(SchIdx *x, int ti, const char *name, const char *type, bool pk, bool notnull, const char *comment);
 void schidx_set_col_comment(SchIdx *x, int ti, const char *col, const char *comment);
 void schidx_add_fk(SchIdx *x, int ti, const char *cols, const char *ref_schema, const char *ref_name);
+/* the same with the constraint name and the referenced columns (ER diagrams) */
+void schidx_add_fk2(SchIdx *x, int ti, const char *name, const char *cols, const char *ref_schema, const char *ref_name, const char *ref_cols);
+void schidx_add_unique(SchIdx *x, int ti, const char *cols);   /* one unique key (comma list) */
 void schidx_finish(SchIdx *x);   /* resolves foreign keys, counts references */
 /* the text of a query of the user's that uses this table (history): its words help picking; never sent */
 void schidx_add_usage(SchIdx *x, int ti, const char *text);
 int schidx_find(const SchIdx *x, const char *schema, const char *name);   /* name may be "schema.name"; -1 */
 
-/* Catalog SQL for a dialect ("postgres", "oracle", "mysql", "mssql"): the k-th bulk read and how
- * its rows feed the index. schemas: allowed namespaces ("" = every non-system one).
+/* Catalog SQL for a dialect ("postgres", "oracle", "mysql", "mssql", "sqlite"): the k-th bulk read and
+ * how its rows feed the index. schemas: allowed namespaces ("" = every non-system one).
  *   kind SXQ_COLS:     schema, table, is_view, column, type, pk (0/1), notnull (0/1), column comment
  *   kind SXQ_TCOMMENT: schema, table, comment
- *   kind SXQ_FKS:      schema, table, columns (comma list), ref schema, ref table
+ *   kind SXQ_FKS:      schema, table, columns (comma list), ref schema, ref table, constraint name, ref columns
+ *   kind SXQ_UNIQUES:  schema, table, columns (comma list) of one unique key (k = 3; the assistant reads k < 3)
  * Returns false past the last query. */
-enum { SXQ_COLS, SXQ_TCOMMENT, SXQ_FKS };
+enum { SXQ_COLS, SXQ_TCOMMENT, SXQ_FKS, SXQ_UNIQUES };
 bool schidx_sql(const char *dialect, int k, const char *const *schemas, int nschemas, int *kind, char *out, size_t n);
 
 /* Picking tables for a question. */

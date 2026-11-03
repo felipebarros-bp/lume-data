@@ -1,0 +1,11 @@
+# Launch: the daily check runs by itself; a newer release is offered (Download / Release Notes / Later / Skip This Version)
+wait 30
+updateawait
+wait 30
+updatestate
+tbmodal
+shot build/ui/update_offer.bmp
+button "Download"
+wait 30
+tbmodal
+quit

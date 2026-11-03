@@ -121,6 +121,30 @@ void dialog_open(Dialog *d, App *a, Connection *existing) {
     (void)a;
 }
 
+void dialog_open_copy(Dialog *d, App *a, const Connection *src) {
+    dialog_open(d, a, NULL);
+    if (!src) return;
+    int n; const DriverInfo *all = driver_infos(&n);
+    snprintf(d->draft.driver, sizeof d->draft.driver, "%s", src->driver);
+    d->driver_idx = 0;
+    for (int i = 0; i < n; i++) if (strcmp(all[i].id, d->draft.driver) == 0) d->driver_idx = i;
+    const DriverInfo *di = drv(d);
+    for (int i = 0; i < di->nfields && i < CONN_MAX_FIELDS; i++)   /* passwords are never copied */
+        snprintf(d->draft.values[i], CONN_VALUE_LEN, "%s", di->fields[i].type == FIELD_PASSWORD ? "" : src->values[i]);
+    d->draft.env = src->env; d->draft.env_color = src->env_color; d->draft.read_only = src->read_only;
+    char nm[80]; snprintf(nm, sizeof nm, "%.56s (copy)", src->name);
+    snprintf(d->draft.name, sizeof d->draft.name, "%s", nm);
+    textfield_set(&d->name, d->draft.name);
+    snprintf(d->draft.folder, sizeof d->draft.folder, "%s", src->folder);   /* the copy sits next to the original */
+    textfield_set(&d->folder, d->draft.folder);
+    load_fields(d);
+    d->step = 1;   /* straight to the fields: the database is already chosen */
+    d->ro_touched = true;
+    bool has_pw = false; for (int i = 0; i < di->nfields; i++) if (di->fields[i].type == FIELD_PASSWORD) has_pw = true;
+    snprintf(d->msg, sizeof d->msg, "%s", has_pw ? "A copy of the connection: enter the password (it is never copied)." : "A copy of the connection.");
+    d->msg_ok = true;
+}
+
 /* Changes the draft's driver. Values of fields with the same key in both drivers are kept (the
  * text fields hold the latest edits); the others take the new driver's defaults. */
 static void switch_driver(Dialog *d, int idx) {
@@ -483,13 +507,13 @@ static void frame(Dialog *d, App *a, bool live) {
       for (const char *p = d->folder.buf; *p; p++) sig = (sig ^ (unsigned char)*p) * 16777619u; }
     cy += row;
     ui_label(a, rect_make(x + pad, cy, lbl_w, fh), "Environment", ALIGN_LEFT, T_TEXT_MUTED);
-    { static const char *const envs[] = { "None", "DEV", "HML", "PROD" };
+    { static const char *const envs[] = { "None", "DEV", "STG", "PROD" };
       int pe = ui_segmented(a, rect_make(fx, cy, px(a, 260), fh), envs, 4, d->draft.env);
       if (pe >= 0 && live) {
           d->draft.env = pe;
           if (pe == CONN_ENV_PROD && !d->ro_touched && !d->draft.read_only) { d->draft.read_only = true; snprintf(d->msg, sizeof d->msg, "PROD: Read-only in Lume turned on (you can turn it off)."); d->msg_ok = true; }
       }
-      draw_text_fit(a->font_small, r, "HML = homologation / staging", -1, rect_make(fx + px(a, 272), cy, fw_full - px(a, 272), fh), color_hex(T_TEXT_DIM), ALIGN_LEFT); }
+      draw_text_fit(a->font_small, r, "STG = staging (pre-production)", -1, rect_make(fx + px(a, 272), cy, fw_full - px(a, 272), fh), color_hex(T_TEXT_DIM), ALIGN_LEFT); }
     cy += row;
     if (ui_checkbox(a, rect_make(fx, cy, px(a, 200), fh), "Read-only in Lume", d->draft.read_only, true) && live) { d->draft.read_only = !d->draft.read_only; d->ro_touched = true; }
     draw_text_fit(a->font_small, r, "Lume refuses writes; the database login itself is unchanged.", -1, rect_make(fx, cy + fh - px(a, 2), fw_full, px(a, 18)), color_hex(T_TEXT_DIM), ALIGN_LEFT);

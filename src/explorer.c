@@ -42,6 +42,8 @@
 #include "panels.h"
 #include "theme.h"
 #include "tdes.h"
+#include "dgmview.h"
+#include "dialog.h"
 #include "ui.h"
 
 /* Row kinds: a connection root, a group (Tables / Views / a schema, also used for message
@@ -66,6 +68,7 @@ typedef struct Node {
     char *schema;       /* objgroup: the schema it lists ("" = the connection's current one) */
     ObjKey *okey;       /* NODE_OBJECT: the object's identity (owned) */
     int role, action;   /* NR_* of a group; ACT_* of an action row */
+    int order;          /* NODE_CONN under folders: the connection's position in the store (sorting) */
     char *sname;        /* NODE_SCHEMA / action rows: the namespace */
     bool in_others;     /* NODE_SCHEMA listed under Others */
 } Node;
@@ -79,7 +82,7 @@ enum {
     CM_OPT_COMPACT, CM_OPT_ALL, CM_OPT_PINNED, CM_OPT_SYSTEM, CM_OPT_RECENT, CM_OPT_KNOWN, CM_OPT_CAP, CM_OPT_PAGE, CM_OPT_KINDS, CM_OPT_DISCOVER, CM_OPT_RESET,
     CM_HIT_OPEN, CM_HIT_REVEAL, CM_HIT_PIN, CM_HIT_COPY, CM_HIT_PROPS,
     CM_FD_NEW, CM_FD_RENAME, CM_FD_REMOVE, CM_FD_COLLAPSE, CM_FD_EXPAND,
-    CM_NEW_TABLE, CM_NEW_QUERY, CM_TB_MODIFY, CM_TB_DATA, CM_TB_DDL, CM_TB_DUP, CM_TB_DEPS, CM_TB_DROP,
+    CM_NEW_TABLE, CM_NEW_QUERY, CM_DUP_CONN, CM_TB_ERD, CM_TB_ERD_ADD, CM_SC_ERD, CM_TB_MODIFY, CM_TB_DATA, CM_TB_DDL, CM_TB_DUP, CM_TB_DEPS, CM_TB_DROP,
 };
 #define CM_MAX 28
 
@@ -87,6 +90,8 @@ enum {
 struct Explorer {
     Node **roots; int nroots;   /* one per connection, same order as a->conns */
     Node *selected;
+    Node *msel[512]; int nmsel;   /* tables picked with Cmd / Shift + click (ER diagram of several tables) */
+    Node *anchor;                 /* the last plainly clicked row: Shift + click selects from it */
     Node **vis; int nvis, capvis;   /* flattened visible rows (pointers into the tree) */
     float scroll, scroll_t;   /* current and target scroll offset, pixels */
     ScrollBar sb;             /* the overlay scrollbar */
@@ -248,7 +253,7 @@ static void free_roots(Explorer *e) {
     for (int i = 0; i < e->nroots; i++) node_free(e->roots[i]);
     free(e->roots);
     e->roots = NULL; e->nroots = 0;
-    e->selected = NULL;
+    e->selected = NULL; e->nmsel = 0; e->anchor = NULL;
 }
 
 /* The App, for the object lists (the tree functions below have no App parameter). */
@@ -678,13 +683,12 @@ static int level_cmp(const void *x, const void *y) {
     bool fa = a->kind == NODE_FOLDER, fb = b->kind == NODE_FOLDER;
     if (fa != fb) return fa ? -1 : 1;
     if (fa) return strcasecmp(a->label, b->label);
-    return a->action - b->action;
+    return a->order - b->order;
 }
 static int sort_level(Node *n) {   /* returns how many connections are inside */
     int count = 0;
     for (int i = 0; i < n->nkids; i++) count += n->kids[i]->kind == NODE_FOLDER ? sort_level(n->kids[i]) : 1;
     if (n->nkids > 1) qsort(n->kids, (size_t)n->nkids, sizeof *n->kids, level_cmp);
-    for (int i = 0; i < n->nkids; i++) if (n->kids[i]->kind == NODE_CONN) n->kids[i]->action = ACT_NONE;
     if (n->kind == NODE_FOLDER && n->sname) { char d[16]; snprintf(d, sizeof d, "%d", count); free(n->detail); n->detail = SDL_strdup(d); n->leaf = n->nkids == 0; }
     return count;
 }
@@ -746,16 +750,21 @@ void explorer_rebuild(Explorer *e, App *a) {
         int first = (int)(e->scroll_t / row_h);
         if (first >= 0 && first < e->nvis) { node_key(e->vis[first], anchor, sizeof anchor); anchor_off = e->scroll_t - first * row_h; }
     }
-    e->selected = NULL;
+    e->selected = NULL; e->nmsel = 0; e->anchor = NULL;
     e->nvis = 0;                                   /* e->vis points into the tree being freed */
     /* which open connections the user collapsed: by connection (folders can move them around) */
     int ncon = a->conns ? a->conns->n : 0;
     Connection **was_c = calloc(ncon ? (size_t)ncon : 1, sizeof *was_c); bool *was_closed = calloc(ncon ? (size_t)ncon : 1, sizeof *was_closed); int nwas = 0;
-    { Node *stack[256]; int sp = 0;
-      for (int i = 0; i < e->nroots && sp < 256; i++) stack[sp++] = e->roots[i];
-      while (sp) { Node *n = stack[--sp];
+    {   /* folders and connections only: at most one stack entry per connection and folder level */
+      int cap = 16 + e->nroots, sp = 0; Node **stack = malloc(sizeof *stack * (size_t)cap);
+      for (int i = 0; stack && i < e->nroots; i++) stack[sp++] = e->roots[i];
+      while (stack && sp) { Node *n = stack[--sp];
           if (n->kind == NODE_CONN) { if (nwas < ncon) { was_c[nwas] = n->conn; was_closed[nwas++] = !n->leaf && !n->expanded; } }
-          else if (n->kind == NODE_FOLDER) for (int k = 0; k < n->nkids && sp < 256; k++) stack[sp++] = n->kids[k]; } }
+          else if (n->kind == NODE_FOLDER) for (int k = 0; k < n->nkids; k++) {
+              if (sp == cap) { cap *= 2; Node **g = realloc(stack, sizeof *stack * (size_t)cap); if (!g) break; stack = g; }
+              stack[sp++] = n->kids[k];
+          } }
+      free(stack); }
     free_roots(e);
     fo_load(a);
     /* the top level is a hidden holder node: its children become the roots */
@@ -778,7 +787,7 @@ void explorer_rebuild(Explorer *e, App *a) {
         for (int k = 0; k < nwas; k++) if (was_c[k] == c) closed = was_closed[k];
         Node *cn = build_conn(c, !closed);
         adopt(parent, cn);
-        cn->action = i;   /* store order, for sorting */
+        cn->order = i;   /* store order, for sorting */
     }
     free(was_c); free(was_closed);
     sort_level(top);
@@ -1039,9 +1048,11 @@ static void cm_open(Explorer *e, Connection *c, float x, float y) {
         /* grouped: work on it / create in it / the connection itself */
         cm_add(e, CM_NEW_QUERY, "New Query", -1, false);   /* a query tab on this connection (connects first when needed) */
         if (c->db && tdes_supported(c)) cm_add(e, CM_NEW_TABLE, "New Table\xE2\x80\xA6", -1, c->read_only);
+        cm_add(e, CM_SC_ERD, "New ER Diagram\xE2\x80\xA6", -1, false);   /* DGM-002: the connection's default scope */
         if (c->db) cm_add(e, CM_REFRESH, "Refresh", -1, false);
         cm_add(e, CM_SEP, "", -1, true);
         cm_add(e, CM_EDIT, "Edit Connection\xE2\x80\xA6", -1, false);
+        cm_add(e, CM_DUP_CONN, "Duplicate Connection\xE2\x80\xA6", -1, false);   /* prefilled, without the password */
         cm_add(e, c->db ? CM_DISCONNECT : CM_CONNECT, c->db ? "Disconnect" : "Connect", -1, false);
         cm_add(e, CM_SEP, "", -1, true);
     }
@@ -1152,6 +1163,10 @@ static void cm_open_node(Explorer *e, App *a, Node *n, float x, float y) {
         cm_add(e, CM_TB_DUP, "Duplicate Structure...", -1, !td || ro);
         cm_add(e, CM_TB_DEPS, "Dependencies...", -1, !td);
         cm_add(e, CM_SEP, "", -1, true);
+        if (e->nmsel > 1) { char lb[64]; snprintf(lb, sizeof lb, "Show ER Diagram (%d tables)", e->nmsel); cm_add(e, CM_TB_ERD, lb, -1, false); }
+        else cm_add(e, CM_TB_ERD, "Show ER Diagram", -1, false);
+        if (dgmview_has_diagram_for(a, c->id)) cm_add(e, CM_TB_ERD_ADD, "Add to Current Diagram", -1, false);
+        cm_add(e, CM_SEP, "", -1, true);
         cm_add(e, CM_TB_DROP, "Drop Table...", -1, !td || ro);
         return;
     }
@@ -1182,6 +1197,7 @@ static void cm_open_node(Explorer *e, App *a, Node *n, float x, float y) {
         snprintf(e->cm_schema, sizeof e->cm_schema, "%s", n->sname);
         cm_add(e, CM_SC_CONSOLE, "Open SQL Console", -1, false);
         cm_add(e, CM_NEW_TABLE, "New > Table...", -1, !tdes_supported(c) || c->read_only);   /* TBL-001 / 082 */
+        cm_add(e, CM_SC_ERD, "New ER Diagram\xE2\x80\xA6", -1, false);   /* DGM-002 */
         cm_add(e, CM_SC_EXPAND, n->expanded ? "Collapse" : "Expand", -1, false);
         cm_add(e, CM_SC_FIND, "Find Objects\xE2\x80\xA6", -1, !s->ad->caps.object_search);
         cm_add(e, CM_SC_REFRESH, "Refresh", -1, false);
@@ -1261,6 +1277,19 @@ static void cm_run(Explorer *e, App *a, int item) {
         if (c && c->db) { char sc[128], tb[256]; snprintf(sc, sizeof sc, "%s", e->cm_schema); snprintf(tb, sizeof tb, "%s", e->cm_table); e->cm_open = false;
             tdes_open_table(a, c, sc, tb, item == CM_TB_DDL ? 1 : item == CM_TB_DUP ? 2 : item == CM_TB_DROP ? 3 : 0); return; }
         break;
+    case CM_TB_ERD: case CM_TB_ERD_ADD:
+        if (c) { char sc[128], tb[256]; snprintf(sc, sizeof sc, "%s", e->cm_schema); snprintf(tb, sizeof tb, "%s", e->cm_table); e->cm_open = false;
+            if (item == CM_TB_ERD && e->nmsel > 1) {   /* the tables picked with Cmd / Shift */
+                char names[512][256]; int nn = 0;
+                for (int q = 0; q < e->nmsel && nn < 512; q++) { char s2[128]; table_target(e->msel[q], s2, sizeof s2, names[nn], sizeof names[nn]); nn++; }
+                const char *ptr[512]; for (int q = 0; q < nn; q++) ptr[q] = names[q];
+                dgmview_open_tables(a, c, sc, ptr, nn);
+            }
+            else if (item == CM_TB_ERD) dgmview_open_table(a, c, sc, tb); else dgmview_add_to_current(a, c, sc, tb);
+            return; }
+        break;
+    case CM_DUP_CONN: if (c) { e->cm_open = false; dialog_open_copy(a->dialog, a, c); return; } break;
+    case CM_SC_ERD: if (c) { char sc[200]; snprintf(sc, sizeof sc, "%s", e->cm_schema); e->cm_open = false; dgmview_new_for_schema(a, c, sc); return; } break;
     case CM_TB_DATA: if (c && c->db) {   /* the data grid, not the structure (TBL-083.2) */
             char full[400]; snprintf(full, sizeof full, "%s", e->cm_table);
             for (int i = 0; i < c->ntables; i++) { const char *nm = c->tables[i].name, *dt = strchr(nm, '.'); if (!strcmp(dt ? dt + 1 : nm, e->cm_table)) { snprintf(full, sizeof full, "%s", nm); break; } }
@@ -1287,9 +1316,11 @@ static void cm_run(Explorer *e, App *a, int item) {
     }
     case CM_FD_EXPAND: case CM_FD_COLLAPSE: {
         bool open = item == CM_FD_EXPAND;
-        Node *stack[512]; int sp = 0;
-        for (int i = 0; i < e->nroots && sp < 512; i++) stack[sp++] = e->roots[i];
-        while (sp) { Node *n = stack[--sp]; if (n->kind != NODE_FOLDER) continue; n->expanded = open; if (n->sname) fo_set(n->sname, open); for (int k = 0; k < n->nkids && sp < 512; k++) stack[sp++] = n->kids[k]; }
+        int cap = 16 + e->nroots, sp = 0; Node **stack = malloc(sizeof *stack * (size_t)cap);
+        for (int i = 0; stack && i < e->nroots; i++) stack[sp++] = e->roots[i];
+        while (stack && sp) { Node *n = stack[--sp]; if (n->kind != NODE_FOLDER) continue; n->expanded = open; if (n->sname) fo_set(n->sname, open);
+            for (int k = 0; k < n->nkids; k++) { if (sp == cap) { cap *= 2; Node **g = realloc(stack, sizeof *stack * (size_t)cap); if (!g) break; stack = g; } stack[sp++] = n->kids[k]; } }
+        free(stack);
         e->cm_open = false; return;   /* folder menus have no connection: never reach the Schema Explorer cases below */
     }
     default: break;
@@ -1622,6 +1653,8 @@ void explorer_update(Explorer *e, App *a, Rect b) {
         in->mouse_consumed = true;
         a->focus = FOCUS_EXPLORER;
         Node *n = hover_idx >= 0 ? e->vis[hover_idx] : NULL;
+        bool in_set = false; for (int q = 0; n && q < e->nmsel; q++) if (e->msel[q] == n) in_set = true;
+        if (n && !in_set) e->nmsel = 0;
         if (n) e->selected = n;
         if (n) cm_open_node(e, a, n, in->mouse_x, in->mouse_y);
         else cm_open(e, NULL, in->mouse_x, in->mouse_y);
@@ -1638,6 +1671,29 @@ void explorer_update(Explorer *e, App *a, Rect b) {
             bool on_rename = e->rn_open && n->kind == NODE_FOLDER && n->sname && !strcmp(n->sname, e->rn_path);
             if (e->rn_open && !on_rename) e->rn_open = false;   /* a click elsewhere cancels the rename */
             if (on_rename) { in->mouse_consumed = false; goto rows_done; }   /* the field takes the click */
+            SDL_Keymod km = app_modstate(a);
+            bool add = (km & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) != 0, range = (km & SDL_KMOD_SHIFT) != 0;
+            if (n->kind == NODE_TABLE && (add || range)) {   /* several tables: Cmd toggles one, Shift selects from the last one clicked */
+                if (!e->nmsel && e->selected && e->selected->kind == NODE_TABLE && e->selected->conn == n->conn) e->msel[e->nmsel++] = e->selected;
+                if (range && e->anchor && e->anchor->kind == NODE_TABLE && e->anchor->conn == n->conn) {
+                    int i0 = vis_index(e, e->anchor), i1 = hover_idx;
+                    if (i0 > i1) { int t = i0; i0 = i1; i1 = t; }
+                    if (!add) e->nmsel = 0;
+                    for (int i = i0; i >= 0 && i <= i1 && e->nmsel < 512; i++) {
+                        Node *m = e->vis[i]; if (m->kind != NODE_TABLE || m->conn != n->conn) continue;
+                        bool have = false; for (int q = 0; q < e->nmsel; q++) if (e->msel[q] == m) have = true;
+                        if (!have) e->msel[e->nmsel++] = m;
+                    }
+                } else {
+                    int at = -1; for (int q = 0; q < e->nmsel; q++) if (e->msel[q] == n) at = q;
+                    if (at >= 0) { memmove(&e->msel[at], &e->msel[at + 1], sizeof e->msel[0] * (size_t)(e->nmsel - at - 1)); e->nmsel--; }
+                    else if (e->nmsel < 512) { for (int q = 0; q < e->nmsel; q++) if (e->msel[q]->conn != n->conn) { e->nmsel = 0; break; } e->msel[e->nmsel++] = n; }
+                    e->anchor = n;
+                }
+                e->selected = n;
+                return;
+            }
+            e->nmsel = 0; e->anchor = n;
             e->selected = n;
             float chevron_x = rows.x + px(a, 10 + 14 * n->depth);
             bool on_chevron = in->mouse_x < chevron_x + px(a, 16);
@@ -1683,6 +1739,7 @@ rows_done:
         Node *n = e->vis[i];
         Rect rr = rect_make(rows.x, rows.y + i * row_h - e->scroll, rows.w, row_h);
         bool selected = n == e->selected;
+        for (int q = 0; q < e->nmsel && !selected; q++) if (e->msel[q] == n) selected = true;
         if (selected) draw_rect(r, rr, color_hex(focused ? T_SELECTED : T_HOVER));
         else if (i == hover_idx) draw_rect(r, rr, color_hex(T_HOVER));
         if (selected && focused) draw_rect(r, rect_make(rr.x, rr.y, px(a, 2), rr.h), color_hex(T_ACCENT));

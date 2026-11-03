@@ -48,7 +48,7 @@ enum { EN_CMD, EN_SCHEMA, EN_SCHEMA_DEFAULT, EN_CANCEL_EXEC, EN_PANEL, EN_OVERFL
 /* modal dialogs (toolbar_actions.c) */
 enum { TM_NONE, TM_CONFIRM, TM_PARAMS, TM_SETTINGS, TM_CUSTOMIZE, TM_SESSION, TM_LIST, TM_NAME };
 /* what a confirmation continues with when accepted */
-enum { CF_RUN, CF_SWITCH_DS, CF_TX_MODE_AUTO, CF_COMMIT, CF_ROLLBACK, CF_DISCONNECT, CF_RECONNECT, CF_CLOSE_TAB, CF_RESET_TOOLBAR, CF_WS_SWITCH, CF_CONN_FAILED, CF_CRASH };
+enum { CF_RUN, CF_SWITCH_DS, CF_TX_MODE_AUTO, CF_COMMIT, CF_ROLLBACK, CF_DISCONNECT, CF_RECONNECT, CF_CLOSE_TAB, CF_RESET_TOOLBAR, CF_WS_SWITCH, CF_CONN_FAILED, CF_CRASH, CF_UPDATE };
 /* list dialogs */
 enum { LIST_SWITCH_TAB, LIST_QUICK_OPEN, LIST_WORKSPACES };
 
@@ -92,7 +92,7 @@ struct Toolbar {
     bool ds_open; Rect ds_rect; TextField ds_search; int ds_sel; int ds_rows[64]; int nds_rows; Rect ds_row_rect[64];
     /* dialogs */
     int modal; Rect modal_rect;
-    int cf_kind; char cf_title[120], cf_body[700], cf_btn[4][40]; int cf_nbtn; int cf_choice; char cf_arg[64];
+    int cf_kind; char cf_title[120], cf_body[2400], cf_btn[4][40]; int cf_nbtn; int cf_choice; char cf_arg[64];
     TbRun run;               /* run waiting for a confirmation / parameters */
     TbParam params[TB_MAX_PARAMS]; int nparams; int param_focus;
     int list_kind; TextField list_search; int list_sel; int list_scroll;

@@ -80,7 +80,7 @@ struct Connection {
 };
 /* Environment label of a connection (TBR-014). */
 enum { CONN_ENV_NONE, CONN_ENV_DEV, CONN_ENV_HML, CONN_ENV_PROD, CONN_ENV_COUNT };
-const char *conn_env_name(int env);                 /* "", "DEV", "HML", "PROD" */
+const char *conn_env_name(int env);                 /* "", "DEV", "STG", "PROD" (STG = staging; "HML" is still read) */
 int conn_env_by_name(const char *name);             /* CONN_ENV_NONE when unknown */
 uint32_t conn_env_color(const Connection *c);       /* configured colour, else the environment's default */
 /* Life cycle of a saved connection, as shown by the toolbar (with text, never only a colour). */

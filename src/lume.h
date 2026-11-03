@@ -73,6 +73,7 @@ typedef struct Input {
     bool mouse_rpressed;                     /* right button, this frame */
     int clicks;                              /* click count of this frame's press */
     float wheel_x, wheel_y;                  /* in render pixels */
+    float pinch;                             /* trackpad pinch this frame: product of the scale changes (1 = none) */
     KeyPress keys[LUME_MAX_KEYS]; int nkeys; /* key presses this frame, in order */
     char text[2048]; int ntext;              /* UTF-8 typed this frame */
 } Input;
@@ -159,6 +160,7 @@ typedef struct App {
     bool reduce_motion;         /* PNL-039: no smooth scrolling / animation (system setting or Window menu) */
     int crash_reports;            /* Settings > Privacy: crash reports 0 ask each time, 1 always send, 2 never (crashrep.h) */
     bool telemetry;               /* Settings > Privacy: anonymous usage statistics (off unless the user turns it on) */
+    bool update_check;            /* Settings > Privacy: check GitHub for a newer release at launch and daily (on by default; update.h) */
     char report_locale[8];        /* new reports: "pt-BR" / "en-US" ("" = Lume\'s default) */
 } App;
 

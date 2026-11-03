@@ -56,6 +56,8 @@
 #include "commands.h"
 #include "toolbar.h"
 #include "exec.h"
+#include "update.h"
+#include "dgmview.h"
 #include <stdarg.h>
 
 /* LUME_VERSION comes from CMake (project VERSION): the single source for About, Copy Info and the log. */
@@ -206,11 +208,17 @@ static void set_title(App *a) {
 
 /* Completer callback: load a table's columns lazily through its connection. */
 static bool load_cols_cb(void *ctx, DbTable *t) { return conn_load_columns((Connection *)ctx, t); }
+/* Completer callback: a table's foreign keys (JOIN ... ON), read once through the connection */
+static bool load_fks_cb(void *ctx, const char *table, DbFk **out, int *n) {
+    Connection *c = ctx; char err[200];
+    if (!c || !c->db || !c->db->drv->list_fks || c->db->busy) return false;
+    return c->db->drv->list_fks(c->db, table, out, n, err, sizeof err);
+}
 
 /* Point the completer at the active connection's cached schema (or clear it). */
 void app_refresh_schema(App *a) {
     Connection *c = a->active;
-    if (c && c->db) complete_set_schema(a->completer, c->tables, c->ntables, c->id, load_cols_cb, c);
+    if (c && c->db) { complete_set_schema(a->completer, c->tables, c->ntables, c->id, load_cols_cb, c); complete_set_fk_loader(a->completer, load_fks_cb); }
     else complete_set_schema(a->completer, NULL, 0, NULL, NULL, NULL);
 }
 
@@ -542,6 +550,9 @@ void app_input_event(App *a, const SDL_Event *e) {
         in->wheel_y += sy * step;
         break;
     }
+    case SDL_EVENT_PINCH_UPDATE:   /* trackpad pinch: views that zoom read the factor (diagrams) */
+        if (e->pinch.scale > 0) in->pinch = (in->pinch > 0 ? in->pinch : 1) * e->pinch.scale;
+        break;
     case SDL_EVENT_KEY_DOWN:
         if (in->nkeys < LUME_MAX_KEYS) {
             KeyPress *k = &in->keys[in->nkeys++];
@@ -565,6 +576,7 @@ void app_input_begin(Input *in) {
     in->mouse_pressed = in->mouse_released = in->mouse_consumed = in->mouse_rpressed = false;
     in->clicks = 0;
     in->wheel_x = in->wheel_y = 0;
+    in->pinch = 1;
     in->nkeys = 0;
     in->ntext = 0;
 }
@@ -581,7 +593,7 @@ static void handle_event(App *a, SDL_Event *e) {
         update_metrics(a);
         break;
     case SDL_EVENT_MOUSE_MOTION: case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_BUTTON_UP:
-    case SDL_EVENT_MOUSE_WHEEL: case SDL_EVENT_KEY_DOWN: case SDL_EVENT_TEXT_INPUT:
+    case SDL_EVENT_MOUSE_WHEEL: case SDL_EVENT_KEY_DOWN: case SDL_EVENT_TEXT_INPUT: case SDL_EVENT_PINCH_UPDATE:
         app_input_event(a, e);
         break;
     case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
@@ -614,6 +626,7 @@ static void input_begin_frame(Input *in) {
     in->mouse_pressed = in->mouse_released = in->mouse_consumed = in->mouse_rpressed = false;
     in->clicks = 0;
     in->wheel_x = in->wheel_y = 0;
+    in->pinch = 1;
     in->nkeys = 0;
     in->ntext = 0;
 }
@@ -711,13 +724,14 @@ static void app_prefs_load(App *a) {
         else if (!strcmp(line, "fmt_tz") && v >= 0 && v <= 2) a->fmt_tz = v;
         else if (!strcmp(line, "telemetry")) a->telemetry = v != 0;
         else if (!strcmp(line, "crash_reports") && v >= 0 && v <= 2) a->crash_reports = v;
+        else if (!strcmp(line, "update_check")) a->update_check = v != 0;
         else if (!strcmp(line, "report_locale") && (!strcmp(eq, "pt-BR") || !strcmp(eq, "en-US"))) snprintf(a->report_locale, sizeof a->report_locale, "%s", eq);
     }
     fclose(f);
     if (z >= 0.6f && z <= 2.5f && z != a->zoom) set_zoom(a, z);
 }
 static unsigned prefs_sig(const App *a) {
-    char b[220]; snprintf(b, sizeof b, "%d|%d|%d|%.2f|%d|%d|%d|%d|%s|%d|%d", a->fetch_size, a->continue_on_error, a->results_budget_mb, a->zoom, a->fmt_group, a->fmt_decimals, a->fmt_date, a->fmt_tz, a->report_locale, a->telemetry, a->crash_reports);
+    char b[220]; snprintf(b, sizeof b, "%d|%d|%d|%.2f|%d|%d|%d|%d|%s|%d|%d|%d", a->fetch_size, a->continue_on_error, a->results_budget_mb, a->zoom, a->fmt_group, a->fmt_decimals, a->fmt_date, a->fmt_tz, a->report_locale, a->telemetry, a->crash_reports, a->update_check);
     unsigned h = 2166136261u; for (const char *q = b; *q; q++) { h ^= (unsigned char)*q; h *= 16777619u; } return h;
 }
 static unsigned g_prefs_sig; static bool g_prefs_loaded;
@@ -727,7 +741,7 @@ void app_prefs_save(App *a) {
     fprintf(f, "# Lume settings (Tools > Settings...). Rules live here; learned data (history, usage, caches) stays in its own files.\n");
     fprintf(f, "fetch_size=%d\ncontinue_on_error=%d\nresults_budget_mb=%d\nzoom=%.2f\nfmt_group=%d\nfmt_decimals=%d\nfmt_date=%d\nfmt_tz=%d\n", a->fetch_size, a->continue_on_error, a->results_budget_mb, a->zoom, a->fmt_group, a->fmt_decimals, a->fmt_date, a->fmt_tz);
     if (a->report_locale[0]) fprintf(f, "report_locale=%s\n", a->report_locale);
-    fprintf(f, "telemetry=%d\ncrash_reports=%d\n", a->telemetry ? 1 : 0, a->crash_reports);
+    fprintf(f, "telemetry=%d\ncrash_reports=%d\nupdate_check=%d\n", a->telemetry ? 1 : 0, a->crash_reports, a->update_check ? 1 : 0);
     fclose(f); rename(tmp, p);
     g_prefs_sig = prefs_sig(a);
 }
@@ -831,6 +845,7 @@ static void do_action(App *a, int act) {
     case ACT_ZOOM_IN: set_zoom(a, a->zoom + 0.1f); break;
     case ACT_ZOOM_OUT: set_zoom(a, a->zoom - 0.1f); break;
     case ACT_ZOOM_RESET: set_zoom(a, 1.0f); break;
+    case ACT_CHECK_UPDATES: update_check_now(a); break;
     case ACT_ABOUT: about_open(a); break;   /* the same instance from every entry point */
     default: break;
     }
@@ -969,6 +984,7 @@ static void frame(App *a) {
     tdes_pre_update(a);        /* table designer: jobs, its review / close dialogs */
     planview_pre_update(a);    /* execution plans: capture and AI jobs, node menu */
     rptview_pre_update(a);     /* Report Studio: queries, AI, autosave, menus */
+    dgmview_pre_update(a);     /* ER diagrams: catalog reads, layout workers, autosave, shortcuts */
     gitview_pre_update(a);     /* Source Control: Git jobs, watcher, menus */
     app_poll_connections(a);   /* background connects that finished */
     int action = menu_update(a->menu, a, bar);
@@ -994,6 +1010,7 @@ static void frame(App *a) {
     tdes_draw_overlay(a);      /* table designer review / close dialogs, its menus */
     planview_draw_overlay(a);  /* execution plan node menu */
     rptview_draw_overlay(a);   /* Report Studio menus */
+    dgmview_draw_overlay(a);   /* ER diagram menus */
     gitview_draw_overlay(a);   /* Source Control menus */
     about_draw(a);
     settings_draw(a);
@@ -1125,6 +1142,7 @@ int main(int argc, char **argv) {
     /* modules; the panels shell comes last because it registers the others as panels */
     a->completer = complete_create();
     a->conns = conns_load();
+    a->update_check = true;   /* on unless turned off (Settings > Privacy) */
     app_prefs_load(a); g_prefs_sig = prefs_sig(a); g_prefs_loaded = true;   /* the settings saved last time */
     a->dialog = dialog_create();
     a->explorer = explorer_create();
@@ -1139,6 +1157,7 @@ int main(int argc, char **argv) {
     tdes_init(a);                       /* visual table designer */
     planview_init(a);                   /* execution plan panel + Lume Intelligence (registers its panel module) */
     rptview_init(a);                    /* Report Studio + assistant panel (LI-*) */
+    dgmview_init(a);                    /* ER diagrams (docs/diagrams.md) */
     {
         g_app_for_cmd = a;
         Command c; memset(&c, 0, sizeof c);
@@ -1186,6 +1205,7 @@ int main(int argc, char **argv) {
     bool shown = false;
     /* event loop: sleep until an event, a requested wake-up, or (while animating) not at all */
     telemetry_start(a->conns ? a->conns->dir : "", a->telemetry, (double)(SDL_GetTicks() - boot_ticks));   /* only with consent */
+    update_init(a, a->conns ? a->conns->dir : "");   /* the first check runs from update_tick, off the main thread */
     crashrep_startup(a);   /* the previous run crashed: offer / send / drop its report, per the user's choice */
     while (a->running) {
         input_begin_frame(&a->in);
@@ -1204,6 +1224,7 @@ int main(int argc, char **argv) {
         /* draw, then background chores: completer usage save, harness step, first show */
         { Uint64 f0 = SDL_GetPerformanceCounter(); frame(a); a->last_frame_ms = (SDL_GetPerformanceCounter() - f0) * 1000.0 / SDL_GetPerformanceFrequency(); telemetry_frame(a->last_frame_ms); }
         if (complete_tick(a->completer)) app_wake_in(a, 2100);
+        update_tick(a);
         script_tick(a);
         if (!shown) { if (!test_bg) SDL_ShowWindow(a->window); shown = true; }
         if (shot && ++frames == 5) {
@@ -1223,6 +1244,7 @@ int main(int argc, char **argv) {
     tdes_shutdown(a);                   /* keeps unsaved table drafts */
     planview_shutdown(a);
     rptview_shutdown(a);                /* autosaves unsaved reports */
+    dgmview_shutdown(a);                /* saves diagram layouts */
     gitview_shutdown(a);
     brand_free();
     panels_destroy(a->panels, a);       /* saves the layout, frees every query tab */

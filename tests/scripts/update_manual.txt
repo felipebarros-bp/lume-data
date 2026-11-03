@@ -1,0 +1,12 @@
+# Help > Check for Updates: always says the outcome (offer, up to date or the error)
+wait 30
+invoke app.check_updates
+updateawait
+wait 30
+updatestate
+tbmodal
+button "OK"
+wait 10
+tbmodal
+palettedump "updates"
+quit

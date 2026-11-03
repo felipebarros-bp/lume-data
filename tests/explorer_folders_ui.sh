@@ -23,5 +23,13 @@ expect "removing a folder moves its connections up, nothing else changes" 'row 4
 expect "open folders are remembered for the next launch" 'grep -qx "Clients" $P/explorer-folders.txt && grep -qx "Clients/Acme Corp" $P/explorer-folders.txt && ! grep -q "^Clients/Acme$" $P/explorer-folders.txt'
 expect "New Connection Here starts the dialog inside that folder" 'printf "%s\n" "$out" | grep -q "^dialogfolder \"Clients/Acme Corp\""'
 expect "no script target missing" '! printf "%s\n" "$out" | grep -q "target not found"'
+
+# Duplicate Connection keeps the folder; Expand All opens every folder, far past any fixed-size stack
+{ for i in $(seq 1 700); do c "bulk$i" "bulk$i" "Bulk/g$((i % 600))"; done; } >> $P/connections.txt
+out=$(LUME_PREF_DIR=$P LUME_SCRIPT=tests/scripts/explorer_folders_more.txt ./build/lume 2>&1)
+printf '%s\n' "$out" > build/explorer_folders_more.out
+expect "Duplicate Connection keeps the folder of the original" 'printf "%s\n" "$out" | grep -q "^dialogfolder \"Clients/Acme Corp\""'
+expect "Expand All opens all 600 nested folders (no fixed-size stack drops any)" '[ "$(printf "%s\n" "$out" | grep "^explorer " | tail -1 | grep -o "|\.-g[0-9]*(" | wc -l | tr -d " ")" = 600 ] && ! printf "%s\n" "$out" | grep "^explorer " | tail -1 | grep -q "|\.+g"'
+expect "no script target missing (duplicate / expand all)" '! printf "%s\n" "$out" | grep -q "target not found"'
 if [ $fails = 0 ]; then echo "EXPLORER FOLDERS UI: all passed"; else echo "EXPLORER FOLDERS UI: FAILED ($fails failures)"; fi
 exit $fails

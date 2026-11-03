@@ -1,0 +1,13 @@
+# The find list's filters are clicked (the list lies over the canvas: the canvas must not take the click)
+wait 30
+dgm open orders "Shop"
+dgmawait
+wait 20
+button "dgm:findfield"
+type "cus"
+wait 10
+dgmstate
+button "dgm:filter:Columns"
+wait 10
+dgmstate
+quit

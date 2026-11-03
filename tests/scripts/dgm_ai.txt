@@ -1,0 +1,35 @@
+# Lume Intelligence on a diagram (DGM-088..090): consent shows exactly what goes; proposals validated; accept / reject
+wait 30
+dgm open orders "Shop"
+dgmawait
+wait 20
+dgm add products
+dgm ai organise
+wait 5
+dgmstate
+button "dgm:dlg:ok"
+dgmawait
+wait 10
+dgmstate
+dgm accept 0
+dgm reject 1
+wait 5
+dgmstate
+key Escape
+dgm add archive_orders
+dgm ai conceptual
+dgm aisend
+dgmawait
+wait 10
+dgmstate
+dgm accept 0
+dgm accept 1
+wait 5
+dgmstate
+key Escape
+dgm ai explain
+dgm aisend
+dgmawait
+wait 10
+dgmstate
+quit

@@ -60,7 +60,7 @@ world.**
 ### Connections and schema
 - A database picker with search (`pg`, `mssql`, `file`...), grouped by kind, then a form with the
   fields of that driver. **Test connection** runs in the background and reports the server's answer.
-- Environments (DEV / HML / PROD) and a **Read-only in Lume** switch; choosing PROD suggests it.
+- Environments (DEV / STG / PROD) and a **Read-only in Lume** switch; choosing PROD suggests it.
 - **Folders** in the Explorer: a connection's Folder field (`/` nests, `Clients/Acme`) puts it under
   folder rows, which remember being open; right-click a folder to rename it, remove it (its
   connections move up) or create a connection inside it.

@@ -125,6 +125,7 @@ static const Command core[] = {
     { "nav.switch_tab", "Switch Tab\xE2\x80\xA6", "tabs", "Navigation", "recent tabs editors", ACT_SWITCH_TAB, 0, r_always },
     { "nav.palette", "Command Palette\xE2\x80\xA6", "search", "Navigation", "search actions find command", ACT_PALETTE, 0, r_always },
     { "app.about.open", "About Lume Data", "info", "Help", "version build license credits", ACT_ABOUT, 0, r_always },
+    { "app.check_updates", "Check for Updates\xE2\x80\xA6", "refresh", "Help", "new version upgrade download release", ACT_CHECK_UPDATES, 0, r_always },
     /* datasource and session */
     { "ds.connect", "Connect", "plug", "Datasource", "open login", ACT_CONNECT, 0, r_connect },
     { "ds.disconnect", "Disconnect", "unplug", "Datasource", "close", ACT_DISCONNECT, CMD_DESTRUCTIVE, r_disconnect },

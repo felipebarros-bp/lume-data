@@ -16,6 +16,9 @@ void dialog_destroy(Dialog *d);
 /* Opens the dialog on a copy of `existing` (which must stay in the store while the dialog
  * is open), or on SQLite defaults for a new connection. */
 void dialog_open(Dialog *d, App *a, Connection *existing);   /* NULL = new */
+/* A new connection prefilled from src (name "... (copy)", same driver, fields and labels) but with
+ * every password field empty: saving it creates a separate connection. */
+void dialog_open_copy(Dialog *d, App *a, const Connection *src);
 /* True while the dialog is shown. */
 bool dialog_is_open(Dialog *d);
 /* A new connection whose Folder field starts as `folder` (the Explorer's "New Connection Here"). */
