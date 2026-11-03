@@ -1,0 +1,31 @@
+/* Lume Data colours (the app's theme: src/theme.h) */
+:root {
+  --ifm-color-primary: #3b6fd8;
+  --ifm-color-primary-dark: #2f61c8;
+  --ifm-color-primary-darker: #2c5cbd;
+  --ifm-color-primary-darkest: #244c9b;
+  --ifm-color-primary-light: #5583e0;
+  --ifm-color-primary-lighter: #628de2;
+  --ifm-color-primary-lightest: #88a8ea;
+  --ifm-code-font-size: 95%;
+  --ifm-font-family-base: Inter, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+[data-theme='dark'] {
+  --ifm-color-primary: #5b8def;
+  --ifm-color-primary-dark: #3f79ec;
+  --ifm-color-primary-darker: #316fea;
+  --ifm-color-primary-darkest: #1756d1;
+  --ifm-color-primary-light: #77a1f2;
+  --ifm-color-primary-lighter: #85abf3;
+  --ifm-color-primary-lightest: #afc8f7;
+  --ifm-background-color: #16181d;
+  --ifm-navbar-background-color: #121316;
+  --ifm-footer-background-color: #121316;
+  --ifm-background-surface-color: #1b1d23;
+}
+.hero--lume { padding: 4rem 0 3rem; text-align: center; }
+.hero--lume img.hero-logo { width: 96px; height: 96px; }
+.hero--lume .buttons { display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; margin-top: 1.5rem; }
+.features { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.5rem; padding: 2rem 0 3rem; }
+.features h3 { margin-bottom: 0.4rem; }
+.shot { border-radius: 8px; border: 1px solid var(--ifm-color-emphasis-300); margin: 1rem 0; }

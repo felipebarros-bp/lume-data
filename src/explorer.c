@@ -14,6 +14,11 @@
  * per connection on the executor's worker (never on the SDL thread, never in draw), and keeps
  * selection / expansion / scroll by stable keys across rebuilds. SQLite keeps its native tree.
  *
+ * Folders (NODE_FOLDER): a connection's `folder` ("a/b") puts it under nested folder rows; folders
+ * come first at each level (by name), then connections in the store's order. A folder's path is in
+ * its `sname`; which folders are open is saved in <prefs>/explorer-folders.txt. Folders exist only
+ * through their connections: renaming or removing one rewrites those connections' `folder`.
+ *
  * Columns are loaded lazily the first time a table is expanded (conn_load_columns), which
  * calls the driver synchronously on the UI thread (refused while a worker owns the session).
  *
@@ -23,6 +28,7 @@
 #include "explorer.h"
 #include <ctype.h>
 #include <stdarg.h>
+#include <strings.h>
 #include "caps.h"
 #include "complete.h"
 #include "conn.h"
@@ -36,11 +42,13 @@
 #include "panels.h"
 #include "theme.h"
 #include "tdes.h"
+#include "dgmview.h"
+#include "dialog.h"
 #include "ui.h"
 
 /* Row kinds: a connection root, a group (Tables / Views / a schema, also used for message
  * rows), a table or view, a column, an object, a namespace (schema / database), an action row. */
-typedef enum { NODE_CONN, NODE_GROUP, NODE_TABLE, NODE_COLUMN, NODE_OBJECT, NODE_SCHEMA, NODE_ACTION } NodeKind;
+typedef enum { NODE_CONN, NODE_GROUP, NODE_TABLE, NODE_COLUMN, NODE_OBJECT, NODE_SCHEMA, NODE_ACTION, NODE_FOLDER } NodeKind;
 /* Schema Explorer roles of a group */
 enum { NR_NONE, NR_ROOT, NR_OTHERS };
 /* action rows */
@@ -60,6 +68,7 @@ typedef struct Node {
     char *schema;       /* objgroup: the schema it lists ("" = the connection's current one) */
     ObjKey *okey;       /* NODE_OBJECT: the object's identity (owned) */
     int role, action;   /* NR_* of a group; ACT_* of an action row */
+    int order;          /* NODE_CONN under folders: the connection's position in the store (sorting) */
     char *sname;        /* NODE_SCHEMA / action rows: the namespace */
     bool in_others;     /* NODE_SCHEMA listed under Others */
 } Node;
@@ -72,7 +81,8 @@ enum {
     CM_SC_CONSOLE, CM_SC_EXPAND, CM_SC_FIND, CM_SC_REFRESH, CM_SC_PROPS, CM_SC_COPY, CM_SC_VERIFY, CM_SC_PIN, CM_SC_UNPIN,
     CM_OPT_COMPACT, CM_OPT_ALL, CM_OPT_PINNED, CM_OPT_SYSTEM, CM_OPT_RECENT, CM_OPT_KNOWN, CM_OPT_CAP, CM_OPT_PAGE, CM_OPT_KINDS, CM_OPT_DISCOVER, CM_OPT_RESET,
     CM_HIT_OPEN, CM_HIT_REVEAL, CM_HIT_PIN, CM_HIT_COPY, CM_HIT_PROPS,
-    CM_NEW_TABLE, CM_NEW_QUERY, CM_TB_MODIFY, CM_TB_DATA, CM_TB_DDL, CM_TB_DUP, CM_TB_DEPS, CM_TB_DROP,
+    CM_FD_NEW, CM_FD_RENAME, CM_FD_REMOVE, CM_FD_COLLAPSE, CM_FD_EXPAND,
+    CM_NEW_TABLE, CM_NEW_QUERY, CM_DUP_CONN, CM_TB_ERD, CM_TB_ERD_ADD, CM_SC_ERD, CM_TB_MODIFY, CM_TB_DATA, CM_TB_DDL, CM_TB_DUP, CM_TB_DEPS, CM_TB_DROP,
 };
 #define CM_MAX 28
 
@@ -80,6 +90,8 @@ enum {
 struct Explorer {
     Node **roots; int nroots;   /* one per connection, same order as a->conns */
     Node *selected;
+    Node *msel[512]; int nmsel;   /* tables picked with Cmd / Shift + click (ER diagram of several tables) */
+    Node *anchor;                 /* the last plainly clicked row: Shift + click selects from it */
     Node **vis; int nvis, capvis;   /* flattened visible rows (pointers into the tree) */
     float scroll, scroll_t;   /* current and target scroll offset, pixels */
     ScrollBar sb;             /* the overlay scrollbar */
@@ -105,6 +117,9 @@ struct Explorer {
     Rect search_rows;
     uint64_t ns_sig;                /* sum of the models' revisions the tree was built from */
     char sel_key[400];              /* selection by stable key across rebuilds */
+    char cm_folder[128];            /* target folder path (folder menus) */
+    /* inline rename of a folder row */
+    bool rn_open; char rn_path[128]; TextField rn;
 };
 
 /* Allocates a node (copying label and detail) and appends it to parent's children, from
@@ -181,6 +196,55 @@ static void xs_set(const Node *n, bool open) {
     xs[i].open = open;
 }
 
+/* ---- folders: which are open, saved in <prefs>/explorer-folders.txt (one path per line) ---- */
+#define FO_MAX 512
+static char fo[FO_MAX][128]; static int nfo; static bool fo_loaded; static char fo_file[1100];
+static void fo_load(App *a) {
+    if (fo_loaded || !a->conns) return;
+    fo_loaded = true;
+    if (!a->conns->dir[0]) return;
+    snprintf(fo_file, sizeof fo_file, "%sexplorer-folders.txt", a->conns->dir);
+    FILE *f = fopen(fo_file, "r"); if (!f) return;
+    char line[160];
+    while (nfo < FO_MAX && fgets(line, sizeof line, f)) { line[strcspn(line, "\r\n")] = 0; if (line[0]) snprintf(fo[nfo++], sizeof fo[0], "%s", line); }
+    fclose(f);
+}
+static void fo_save(void) {
+    if (!fo_file[0]) return;
+    FILE *f = fopen(fo_file, "w"); if (!f) return;
+    for (int i = 0; i < nfo; i++) fprintf(f, "%s\n", fo[i]);
+    fclose(f);
+}
+static bool fo_is_open(const char *path) { for (int i = 0; i < nfo; i++) if (!strcmp(fo[i], path)) return true; return false; }
+static void fo_set(const char *path, bool open) {
+    for (int i = 0; i < nfo; i++) if (!strcmp(fo[i], path)) { if (!open) { memmove(fo[i], fo[i + 1], sizeof fo[0] * (size_t)(nfo - i - 1)); nfo--; fo_save(); } return; }
+    if (open && nfo < FO_MAX) { snprintf(fo[nfo++], sizeof fo[0], "%s", path); fo_save(); }
+}
+/* path is `folder` itself or inside it */
+static bool in_folder(const char *path, const char *folder) {
+    size_t n = strlen(folder);
+    return !strncmp(path, folder, n) && (path[n] == 0 || path[n] == '/');
+}
+/* Replaces the `from` prefix of every saved folder path (connections and open state) with `to`
+ * ("" = the top level, i.e. the folder is removed and its content moves up). */
+static void fo_move(App *a, const char *from, const char *to) {
+    size_t n = strlen(from);
+    for (int i = 0; a->conns && i < a->conns->n; i++) {
+        Connection *c = a->conns->items[i];
+        if (!in_folder(c->folder, from)) continue;
+        char nf[256]; snprintf(nf, sizeof nf, "%s%s", to, c->folder + n);   /* the rest keeps its "/" (normalize drops a leading one) */
+        conn_folder_normalize(nf, sizeof nf);
+        snprintf(c->folder, sizeof c->folder, "%s", nf);
+    }
+    for (int i = 0; i < nfo; i++) {
+        if (!in_folder(fo[i], from)) continue;
+        char nf[256]; snprintf(nf, sizeof nf, "%s%s", to, fo[i] + n);
+        conn_folder_normalize(nf, sizeof nf);
+        if (nf[0]) snprintf(fo[i], sizeof fo[0], "%s", nf); else { memmove(fo[i], fo[i + 1], sizeof fo[0] * (size_t)(nfo - i - 1)); nfo--; i--; }
+    }
+    fo_save();
+}
+
 /* See explorer.h. */
 Explorer *explorer_create(void) { return calloc(1, sizeof(Explorer)); }
 
@@ -189,7 +253,7 @@ static void free_roots(Explorer *e) {
     for (int i = 0; i < e->nroots; i++) node_free(e->roots[i]);
     free(e->roots);
     e->roots = NULL; e->nroots = 0;
-    e->selected = NULL;
+    e->selected = NULL; e->nmsel = 0; e->anchor = NULL;
 }
 
 /* The App, for the object lists (the tree functions below have no App parameter). */
@@ -605,6 +669,45 @@ static Node *build_conn(Connection *c, bool expanded) {
 /* forward declaration: explorer_rebuild flattens the new tree */
 static void flatten(Explorer *e, Node *n);
 
+/* Moves a built subtree (a root) under parent: depths follow. */
+static void shift_depth(Node *n, int by) { n->depth += by; for (int i = 0; i < n->nkids; i++) shift_depth(n->kids[i], by); }
+static void adopt(Node *parent, Node *child) {
+    if (parent->nkids == parent->cap) { parent->cap = parent->cap ? parent->cap * 2 : 8; parent->kids = realloc(parent->kids, sizeof *parent->kids * (size_t)parent->cap); }
+    parent->kids[parent->nkids++] = child;
+    child->parent = parent;
+    shift_depth(child, parent->depth + 1 - child->depth);
+}
+/* Folders first (by name, case-insensitive), then connections in the store's order; recursively. */
+static int level_cmp(const void *x, const void *y) {
+    const Node *a = *(Node *const *)x, *b = *(Node *const *)y;
+    bool fa = a->kind == NODE_FOLDER, fb = b->kind == NODE_FOLDER;
+    if (fa != fb) return fa ? -1 : 1;
+    if (fa) return strcasecmp(a->label, b->label);
+    return a->order - b->order;
+}
+static int sort_level(Node *n) {   /* returns how many connections are inside */
+    int count = 0;
+    for (int i = 0; i < n->nkids; i++) count += n->kids[i]->kind == NODE_FOLDER ? sort_level(n->kids[i]) : 1;
+    if (n->nkids > 1) qsort(n->kids, (size_t)n->nkids, sizeof *n->kids, level_cmp);
+    if (n->kind == NODE_FOLDER && n->sname) { char d[16]; snprintf(d, sizeof d, "%d", count); free(n->detail); n->detail = SDL_strdup(d); n->leaf = n->nkids == 0; }
+    return count;
+}
+/* The node of connection c, wherever its folder put it (NULL when not in the tree). */
+static Node *conn_node_in(Node *n, Connection *c) {
+    if (n->kind == NODE_CONN) return n->conn == c ? n : NULL;
+    if (n->kind != NODE_FOLDER) return NULL;
+    for (int i = 0; i < n->nkids; i++) { Node *f = conn_node_in(n->kids[i], c); if (f) return f; }
+    return NULL;
+}
+static Node *conn_node(Explorer *e, Connection *c) {
+    for (int i = 0; i < e->nroots; i++) { Node *f = conn_node_in(e->roots[i], c); if (f) return f; }
+    return NULL;
+}
+/* Opens the folders above n (so a revealed row is visible). */
+static void open_ancestors(Node *n) {
+    for (Node *p = n ? n->parent : NULL; p; p = p->parent) if (p->kind == NODE_FOLDER && !p->expanded) { p->expanded = true; if (p->sname) fo_set(p->sname, true); }
+}
+
 /* depth-first search for the node that matches a remembered selection */
 static Node *find_node(Node *n, int kind, const char *label, const char *parent_label) {
     if ((int)n->kind == kind && n->label && strcmp(n->label, label) == 0 &&
@@ -647,22 +750,58 @@ void explorer_rebuild(Explorer *e, App *a) {
         int first = (int)(e->scroll_t / row_h);
         if (first >= 0 && first < e->nvis) { node_key(e->vis[first], anchor, sizeof anchor); anchor_off = e->scroll_t - first * row_h; }
     }
-    e->selected = NULL;
+    e->selected = NULL; e->nmsel = 0; e->anchor = NULL;
     e->nvis = 0;                                   /* e->vis points into the tree being freed */
-    bool collapsed[64] = { false };
-    for (int i = 0; i < e->nroots && i < 64; i++) collapsed[i] = !e->roots[i]->leaf && !e->roots[i]->expanded;
-    bool same_order = e->nroots == a->conns->n;
-    for (int i = 0; same_order && i < e->nroots; i++) same_order = e->roots[i]->conn == a->conns->items[i];
+    /* which open connections the user collapsed: by connection (folders can move them around) */
+    int ncon = a->conns ? a->conns->n : 0;
+    Connection **was_c = calloc(ncon ? (size_t)ncon : 1, sizeof *was_c); bool *was_closed = calloc(ncon ? (size_t)ncon : 1, sizeof *was_closed); int nwas = 0;
+    {   /* folders and connections only: at most one stack entry per connection and folder level */
+      int cap = 16 + e->nroots, sp = 0; Node **stack = malloc(sizeof *stack * (size_t)cap);
+      for (int i = 0; stack && i < e->nroots; i++) stack[sp++] = e->roots[i];
+      while (stack && sp) { Node *n = stack[--sp];
+          if (n->kind == NODE_CONN) { if (nwas < ncon) { was_c[nwas] = n->conn; was_closed[nwas++] = !n->leaf && !n->expanded; } }
+          else if (n->kind == NODE_FOLDER) for (int k = 0; k < n->nkids; k++) {
+              if (sp == cap) { cap *= 2; Node **g = realloc(stack, sizeof *stack * (size_t)cap); if (!g) break; stack = g; }
+              stack[sp++] = n->kids[k];
+          } }
+      free(stack); }
     free_roots(e);
-    e->nroots = a->conns->n;
-    e->roots = calloc(e->nroots ? e->nroots : 1, sizeof *e->roots);
-    for (int i = 0; i < e->nroots; i++) {
+    fo_load(a);
+    /* the top level is a hidden holder node: its children become the roots */
+    Node *top = node_new(NODE_FOLDER, "", NULL, NULL); top->depth = -1;
+    for (int i = 0; i < ncon; i++) {
         Connection *c = a->conns->items[i];
-        e->roots[i] = build_conn(c, !(same_order && i < 64 && collapsed[i]));
-        if (c == sel && sel_kind == NODE_CONN) e->selected = e->roots[i];
-        else if (c == sel && sel_kind >= 0) {
-            e->selected = find_key(e->roots[i], e->sel_key);
-            if (!e->selected) e->selected = find_node(e->roots[i], sel_kind, sel_label, sel_parent[0] ? sel_parent : NULL);
+        Node *parent = top;
+        char path[256] = "";
+        for (const char *p = c->folder; *p;) {   /* one folder node per level, created on first use */
+            const char *q = strchr(p, '/'); size_t L = q ? (size_t)(q - p) : strlen(p);
+            char seg[128]; snprintf(seg, sizeof seg, "%.*s", (int)L, p);
+            size_t pl = strlen(path); snprintf(path + pl, sizeof path - pl, "%s%s", pl ? "/" : "", seg);
+            Node *f = NULL;
+            for (int k = 0; k < parent->nkids && !f; k++) if (parent->kids[k]->kind == NODE_FOLDER && !strcmp(parent->kids[k]->label, seg)) f = parent->kids[k];
+            if (!f) { f = node_new(NODE_FOLDER, seg, NULL, parent); f->sname = SDL_strdup(path); f->expanded = fo_is_open(path); f->conn = NULL; }
+            parent = f;
+            p += L; if (*p == '/') p++;
+        }
+        bool closed = false;
+        for (int k = 0; k < nwas; k++) if (was_c[k] == c) closed = was_closed[k];
+        Node *cn = build_conn(c, !closed);
+        adopt(parent, cn);
+        cn->order = i;   /* store order, for sorting */
+    }
+    free(was_c); free(was_closed);
+    sort_level(top);
+    e->nroots = top->nkids;
+    e->roots = calloc(e->nroots ? (size_t)e->nroots : 1, sizeof *e->roots);
+    for (int i = 0; i < e->nroots; i++) { e->roots[i] = top->kids[i]; e->roots[i]->parent = NULL; }
+    top->nkids = 0; node_free(top);
+    /* the selection, by its stable key */
+    if (sel_kind >= 0) {
+        for (int i = 0; i < e->nroots && !e->selected; i++) e->selected = find_key(e->roots[i], e->sel_key);
+        if (!e->selected && sel) {
+            Node *cn = conn_node(e, sel);
+            if (cn && sel_kind == NODE_CONN) e->selected = cn;
+            else if (cn) e->selected = find_node(cn, sel_kind, sel_label, sel_parent[0] ? sel_parent : NULL);
         }
     }
     for (int i = 0; i < e->nroots; i++) flatten(e, e->roots[i]);
@@ -697,6 +836,7 @@ static void flatten(Explorer *e, Node *n) {
 static void toggle(Node *n) {
     if (n->leaf) return;
     n->expanded = !n->expanded;
+    if (n->kind == NODE_FOLDER) { if (n->sname) fo_set(n->sname, n->expanded); return; }
     if (n->kind == NODE_TABLE || n->kind == NODE_SCHEMA || n->role) xs_set(n, n->expanded);
     if (n->expanded && n->kind == NODE_TABLE) { if (!n->loaded) node_clear_kids(n); load_columns(n); }
     if (n->kind == NODE_SCHEMA && n->conn) {
@@ -769,10 +909,10 @@ static const char *dbs_label(NsState *s);
 
 /* the Schemas / Others nodes of a connection's subtree */
 static Node *ns_group(Explorer *e, Connection *c, int role) {
-    for (int i = 0; i < e->nroots; i++) {
-        if (e->roots[i]->conn != c) continue;
-        for (int k = 0; k < e->roots[i]->nkids; k++) {
-            Node *g = e->roots[i]->kids[k];
+    Node *cn = conn_node(e, c);
+    if (cn) {
+        for (int k = 0; k < cn->nkids; k++) {
+            Node *g = cn->kids[k];
             if (g->role != NR_ROOT) continue;
             if (role == NR_ROOT) return g;
             for (int j = 0; j < g->nkids; j++) if (g->kids[j]->role == NR_OTHERS) return g->kids[j];
@@ -798,10 +938,11 @@ static void reveal_schema(Explorer *e, App *a, Connection *c, const char *name, 
         Node *o = ns_group(e, c, NR_OTHERS);
         if (o && !o->expanded) { xs_set(o, true); explorer_rebuild(e, a); }
     }
-    for (int i = 0; i < e->nroots; i++) {
-        if (e->roots[i]->conn != c) continue;
-        if (!e->roots[i]->expanded) { e->roots[i]->expanded = true; }
-        Node *n = find_schema(e->roots[i], nm);
+    Node *cn = conn_node(e, c);
+    if (cn) {
+        open_ancestors(cn);
+        if (!cn->expanded) { cn->expanded = true; }
+        Node *n = find_schema(cn, nm);
         if (n && open && !n->expanded) toggle(n);
         if (n) { e->selected = n; node_key(n, e->sel_key, sizeof e->sel_key); }
     }
@@ -907,9 +1048,11 @@ static void cm_open(Explorer *e, Connection *c, float x, float y) {
         /* grouped: work on it / create in it / the connection itself */
         cm_add(e, CM_NEW_QUERY, "New Query", -1, false);   /* a query tab on this connection (connects first when needed) */
         if (c->db && tdes_supported(c)) cm_add(e, CM_NEW_TABLE, "New Table\xE2\x80\xA6", -1, c->read_only);
+        cm_add(e, CM_SC_ERD, "New ER Diagram\xE2\x80\xA6", -1, false);   /* DGM-002: the connection's default scope */
         if (c->db) cm_add(e, CM_REFRESH, "Refresh", -1, false);
         cm_add(e, CM_SEP, "", -1, true);
         cm_add(e, CM_EDIT, "Edit Connection\xE2\x80\xA6", -1, false);
+        cm_add(e, CM_DUP_CONN, "Duplicate Connection\xE2\x80\xA6", -1, false);   /* prefilled, without the password */
         cm_add(e, c->db ? CM_DISCONNECT : CM_CONNECT, c->db ? "Disconnect" : "Connect", -1, false);
         cm_add(e, CM_SEP, "", -1, true);
     }
@@ -994,6 +1137,17 @@ static void table_target(Node *n, char *schema, int sn, char *name, int nn) {
 }
 /* the menu of a tree row, by what it is (DBX-104 / 105 / 107) */
 static void cm_open_node(Explorer *e, App *a, Node *n, float x, float y) {
+    if (n && n->kind == NODE_FOLDER && n->sname) {
+        cm_reset(e, NULL, x, y);
+        snprintf(e->cm_folder, sizeof e->cm_folder, "%s", n->sname);
+        cm_add(e, CM_FD_NEW, "New Connection Here\xE2\x80\xA6", -1, false);
+        cm_add(e, CM_FD_RENAME, "Rename Folder\xE2\x80\xA6", -1, false);
+        cm_add(e, CM_FD_REMOVE, "Remove Folder (keeps its connections)", -1, false);
+        cm_add(e, CM_SEP, "", -1, true);
+        cm_add(e, CM_FD_EXPAND, "Expand All Folders", -1, false);
+        cm_add(e, CM_FD_COLLAPSE, "Collapse All Folders", -1, false);
+        return;
+    }
     Connection *c = n ? n->conn : NULL;
     NsState *s = c && c->db ? nsx_find(c->id) : NULL;
     ObjKey ok;
@@ -1008,6 +1162,10 @@ static void cm_open_node(Explorer *e, App *a, Node *n, float x, float y) {
         cm_add(e, CM_TB_DDL, "Generate SQL > CREATE", -1, !td);
         cm_add(e, CM_TB_DUP, "Duplicate Structure...", -1, !td || ro);
         cm_add(e, CM_TB_DEPS, "Dependencies...", -1, !td);
+        cm_add(e, CM_SEP, "", -1, true);
+        if (e->nmsel > 1) { char lb[64]; snprintf(lb, sizeof lb, "Show ER Diagram (%d tables)", e->nmsel); cm_add(e, CM_TB_ERD, lb, -1, false); }
+        else cm_add(e, CM_TB_ERD, "Show ER Diagram", -1, false);
+        if (dgmview_has_diagram_for(a, c->id)) cm_add(e, CM_TB_ERD_ADD, "Add to Current Diagram", -1, false);
         cm_add(e, CM_SEP, "", -1, true);
         cm_add(e, CM_TB_DROP, "Drop Table...", -1, !td || ro);
         return;
@@ -1039,6 +1197,7 @@ static void cm_open_node(Explorer *e, App *a, Node *n, float x, float y) {
         snprintf(e->cm_schema, sizeof e->cm_schema, "%s", n->sname);
         cm_add(e, CM_SC_CONSOLE, "Open SQL Console", -1, false);
         cm_add(e, CM_NEW_TABLE, "New > Table...", -1, !tdes_supported(c) || c->read_only);   /* TBL-001 / 082 */
+        cm_add(e, CM_SC_ERD, "New ER Diagram\xE2\x80\xA6", -1, false);   /* DGM-002 */
         cm_add(e, CM_SC_EXPAND, n->expanded ? "Collapse" : "Expand", -1, false);
         cm_add(e, CM_SC_FIND, "Find Objects\xE2\x80\xA6", -1, !s->ad->caps.object_search);
         cm_add(e, CM_SC_REFRESH, "Refresh", -1, false);
@@ -1118,11 +1277,52 @@ static void cm_run(Explorer *e, App *a, int item) {
         if (c && c->db) { char sc[128], tb[256]; snprintf(sc, sizeof sc, "%s", e->cm_schema); snprintf(tb, sizeof tb, "%s", e->cm_table); e->cm_open = false;
             tdes_open_table(a, c, sc, tb, item == CM_TB_DDL ? 1 : item == CM_TB_DUP ? 2 : item == CM_TB_DROP ? 3 : 0); return; }
         break;
+    case CM_TB_ERD: case CM_TB_ERD_ADD:
+        if (c) { char sc[128], tb[256]; snprintf(sc, sizeof sc, "%s", e->cm_schema); snprintf(tb, sizeof tb, "%s", e->cm_table); e->cm_open = false;
+            if (item == CM_TB_ERD && e->nmsel > 1) {   /* the tables picked with Cmd / Shift */
+                char names[512][256]; int nn = 0;
+                for (int q = 0; q < e->nmsel && nn < 512; q++) { char s2[128]; table_target(e->msel[q], s2, sizeof s2, names[nn], sizeof names[nn]); nn++; }
+                const char *ptr[512]; for (int q = 0; q < nn; q++) ptr[q] = names[q];
+                dgmview_open_tables(a, c, sc, ptr, nn);
+            }
+            else if (item == CM_TB_ERD) dgmview_open_table(a, c, sc, tb); else dgmview_add_to_current(a, c, sc, tb);
+            return; }
+        break;
+    case CM_DUP_CONN: if (c) { e->cm_open = false; dialog_open_copy(a->dialog, a, c); return; } break;
+    case CM_SC_ERD: if (c) { char sc[200]; snprintf(sc, sizeof sc, "%s", e->cm_schema); e->cm_open = false; dgmview_new_for_schema(a, c, sc); return; } break;
     case CM_TB_DATA: if (c && c->db) {   /* the data grid, not the structure (TBL-083.2) */
             char full[400]; snprintf(full, sizeof full, "%s", e->cm_table);
             for (int i = 0; i < c->ntables; i++) { const char *nm = c->tables[i].name, *dt = strchr(nm, '.'); if (!strcmp(dt ? dt + 1 : nm, e->cm_table)) { snprintf(full, sizeof full, "%s", nm); break; } }
             e->cm_open = false; preview_name(a, c, full, e->cm_table); return;
         } break;
+    case CM_FD_NEW: e->cm_open = false; app_new_connection_in(a, e->cm_folder); return;
+    case CM_FD_RENAME: {
+        e->cm_open = false;
+        const char *last = strrchr(e->cm_folder, '/');
+        e->rn_open = true; snprintf(e->rn_path, sizeof e->rn_path, "%s", e->cm_folder);
+        textfield_set(&e->rn, last ? last + 1 : e->cm_folder);
+        a->focus = FOCUS_EXPLORER;
+        return;
+    }
+    case CM_FD_REMOVE: {
+        char up[128]; snprintf(up, sizeof up, "%s", e->cm_folder);
+        char *sl = strrchr(up, '/'); if (sl) *sl = 0; else up[0] = 0;
+        int moved = 0; for (int i = 0; a->conns && i < a->conns->n; i++) moved += in_folder(a->conns->items[i]->folder, e->cm_folder);
+        char was[128]; snprintf(was, sizeof was, "%s", e->cm_folder);
+        fo_move(a, was, up);
+        app_connections_changed(a);
+        app_status(a, "Folder %s removed: %d connection(s) moved to %s", was, moved, up[0] ? up : "the top level");
+        e->cm_open = false; return;   /* folder menus have no connection: never reach the Schema Explorer cases below */
+    }
+    case CM_FD_EXPAND: case CM_FD_COLLAPSE: {
+        bool open = item == CM_FD_EXPAND;
+        int cap = 16 + e->nroots, sp = 0; Node **stack = malloc(sizeof *stack * (size_t)cap);
+        for (int i = 0; stack && i < e->nroots; i++) stack[sp++] = e->roots[i];
+        while (stack && sp) { Node *n = stack[--sp]; if (n->kind != NODE_FOLDER) continue; n->expanded = open; if (n->sname) fo_set(n->sname, open);
+            for (int k = 0; k < n->nkids; k++) { if (sp == cap) { cap *= 2; Node **g = realloc(stack, sizeof *stack * (size_t)cap); if (!g) break; stack = g; } stack[sp++] = n->kids[k]; } }
+        free(stack);
+        e->cm_open = false; return;   /* folder menus have no connection: never reach the Schema Explorer cases below */
+    }
     default: break;
     }
     if (!s) return;
@@ -1143,7 +1343,7 @@ static void cm_run(Explorer *e, App *a, int item) {
     case CM_OT_MORE: nsx_load_more(s); break;
     case CM_OT_REFRESH: nsx_refresh_others(s); break;
     case CM_SC_CONSOLE: open_console(a, c, sc); break;
-    case CM_SC_EXPAND: { Node *n = NULL; for (int i = 0; i < e->nroots && !n; i++) if (e->roots[i]->conn == c) n = find_schema(e->roots[i], sc); if (n) toggle(n); break; }
+    case CM_SC_EXPAND: { Node *cn = conn_node(e, c), *n = cn ? find_schema(cn, sc) : NULL; if (n) toggle(n); break; }
     case CM_SC_FIND: search_open(e, c, true, sc); break;
     case CM_SC_REFRESH: nsx_refresh_schema(s, sc); break;
     case CM_SC_PROPS: cm_props_schema(e, c, sc, x, y); return;
@@ -1405,7 +1605,26 @@ void explorer_update(Explorer *e, App *a, Rect b) {
     Rect rows = body;
     e->rows_rect = rows;
 
-    if (focused && in->nkeys) handle_keys(e, a);
+    if (e->rn_open) {   /* inline folder rename: Enter applies, Escape cancels (the row draws the field) */
+        unsigned m;
+        if (input_key_any(in, SDLK_ESCAPE, &m)) e->rn_open = false;
+        else if (input_key_any(in, SDLK_RETURN, &m) || input_key_any(in, SDLK_KP_ENTER, &m)) {
+            e->rn_open = false;
+            char nm[128]; snprintf(nm, sizeof nm, "%s", e->rn.buf); conn_folder_normalize(nm, sizeof nm);
+            char to[256]; snprintf(to, sizeof to, "%s", e->rn_path);
+            char *sl = strrchr(to, '/'); if (sl) sl[1] = 0; else to[0] = 0;   /* the parent, with its "/" */
+            size_t tl = strlen(to); snprintf(to + tl, sizeof to - tl, "%s", nm);
+            conn_folder_normalize(to, sizeof to);
+            if (nm[0] && strcmp(to, e->rn_path)) {
+                bool was_open = fo_is_open(e->rn_path);
+                fo_move(a, e->rn_path, to);
+                if (was_open) fo_set(to, true);
+                app_connections_changed(a);
+                app_status(a, "Folder renamed to %s", to);
+            }
+        }
+    }
+    else if (focused && in->nkeys) handle_keys(e, a);
     if (e->search_open) return;
 
     e->nvis = 0;
@@ -1434,6 +1653,8 @@ void explorer_update(Explorer *e, App *a, Rect b) {
         in->mouse_consumed = true;
         a->focus = FOCUS_EXPLORER;
         Node *n = hover_idx >= 0 ? e->vis[hover_idx] : NULL;
+        bool in_set = false; for (int q = 0; n && q < e->nmsel; q++) if (e->msel[q] == n) in_set = true;
+        if (n && !in_set) e->nmsel = 0;
         if (n) e->selected = n;
         if (n) cm_open_node(e, a, n, in->mouse_x, in->mouse_y);
         else cm_open(e, NULL, in->mouse_x, in->mouse_y);
@@ -1447,10 +1668,37 @@ void explorer_update(Explorer *e, App *a, Rect b) {
         a->focus = FOCUS_EXPLORER;
         if (hover_idx >= 0) {
             Node *n = e->vis[hover_idx];
+            bool on_rename = e->rn_open && n->kind == NODE_FOLDER && n->sname && !strcmp(n->sname, e->rn_path);
+            if (e->rn_open && !on_rename) e->rn_open = false;   /* a click elsewhere cancels the rename */
+            if (on_rename) { in->mouse_consumed = false; goto rows_done; }   /* the field takes the click */
+            SDL_Keymod km = app_modstate(a);
+            bool add = (km & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) != 0, range = (km & SDL_KMOD_SHIFT) != 0;
+            if (n->kind == NODE_TABLE && (add || range)) {   /* several tables: Cmd toggles one, Shift selects from the last one clicked */
+                if (!e->nmsel && e->selected && e->selected->kind == NODE_TABLE && e->selected->conn == n->conn) e->msel[e->nmsel++] = e->selected;
+                if (range && e->anchor && e->anchor->kind == NODE_TABLE && e->anchor->conn == n->conn) {
+                    int i0 = vis_index(e, e->anchor), i1 = hover_idx;
+                    if (i0 > i1) { int t = i0; i0 = i1; i1 = t; }
+                    if (!add) e->nmsel = 0;
+                    for (int i = i0; i >= 0 && i <= i1 && e->nmsel < 512; i++) {
+                        Node *m = e->vis[i]; if (m->kind != NODE_TABLE || m->conn != n->conn) continue;
+                        bool have = false; for (int q = 0; q < e->nmsel; q++) if (e->msel[q] == m) have = true;
+                        if (!have) e->msel[e->nmsel++] = m;
+                    }
+                } else {
+                    int at = -1; for (int q = 0; q < e->nmsel; q++) if (e->msel[q] == n) at = q;
+                    if (at >= 0) { memmove(&e->msel[at], &e->msel[at + 1], sizeof e->msel[0] * (size_t)(e->nmsel - at - 1)); e->nmsel--; }
+                    else if (e->nmsel < 512) { for (int q = 0; q < e->nmsel; q++) if (e->msel[q]->conn != n->conn) { e->nmsel = 0; break; } e->msel[e->nmsel++] = n; }
+                    e->anchor = n;
+                }
+                e->selected = n;
+                return;
+            }
+            e->nmsel = 0; e->anchor = n;
             e->selected = n;
             float chevron_x = rows.x + px(a, 10 + 14 * n->depth);
             bool on_chevron = in->mouse_x < chevron_x + px(a, 16);
             if (n->kind == NODE_ACTION) run_action(e, a, n);
+            else if (n->kind == NODE_FOLDER) { if (in->clicks < 2) toggle(n); }   /* one click opens / closes; the double click's second press does nothing */
             else if (in->clicks >= 2) {
                 if (n->kind == NODE_TABLE) preview_table(a, n);
                 else if (n->kind == NODE_OBJECT && n->okey) { ObjKey k = *n->okey; objed_open(a, n->conn, &k); }
@@ -1467,6 +1715,7 @@ void explorer_update(Explorer *e, App *a, Rect b) {
         }
     }
 
+rows_done:
     /* a click above may have rebuilt the tree (switching connection, connect, preview, DDL):
      * flatten again so nothing below touches a freed node */
     e->nvis = 0;
@@ -1490,6 +1739,7 @@ void explorer_update(Explorer *e, App *a, Rect b) {
         Node *n = e->vis[i];
         Rect rr = rect_make(rows.x, rows.y + i * row_h - e->scroll, rows.w, row_h);
         bool selected = n == e->selected;
+        for (int q = 0; q < e->nmsel && !selected; q++) if (e->msel[q] == n) selected = true;
         if (selected) draw_rect(r, rr, color_hex(focused ? T_SELECTED : T_HOVER));
         else if (i == hover_idx) draw_rect(r, rr, color_hex(T_HOVER));
         if (selected && focused) draw_rect(r, rect_make(rr.x, rr.y, px(a, 2), rr.h), color_hex(T_ACCENT));
@@ -1528,6 +1778,14 @@ void explorer_update(Explorer *e, App *a, Rect b) {
             if (n->detail && (strstr(n->detail, "current") || strstr(n->detail, "pinned"))) draw_rrect(r, rect_make(f.x + f.w - px(a, 4), f.y + px(a, 1), px(a, 3), px(a, 3)), px(a, 1.5f), color_hex(T_YELLOW));
             break;
         }
+        case NODE_FOLDER: {   /* a folder of connections: outlined when closed, filled when open */
+            Rect f = rect_make(x + px(a, 1), cy - is * 0.34f, is - px(a, 2), is * 0.68f);
+            Color fc = color_hex(T_YELLOW);
+            draw_rrect(r, rect_make(f.x, f.y - px(a, 2), f.w * 0.45f, px(a, 4)), px(a, 1), fc);
+            draw_rrect(r, f, px(a, 2), fc);
+            if (!n->expanded) draw_rrect(r, rect_inset(f, px(a, 1.5f), px(a, 1.5f)), px(a, 1.5f), bg);
+            break;
+        }
         default: break;
         }
         if (n->kind != NODE_GROUP && n->kind != NODE_ACTION) x += is + px(a, 8);
@@ -1558,6 +1816,11 @@ void explorer_update(Explorer *e, App *a, Rect b) {
             draw_text_fit(a->font_small, r, n->detail, -1, dr, color_hex(bad ? T_RED : T_TEXT_DIM), ALIGN_RIGHT);
         }
         Rect lr = rect_make(x, rr.y, rr.x + rr.w - x - detail_w - px(a, 10), rr.h);
+        if (e->rn_open && n->kind == NODE_FOLDER && n->sname && !strcmp(n->sname, e->rn_path)) {   /* inline rename */
+            Rect fr = rect_make(lr.x - px(a, 4), rr.y + px(a, 2), lr.w + px(a, 4), rr.h - px(a, 4)); ui_record("explorer:rename", fr);
+            ui_textfield(a, &e->rn, fr, "Folder name", true);
+            continue;
+        }
         Color tc = color_hex(n->kind == NODE_ACTION ? T_ACCENT : n->kind == NODE_GROUP ? T_TEXT_MUTED : n->kind == NODE_CONN && !n->conn->db ? T_TEXT_MUTED : T_TEXT);
         draw_text_fit(n->kind == NODE_GROUP || n->kind == NODE_ACTION ? a->font_small : a->font_ui, r, n->label, -1, lr, tc, ALIGN_LEFT);
     }
@@ -1565,6 +1828,21 @@ void explorer_update(Explorer *e, App *a, Rect b) {
     clip_pop(r);
 
     if (hover_idx >= 0 && e->vis[hover_idx]->kind != NODE_COLUMN && !e->cm_open) a->want_cursor = CURSOR_HAND;
+}
+
+/* See explorer.h. One line: folders "+Name(n)" closed / "-Name(n)" open, connections by name,
+ * nesting by dots ("..acme-prod"); rows below an open connection are left out. */
+void explorer_dump(Explorer *e) {
+    printf("explorer");
+    for (int i = 0; i < e->nvis; i++) {
+        Node *n = e->vis[i];
+        if (n->kind != NODE_FOLDER && n->kind != NODE_CONN) continue;
+        printf(" |");
+        for (int d = 0; d < n->depth; d++) putchar('.');
+        if (n->kind == NODE_FOLDER) printf("%c%s(%s)", n->expanded ? '-' : '+', n->label, n->detail ? n->detail : "0");
+        else printf("%s", n->label);
+    }
+    printf("\n"); fflush(stdout);
 }
 
 /* Test harness: centre (window units) of the first visible node whose label is `label`. */

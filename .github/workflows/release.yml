@@ -1,5 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Release builds of Lume Data, started by hand (Actions > Release builds > Run workflow).
+# Versions are semantic (MAJOR.MINOR.PATCH): the "bump" input moves the last tag vX.Y.Z (or "version" sets
+# one); every platform builds that version; when macOS and Linux succeed, the release job writes it into
+# CMakeLists.txt, commits "Release vX.Y.Z" to main, tags it, publishes a GitHub Release with the installers
+# and generated notes (the app's update check reads it), freezes a docs version on minor / major releases
+# and publishes the documentation.
 #   macOS   one universal DMG (Apple Silicon + Intel), signed and notarized when the secrets exist
 #   Linux   portable .tar.gz for x86_64 and arm64
 #   Windows portable .zip for x64 (experimental: the Windows port is not validated yet, BL-058)
@@ -15,6 +20,19 @@ name: Release builds
 on:
   workflow_dispatch:
     inputs:
+      bump:
+        description: Next version from the last tag (first release without tags = the version in CMakeLists.txt)
+        type: choice
+        options: [patch, minor, major]
+        default: minor
+      version:
+        description: Or an exact version (MAJOR.MINOR.PATCH, e.g. 0.2.0); empty = use bump
+        type: string
+        default: ''
+      publish:
+        description: Tag and publish the GitHub Release (off = build artifacts only)
+        type: boolean
+        default: true
       run_tests:
         description: Run the CI test suites before packaging
         type: boolean
@@ -40,8 +58,49 @@ env:
   SDL_TAG: release-3.4.16   # the SDL3 every platform builds against (same as the developer machine)
 
 jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      docs_version: ${{ steps.v.outputs.docs_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: v
+        env:
+          BUMP: ${{ inputs.bump }}
+          EXACT: ${{ inputs.version }}
+        run: |
+          set -eu
+          semver='^[0-9]+\.[0-9]+\.[0-9]+$'
+          last=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1 | sed 's/^v//')
+          cm=$(sed -n 's/^project(lume VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          if [ -n "$EXACT" ]; then
+            v="${EXACT#v}"
+          elif [ -z "$last" ]; then
+            v="$cm"   # the first release: the version the code already declares
+          else
+            ma=${last%%.*}; rest=${last#*.}; mi=${rest%%.*}; pa=${rest#*.}
+            case "$BUMP" in
+              major) v="$((ma + 1)).0.0" ;;
+              minor) v="$ma.$((mi + 1)).0" ;;
+              *) v="$ma.$mi.$((pa + 1))" ;;
+            esac
+          fi
+          echo "$v" | grep -Eq "$semver" || { echo "::error::'$v' is not MAJOR.MINOR.PATCH"; exit 1; }
+          if git rev-parse -q --verify "refs/tags/v$v" >/dev/null; then echo "::error::tag v$v already exists"; exit 1; fi
+          if [ -n "$last" ] && [ "$(printf '%s\n%s\n' "$last" "$v" | sort -V | tail -1)" != "$v" ]; then echo "::error::v$v is not newer than v$last"; exit 1; fi
+          # a docs version per minor release (patches update it): 0.2.0 -> "0.2"
+          case "$v" in *.0) dv="${v%.0}" ;; *) dv="" ;; esac
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "docs_version=$dv" >> "$GITHUB_OUTPUT"
+          echo "Release version: v$v (last tag: ${last:-none}; docs version: ${dv:-unchanged})" >> "$GITHUB_STEP_SUMMARY"
+
   macos:
     name: macOS (universal DMG)
+    needs: version
     runs-on: macos-15
     env:
       HAS_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
@@ -50,6 +109,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0   # the build id in About comes from git
+      - name: Version ${{ needs.version.outputs.version }}
+        run: sed -i.bak "s/^project(lume VERSION [0-9.]*/project(lume VERSION ${{ needs.version.outputs.version }}/" CMakeLists.txt && grep -n "^project(lume" CMakeLists.txt
 
       - name: SDL3 (universal, cached)
         id: sdl-cache
@@ -159,10 +220,13 @@ jobs:
           - arch: arm64
             runner: ubuntu-22.04-arm
     runs-on: ${{ matrix.runner }}
+    needs: version
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Version ${{ needs.version.outputs.version }}
+        run: sed -i.bak "s/^project(lume VERSION [0-9.]*/project(lume VERSION ${{ needs.version.outputs.version }}/" CMakeLists.txt && grep -n "^project(lume" CMakeLists.txt
       - name: Build tools and SDL3 dependencies
         run: |
           sudo apt-get update
@@ -186,6 +250,8 @@ jobs:
             -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sdl3"
           cmake --build "$RUNNER_TEMP/sdl-build"
           cmake --install "$RUNNER_TEMP/sdl-build"
+      - name: Version ${{ needs.version.outputs.version }}
+        run: sed -i "s/^project(lume VERSION [0-9.]*/project(lume VERSION ${{ needs.version.outputs.version }}/" CMakeLists.txt && grep -n "^project(lume" CMakeLists.txt
       - name: Build Lume
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/sdl3" \
@@ -219,6 +285,7 @@ jobs:
     name: Windows (x64, experimental)
     runs-on: windows-2022
     continue-on-error: true   # until the Windows port is validated (BL-058): never blocks the other platforms
+    needs: version
     defaults:
       run:
         shell: msys2 {0}
@@ -261,3 +328,65 @@ jobs:
           name: lume-windows-x64
           path: build/lume-data-*.zip
           if-no-files-found: error
+
+  release:
+    name: Tag and publish v${{ needs.version.outputs.version }}
+    needs: [version, macos, linux, windows]
+    # macOS and Linux must succeed; Windows is attached when it built (experimental)
+    if: ${{ always() && inputs.publish && needs.version.result == 'success' && needs.macos.result == 'success' && needs.linux.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      V: ${{ needs.version.outputs.version }}
+      DV: ${{ needs.version.outputs.docs_version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - uses: actions/setup-node@v4
+        if: ${{ needs.version.outputs.docs_version != '' }}
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Version in the code, docs version
+        run: |
+          set -eu
+          sed -i "s/^project(lume VERSION [0-9.]*/project(lume VERSION $V/" CMakeLists.txt
+          if [ -n "$DV" ] && [ -d website ] && ! grep -q "\"$DV\"" website/versions.json 2>/dev/null; then
+            (cd website && npm ci && npm run docusaurus docs:version "$DV")
+          fi
+      - name: Commit and tag
+        run: |
+          set -eu
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CMakeLists.txt website/versions.json website/versioned_docs website/versioned_sidebars 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "Release v$V"
+          git tag -a "v$V" -m "Lume Data $V"
+          git push origin HEAD:main "v$V"
+      - name: GitHub Release
+        run: |
+          set -eu
+          ls -R dist | head -40
+          files=$(find dist -type f \( -name '*.dmg' -o -name '*.tar.gz' -o -name '*.zip' \) | sort)
+          [ -n "$files" ] || { echo "::error::no installers to publish"; exit 1; }
+          # not marked as a pre-release: the app's update check offers published releases only
+          gh release create "v$V" $files --title "Lume Data $V" --generate-notes --verify-tag
+          echo "Published https://github.com/${{ github.repository }}/releases/tag/v$V" >> "$GITHUB_STEP_SUMMARY"
+
+  docs:
+    name: Documentation
+    needs: release
+    if: ${{ always() && needs.release.result == 'success' }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/docs.yml

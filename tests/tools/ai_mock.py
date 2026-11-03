@@ -48,6 +48,17 @@ class H(BaseHTTPRequestHandler):
             self.send_response(401); self.end_headers(); self.wfile.write(b'{"type":"error","error":{"type":"authentication_error","message":"bad key"}}'); return
         if self.path == '/slow': time.sleep(30); return
         system = body.get('system', '')
+        if 'Lume Data ER diagram' in system:   # ER diagrams (DGM-088..090): explanation, domain groups, conceptual map
+            user = body['messages'][0]['content']
+            with open(sys.argv[1] if len(sys.argv) > 1 else '/dev/null', 'a') as lg: lg.write(user + '\n=====\n')
+            if 'Explain how' in user:
+                text = "orders belongs to customers (orders.customer_id -> customers.id, a foreign key). order_items probably holds the lines of an order."
+            elif 'Group these tables' in user:
+                text = json.dumps({"groups": [{"title": "Sales", "tables": ["orders", "customers", "ghost_table"]}, {"title": "Catalog", "tables": ["products"]}, {"title": "Imaginary", "tables": ["nope1", "nope2"]}]})
+            else:
+                text = json.dumps({"names": [{"table": "customers", "alias": "Clients"}, {"table": "ghost", "alias": "Ghost"}], "relations": [{"from": "archive_orders", "to": "customers", "label": "archived for", "why": "customer_id column"}]})
+            out = {"model": body.get("model"), "stop_reason": "end_turn", "content": [{"type": "text", "text": text}], "usage": {"input_tokens": 10, "output_tokens": 10}}
+            b = json.dumps(out).encode(); self.send_response(200); self.send_header('content-type', 'application/json'); self.send_header('content-length', str(len(b))); self.end_headers(); self.wfile.write(b); return
         if 'review a staged change' in system:   # the Git risk review (roadmap item 21)
             text = "- [high] sql/v_revenue.sql: the view changes what revenue counts; check the reports that use it.\n- [low] sql/v_revenue.sql: no index needed."
             out = {"model": body.get("model"), "stop_reason": "end_turn", "content": [{"type": "text", "text": text}], "usage": {"input_tokens": 10, "output_tokens": 10}}

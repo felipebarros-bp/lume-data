@@ -1,0 +1,16 @@
+# Duplicate Connection keeps the folder; Expand All opens every folder however many there are
+wait 300
+# Clients and Acme Corp are open: remembered from the previous run
+rnode "acme-prod"
+wait 60
+button "Duplicate Connection…"
+wait 60
+dialogstate
+key Escape
+wait 30
+rnode "Clients"
+wait 60
+button "Expand All Folders"
+wait 60
+explorerdump
+quit

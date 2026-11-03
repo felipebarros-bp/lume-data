@@ -60,5 +60,13 @@ if docker exec dbv-postgres true 2>/dev/null && [ -f "$ENV_FILE" ]; then
   unset PW
 else echo "skip  PostgreSQL scenarios: dbv-postgres not running"; fi
 
+# the component menus through a real click on the popup (a bug once swallowed every item above id 100)
+out=$(LUME_PREF_DIR=$P LUME_SCRIPT=tests/scripts/td_menu.txt ./build/lume 2>&1)
+expect "every script target found (component menus)" '[ "$(printf "%s\n" "$out" | grep -c "target not found")" = 0 ]'
+k0=$(nth "$out" 1 | sed -n "s/.* keys=\([0-9]*\).*/\1/p"); c0=$(nth "$out" 1 | sed -n "s/.* cols=\([0-9]*\).*/\1/p")
+expect "TBL: right-click Foreign Keys > Add Foreign Key adds one (clicked in the menu)" '[ "$(nth "$out" 2 | sed -n "s/.* keys=\([0-9]*\).*/\1/p")" = $((k0 + 1)) ]'
+expect "TBL: right-click Unique Keys > Add Unique Key adds one" '[ "$(nth "$out" 3 | sed -n "s/.* keys=\([0-9]*\).*/\1/p")" = $((k0 + 2)) ]'
+expect "TBL: right-click Columns > Add Column adds one" '[ "$(nth "$out" 4 | sed -n "s/.* cols=\([0-9]*\).*/\1/p")" = $((c0 + 1)) ]'
+
 echo "TDES UI: $([ $fails = 0 ] && echo passed || echo "FAILED ($fails failures)")"
 [ $fails = 0 ]

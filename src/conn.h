@@ -60,13 +60,14 @@ struct Connection {
     uint32_t env_color;         /* 0xRRGGBB, 0 = the environment's default colour */
     bool read_only;             /* "read-only in Lume": enforced as far as the driver allows, see db_set_read_only */
     char ai_conn[12];           /* the connection the assistant's SQL runs on (a SELECT-only login), "" = this one (BL-051) */
-    /* SSH tunnel (like DataGrip's "Use SSH tunnel"): the driver connects to a local port that the
+    /* SSH tunnel: the driver connects to a local port that the
      * system's ssh forwards to host:port (sshtun.h). Key / agent / ~/.ssh/config only, no SSH password. */
     bool ssh;                   /* use the tunnel */
     char ssh_host[128];         /* SSH server (or a Host alias from ~/.ssh/config) */
     char ssh_port[8];           /* "" = 22 / ~/.ssh/config */
     char ssh_user[64];          /* "" = ~/.ssh/config / the login name */
     char ssh_key[512];          /* private key file, "" = the agent / ~/.ssh/config */
+    char folder[128];           /* Explorer folder, "/" between levels ("Clients/Acme"); "" = top level */
     /* runtime */
     Db *db;   /* NULL while disconnected */
     struct SshTunnel *tunnel;   /* the running tunnel of the open Db, NULL without one */
@@ -87,7 +88,7 @@ struct Connection {
 };
 /* Environment label of a connection (TBR-014). */
 enum { CONN_ENV_NONE, CONN_ENV_DEV, CONN_ENV_HML, CONN_ENV_PROD, CONN_ENV_COUNT };
-const char *conn_env_name(int env);                 /* "", "DEV", "HML", "PROD" */
+const char *conn_env_name(int env);                 /* "", "DEV", "STG", "PROD" (STG = staging; "HML" is still read) */
 int conn_env_by_name(const char *name);             /* CONN_ENV_NONE when unknown */
 uint32_t conn_env_color(const Connection *c);       /* configured colour, else the environment's default */
 /* Life cycle of a saved connection, as shown by the toolbar (with text, never only a colour). */
@@ -117,6 +118,8 @@ const DriverInfo *conn_driver(const Connection *c);
 /* Builds the driver-specific location string (conninfo, path, ...) into buf; "" when the
  * driver is unknown. The result can contain the password: never log it. */
 void conn_location(const Connection *c, char *buf, size_t n);
+/* Tidies a folder path in place: segments trimmed, empty ones dropped, joined by "/" ("" = top level). */
+void conn_folder_normalize(char *path, size_t n);
 /* One-line summary for the explorer detail, e.g. "localhost:15432/syn". */
 void conn_summary(const Connection *c, char *buf, size_t n);
 

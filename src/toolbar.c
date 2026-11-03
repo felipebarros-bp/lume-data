@@ -1109,9 +1109,9 @@ void toolbar_dump_menu(Toolbar *t) {
     fflush(stdout);
 }
 void toolbar_dump_modal(Toolbar *t) {
-    char body[900]; snprintf(body, sizeof body, "%s", t->modal == TM_SESSION ? t->session_text : t->cf_body);
+    char body[2600]; snprintf(body, sizeof body, "%s", t->modal == TM_SESSION ? t->session_text : t->cf_body);
     for (char *p = body; *p; p++) if (*p == '\n') *p = '|';
-    printf("tbmodal kind=%d title=\"%s\" body=\"%s\"\n", t->modal, t->modal == TM_CONFIRM ? t->cf_title : "", body);
+    printf("tbmodal kind=%d title=\"%s\" body=\"%s\" box=%.0fx%.0f\n", t->modal, t->modal == TM_CONFIRM ? t->cf_title : "", body, t->modal_rect.w, t->modal_rect.h);
     fflush(stdout);
 }
 

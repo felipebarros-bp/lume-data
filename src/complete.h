@@ -12,7 +12,7 @@ enum { CAND_COLUMN, CAND_ALIAS, CAND_TABLE, CAND_VIEW, CAND_FUNC, CAND_KEYWORD }
 
 /* One completion proposal. */
 typedef struct Cand {
-    char text[80];      /* inserted into the editor */
+    char text[240];     /* inserted into the editor (a JOIN condition with every pair of a composite key) */
     char detail[96];    /* right-hand hint: type, owning table, "keyword" */
     char key[128];      /* usage key, empty when not learnable */
     int kind;           /* CAND_* */
@@ -30,6 +30,9 @@ void complete_destroy(Completer *c);
  * for `location`. Pass NULL/0 to clear. */
 void complete_set_schema(Completer *c, DbTable *tables, int ntables, const char *location,
                          bool (*load_cols)(void *ctx, DbTable *t), void *ctx);
+/* Foreign keys of a table, read on demand the first time a JOIN ... ON needs them (cached per schema).
+ * Same ctx as complete_set_schema. NULL: JOIN conditions come only from column names. */
+void complete_set_fk_loader(Completer *c, bool (*load_fks)(void *ctx, const char *table, DbFk **out, int *n));
 /* Learns object usage and token n-grams from SQL text (one or more statements). */
 void complete_learn_statement(Completer *c, const char *sql, int len);
 /* Learns from a proposal accepted in the popup. */

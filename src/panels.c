@@ -34,6 +34,7 @@
 #include "tdes.h"
 #include "rptview.h"
 #include "gitview.h"
+#include "dgmview.h"
 #include "sqllex.h"
 #include "commands.h"
 #include "conn.h"
@@ -69,7 +70,7 @@
 
 /* One query tab of the center: a slot (used), a stable id known to the engine, the Editor it
  * owns, its title and the id of the connection it runs on ("" = none). */
-typedef struct EdTab { bool used; int id; Editor *ed; char title[48]; char conn_id[16]; struct ObjDoc *obj; struct TdDoc *td; struct RvDoc *rv; struct GdDoc *gd;   /* gd: Git diff tab (gitview.h) */
+typedef struct EdTab { bool used; int id; Editor *ed; char title[48]; char conn_id[16]; struct ObjDoc *obj; struct TdDoc *td; struct RvDoc *rv; struct GdDoc *gd; struct DgDoc *dg;   /* gd: Git diff tab (gitview.h); dg: ER diagram (dgmview.h) */
     /* a file on disk (GIT-017 / 064): path, the editor revision last saved / loaded, what the disk had then */
     char path[1024]; uint32_t saved_rev; long long disk_mtime, disk_size; Uint64 check_at; bool disk_changed; } EdTab;   /* rv: Report Studio tab (rptview.h) */   /* td: table designer tab (tdes.h) */   /* obj: object definition tab (objed.h), NULL for a query tab */
 /* A saved named layout: its arrangement and the connection it is bound to ("" = none). */
@@ -504,6 +505,26 @@ int panels_open_diff_tab(Panels *P, App *a, const char *title, struct GdDoc *gd)
     activate_tab(P, a, id, true);
     return id;
 }
+/* ER diagram tab (dgmview.c): the canvas replaces the editor; the document belongs to dgmview. */
+int panels_open_diagram_tab(Panels *P, App *a, const char *title, struct DgDoc *dg) {
+    Connection *c = NULL;
+    for (int i = 0; a->conns && i < a->conns->n; i++) if (!strcmp(a->conns->items[i]->id, dgmview_doc_conn(dg))) c = a->conns->items[i];
+    int id = panels_open_tab(P, a, title, c ? c->id : "", "");
+    EdTab *t = tab_by_id(P, id);
+    if (!t) return -1;
+    t->dg = dg;
+    activate_tab(P, a, id, true);
+    return id;
+}
+struct DgDoc *panels_active_diagram(Panels *P, App *a) {
+    (void)a;
+    int g = P->dock.st.active_editor_group;
+    EdTab *t = tab_by_id(P, P->dock.st.editor[g].active);
+    return t ? t->dg : NULL;
+}
+void panels_activate_diagram(Panels *P, App *a, struct DgDoc *dg) {
+    for (int i = 0; i < MAX_TABS; i++) if (P->tabs[i].used && P->tabs[i].dg == dg) { activate_tab(P, a, P->tabs[i].id, true); return; }
+}
 /* Report Studio tab (rptview.c): the canvas replaces the editor; the document belongs to rptview. */
 int panels_open_report_tab(Panels *P, App *a, const char *title, struct RvDoc *rv) {
     int id = panels_open_tab(P, a, title, "", "");
@@ -558,14 +579,15 @@ static void close_tab_now(Panels *P, App *a, int id) {
     }
     struct ObjDoc *obj = t->obj;
     struct TdDoc *td = t->td;
-    struct RvDoc *rv = t->rv; struct GdDoc *gd = t->gd;
-    t->obj = NULL; t->td = NULL; t->rv = NULL; t->gd = NULL; t->path[0] = 0;
+    struct RvDoc *rv = t->rv; struct GdDoc *gd = t->gd; struct DgDoc *dg = t->dg;
+    t->obj = NULL; t->td = NULL; t->rv = NULL; t->gd = NULL; t->dg = NULL; t->path[0] = 0;
     editor_destroy(t->ed);
     t->used = false;
     if (obj) objed_tab_closed(a, obj);   /* keeps the draft on disk (OBJ-009) */
     if (td) tdes_tab_closed(a, td);
     if (rv) rptview_tab_closed(a, rv);   /* unsaved changes stay in the autosave (LI-050.2) */
     if (gd) gitview_diff_closed(a, gd);
+    if (dg) dgmview_tab_closed(a, dg);   /* the layout is saved (DGM-053) */
 }
 
 static void open_confirm(Panels *P, int kind, int arg, const char *text);
@@ -1723,8 +1745,8 @@ static void draw_editor_group(Panels *P, App *a, int eg, Rect rc) {
         EdTab *t = tab_by_id(P, e->tabs[i]);
         if (!t) continue;
         Connection *c = t->conn_id[0] ? conn_by_id(a, t->conn_id) : NULL;
-        char cn[80]; snprintf(cn, sizeof cn, "%s", c ? c->name : t->rv ? "report" : t->gd ? "diff" : t->path[0] ? "file" : "no connection");   /* a report reads each dataset's own connection */
-        bool tdirty = (t->obj && objed_doc_dirty(t->obj)) || (t->td && tdes_doc_dirty(t->td)) || (t->rv && rptview_doc_dirty(t->rv)) || (t->path[0] && editor_revision(t->ed) != t->saved_rev);   /* unpublished object / table edit: a dot after the title */
+        char cn[80]; snprintf(cn, sizeof cn, "%s", c ? c->name : t->rv ? "report" : t->gd ? "diff" : t->dg ? "diagram" : t->path[0] ? "file" : "no connection");   /* a report reads each dataset's own connection */
+        bool tdirty = (t->obj && objed_doc_dirty(t->obj)) || (t->td && tdes_doc_dirty(t->td)) || (t->rv && rptview_doc_dirty(t->rv)) || (t->dg && dgmview_doc_dirty(t->dg)) || (t->path[0] && editor_revision(t->ed) != t->saved_rev);   /* unpublished object / table edit: a dot after the title */
         char ttl[64]; snprintf(ttl, sizeof ttl, "%s%s", t->title, tdirty ? "   " : "");
         float tw0 = font_width(a->font_ui, t->title, -1), tw = tw0 + (tdirty ? px(a, 16) : 0), cw = font_width(a->font_small, cn, -1);   /* room for the dot, apart from the title */
         Rect tab = rect_make(x, strip.y, tw + cw + px(a, 66), hh);
@@ -1760,6 +1782,7 @@ static void draw_editor_group(Panels *P, App *a, int eg, Rect rc) {
     else if (at->td) tdes_tab_body(a, at->td, at->ed, body);   /* structure, properties, SQL preview */
     else if (at->rv) rptview_tab_body(a, at->rv, body);      /* report canvas */
     else if (at->gd) gitview_diff_body(a, at->gd, body);     /* Git diff */
+    else if (at->dg) dgmview_tab_body(a, at->dg, body);      /* ER diagram */
     else {
         if (at->path[0]) {
             check_disk(P, a, at);

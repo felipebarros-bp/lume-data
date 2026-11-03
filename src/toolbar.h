@@ -48,4 +48,5 @@ void toolbar_print_names(Toolbar *t, App *a);                        /* accessib
 void toolbar_dump_menu(Toolbar *t);                                  /* open dropdown entries and their state */
 void toolbar_dump_modal(Toolbar *t);                                 /* open dialog's title and text */
 void toolbar_connect_failed(Toolbar *t, App *a, Connection *c);
+bool toolbar_update_prompt(Toolbar *t, App *a, const char *title, const char *body, int notice);   /* update.c: a newer version (Download / Release Notes / Later / Skip This Version) or, notice=1, a one-button notice; false when another question is open */
 void toolbar_crash_prompt(Toolbar *t, App *a, const char *body);   /* the previous run crashed: Send report / View report / Don't send (crashrep.c) */   /* the failure in a dialog (Retry / Edit connection... / Close) */

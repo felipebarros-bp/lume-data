@@ -1,0 +1,7 @@
+# Launch: whatever the automatic check does, no dialog shows
+wait 30
+updateawait
+wait 30
+updatestate
+tbmodal
+quit

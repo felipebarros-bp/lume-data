@@ -131,6 +131,9 @@ static void sec_privacy(App *a, float x, float *py, float w) {
     { static const char *const cr[] = { "Ask each time", "Always send", "Never send" };
       int k = seg(a, x, &y, w, "When Lume Data closes unexpectedly, on the next launch:", cr, 3, a->crash_reports, "settings:crash"); if (k >= 0) a->crash_reports = k; }
     NOTE("A crash report holds the version, the operating system, the signal and the function names where Lume stopped. Never SQL, data, names, paths or user information. It goes to GlitchTip; View report (in the dialog) shows exactly what would be sent.");
+    HEAD("Updates");
+    if (chk(a, x, &y, w, "Check for updates automatically", a->update_check, "settings:updates")) a->update_check = !a->update_check;
+    NOTE("At launch and then once a day, Lume asks GitHub for the latest release of Lume Data and, when there is a newer one, offers it. The request carries nothing about you or your work (GitHub sees the IP address, as with any download). Help > Check for Updates works either way.");
     HEAD("Exactly what is sent when Lume starts");
     { char pv[1400]; telemetry_preview(pv, sizeof pv); float hh = results_draw_wrapped(a->font_mono ? a->font_mono : a->font_small, a->renderer, pv, rect_make(x, y, w, px(a, 200)), color_hex(T_TEXT_MUTED), 0, true); y += hh + px(a, 8); }
     *py = y;

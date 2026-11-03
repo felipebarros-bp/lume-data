@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 /*
- * SSH tunnels for connections (like DataGrip's "SSH/SSL > Use SSH tunnel").
+ * SSH tunnels for connections.
  *
  * The tunnel is the system's OpenSSH client (`ssh -N -L 127.0.0.1:<free port>:<db host>:<db port>`),
  * so it honours ~/.ssh/config (ProxyJump, aliases, IdentityFile...), the ssh-agent and the keys the

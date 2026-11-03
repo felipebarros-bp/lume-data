@@ -1,0 +1,10 @@
+# DGM-053: reopening keeps the positions; DGM-016: a changed structure is flagged
+wait 30
+dgm openfile build/dgm-ui-prefs/diagrams/orders.lume-erd
+dgmawait
+wait 20
+dgmstate
+dgm act compare
+wait 5
+dgmstate
+quit

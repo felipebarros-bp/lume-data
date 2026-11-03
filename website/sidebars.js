@@ -1,0 +1,21 @@
+// @ts-check
+/** @type {import('@docusaurus/plugin-content-docs').SidebarsConfig} */
+const sidebars = {
+  docs: [
+    'intro',
+    {type: 'category', label: 'Getting started', collapsed: false, items: ['getting-started/install', 'getting-started/first-connection', 'getting-started/tour']},
+    {type: 'category', label: 'Connections', items: ['connections/managing', 'connections/environments']},
+    {type: 'category', label: 'Working with SQL', items: ['sql/editor', 'sql/running', 'sql/results-grid', 'sql/editing-data', 'sql/exporting', 'sql/output', 'sql/transactions']},
+    {type: 'category', label: 'Exploring a database', items: ['explore/schema-explorer', 'explore/object-editor', 'explore/table-designer', 'explore/er-diagrams']},
+    'sql/execution-plans',
+    {type: 'category', label: 'Report Studio', items: ['reports/studio', 'reports/cards-and-filters', 'reports/themes-and-export']},
+    {type: 'category', label: 'Lume Intelligence', items: ['intelligence/overview', 'intelligence/setup', 'intelligence/what-is-sent', 'intelligence/sql-assistant']},
+    'source-control/git',
+    {type: 'category', label: 'Workspace and layout', items: ['workspace/panels-and-layouts', 'workspace/toolbar', 'workspace/navigation', 'workspace/workspaces']},
+    'settings',
+    'keyboard-shortcuts',
+    'privacy',
+    'troubleshooting',
+  ],
+};
+export default sidebars;

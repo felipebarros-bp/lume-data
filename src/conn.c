@@ -143,6 +143,23 @@ void conn_set_value(Connection *c, const char *key, const char *value) {
     if (i >= 0) snprintf(c->values[i], CONN_VALUE_LEN, "%s", value ? value : "");
 }
 
+/* See conn.h. "  a // b /" -> "a/b". */
+void conn_folder_normalize(char *path, size_t n) {
+    char out[256]; size_t w = 0;
+    const char *p = path;
+    while (*p) {
+        while (*p == '/' || *p == ' ' || *p == '\t') p++;
+        const char *s = p; while (*p && *p != '/') p++;
+        const char *e = p; while (e > s && (e[-1] == ' ' || e[-1] == '\t')) e--;
+        if (e > s) {
+            if (w && w + 1 < sizeof out) out[w++] = '/';
+            for (const char *q = s; q < e && w + 1 < sizeof out; q++) out[w++] = (*q == '\n' || *q == '\r') ? ' ' : *q;
+        }
+    }
+    out[w] = 0;
+    snprintf(path, n, "%s", out);
+}
+
 /* Dispatches to the driver's location builder. */
 void conn_location(const Connection *c, char *buf, size_t n) {
     const DriverInfo *d = conn_driver(c);
@@ -271,6 +288,7 @@ ConnStore *conns_load(void) {
         else if (strcmp(line, "ssh_port") == 0) snprintf(c->ssh_port, sizeof c->ssh_port, "%s", eq);
         else if (strcmp(line, "ssh_user") == 0) snprintf(c->ssh_user, sizeof c->ssh_user, "%s", eq);
         else if (strcmp(line, "ssh_key") == 0) snprintf(c->ssh_key, sizeof c->ssh_key, "%s", eq);
+        else if (strcmp(line, "folder") == 0) { snprintf(c->folder, sizeof c->folder, "%s", eq); conn_folder_normalize(c->folder, sizeof c->folder); }
         else conn_set_value(c, line, eq);
     }
     fclose(f);
@@ -309,6 +327,7 @@ void conns_save(ConnStore *s) {
             if (c->ai_conn[0]) fprintf(f, "ai_conn=%s\n", c->ai_conn);
             if (c->ssh) fprintf(f, "ssh=1\n");
             if (c->ssh_host[0]) fprintf(f, "ssh_host=%s\nssh_port=%s\nssh_user=%s\nssh_key=%s\n", c->ssh_host, c->ssh_port, c->ssh_user, c->ssh_key);   /* kept when switched off */
+            if (c->folder[0]) fprintf(f, "folder=%s\n", c->folder);
             for (int k = 0; d && k < d->nfields; k++)
                 if (d->fields[k].type != FIELD_PASSWORD) fprintf(f, "%s=%s\n", d->fields[k].key, c->values[k]);
         }
@@ -472,11 +491,12 @@ typedef struct ConnAttempt {
 } ConnAttempt;
 
 const char *conn_env_name(int env) {
-    static const char *n[] = { "", "DEV", "HML", "PROD" };
+    static const char *n[] = { "", "DEV", "STG", "PROD" };   /* STG: staging (saved as "HML" before; still read) */
     return env >= 0 && env < CONN_ENV_COUNT ? n[env] : "";
 }
 int conn_env_by_name(const char *name) {
     for (int e = 1; e < CONN_ENV_COUNT; e++) if (!strcasecmp(name, conn_env_name(e))) return e;
+    if (!strcasecmp(name, "HML") || !strcasecmp(name, "STAGING")) return CONN_ENV_HML;   /* older files / the full word */
     return CONN_ENV_NONE;
 }
 uint32_t conn_env_color(const Connection *c) {

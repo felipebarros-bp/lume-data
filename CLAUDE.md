@@ -33,6 +33,59 @@
 - **Never use Claude subscription tokens (`claude setup-token`).** Anthropic's terms forbid them in third-party apps.
 - **Ask first** before destructive or outward actions, and before accepting a license on Isa's behalf.
 
+## User documentation (website/)
+
+The public documentation is the Docusaurus site in `website/`, published to GitHub Pages
+(https://tessarotto21.github.io/lume-data) by `.github/workflows/docs.yml` on every push to `main`
+that touches `website/`. Each release freezes a version of it (the release workflow).
+
+- **Every user-facing change updates the docs in the same commit**: a new feature gets its page
+  or section, a changed behaviour, label, menu, shortcut or setting is corrected where it appears,
+  a removed one is removed. Add new pages to `website/sidebars.js`.
+- Write for users: task-oriented, English, the exact menu / button / shortcut names the app shows.
+  No internal ids (DGM-xxx, BL-xxx), source file names or developer jargon.
+- Only document what exists; say plainly when something is partial.
+- Never name other products, and never use real company or customer data in examples.
+- Check with `cd website && npm run build` (it fails on broken links) before committing.
+
+## Contributing: what a PR needs (learned from reviews)
+
+**Before opening**
+- Rebase on the latest `main` and resolve conflicts there (several areas move fast: `explorer.c`,
+  `dialog.c`, `conn.c`). Keep current names: environments are **DEV / STG / PROD** (STG replaced HML;
+  "HML" is still read from old files).
+- Run the full pipeline (`sh tests/run_all.sh`, 0 failed). New suites go in `tests/run_all.sh` and, when
+  they need no database server, in the macOS / Linux lists of `tests/run_ci.sh`.
+- Update `website/` for anything a user sees (see above). No `Co-Authored-By` lines.
+- The description says what, why, design, tests (what ran, what was skipped and why).
+
+**Tests that really test**
+- Drive the UI the way a user does: right-click a row (`rbutton "tdrow:..."` / `rnode`), click the menu
+  item by label (`menu "Add Foreign Key"`), click buttons by target (`button "..."`). A harness op that
+  calls the action directly (`td menu <id>`) skips the popup and hides bugs in it.
+- Assert on state dumps (`dgmstate`, `tdstate`, `explorerdump`...), not on timing.
+- Cover the failure paths too (refused input, a cancelled operation, an empty catalog).
+
+**Code rules that reviews keep catching**
+- **Processes:** `posix_spawn` with an argv (never a shell); option look-alikes refused and `--` before
+  operands; the child must not inherit Lume's descriptors (`POSIX_SPAWN_CLOEXEC_DEFAULT` on macOS,
+  `O_CLOEXEC` / close-on-exec elsewhere); a child must not outlive Lume (a watch pipe or cleanup).
+- **Threads:** code that can run on a worker (connect, catalog reads, AI) uses re-entrant calls only:
+  `strtok_r`, `localtime_r`, no static buffers.
+- **Network trust:** never accept an unknown SSH host key or certificate silently; show the fingerprint
+  and ask.
+- **Secrets:** never copied (Duplicate Connection leaves passwords empty), never logged, never on a
+  command line; a struct copied from a live connection has its runtime pointers cleared (db, tables,
+  attempt, tunnel).
+- **Sizes:** no fixed-size stacks / arrays that silently drop items as data grows; allocate from the count.
+- **Menus:** popup ids of different menus must not overlap ranges another branch interprets (a type
+  picker's 100.. range once swallowed every component menu item).
+- **Immediate-mode UI:** `ui_target` sees only widgets recorded so far in *this* frame; a widget drawn
+  later on top (a dropdown) must keep its own rect from the previous frame for hit-testing below it.
+- **Input:** per-frame fields reset in `input_begin_frame` (main window) **and** `app_input_begin`
+  (panel windows).
+- Never name other products in code, comments or docs; never use real company or customer data.
+
 ## License
 
 GNU AGPL-3.0-only, Copyright (C) 2026 Isabella Tessarotto (a personal project). See `LICENSE` and `LICENSING.md`. New source files start with `SPDX-License-Identifier: AGPL-3.0-only`.

@@ -235,6 +235,8 @@ static const MenuItem tools_items[] = {
     SUB("Reports", t_reports_items),
     CMD("Lume Intelligence", NULL, "report.assistant"),
     CMD("Source Control", NULL, "git.panel"),
+    CMD("New ER Diagram" E3, NULL, "dgm.new_schema"),
+    CMD("Open ER Diagram" E3, NULL, "dgm.open"),
     SEP,
     CMD("Reload Semantic Catalog", NULL, "report.reload_catalog"),
     SEP,
@@ -290,6 +292,8 @@ static const MenuItem window_items[] = {
     SUB("Editor", w_editor_items),
 };
 static const MenuItem help_items[] = {
+    { "Check for Updates\xE2\x80\xA6", NULL, ACT_CHECK_UPDATES, true },
+    SEP,
     { "About Lume Data", NULL, ACT_ABOUT, true },
 };
 

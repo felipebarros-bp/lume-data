@@ -19,8 +19,8 @@ void schidx_free(SchIdx *x) {
         SxTable *t = &x->t[i];
         free(t->schema); free(t->name); free(t->comment);
         for (int k = 0; k < t->ncols; k++) { free(t->cols[k].name); free(t->cols[k].type); free(t->cols[k].comment); }
-        for (int k = 0; k < t->nfks; k++) { free(t->fks[k].cols); free(t->fks[k].ref_table); }
-        free(t->cols); free(t->fks); free(t->usage); free(t->w); free(t->wcat);
+        for (int k = 0; k < t->nfks; k++) { free(t->fks[k].cols); free(t->fks[k].ref_table); free(t->fks[k].name); free(t->fks[k].ref_cols); }
+        free(t->cols); free(t->fks); free(t->usage); free(t->w); free(t->wcat); free(t->uniques);
     }
     free(x->t); free(x->slot);
     memset(x, 0, sizeof *x);
@@ -103,7 +103,24 @@ void schidx_add_fk(SchIdx *x, int ti, const char *cols, const char *ref_schema, 
     if (t->nfks == t->capfks) { t->capfks = t->capfks ? t->capfks * 2 : 4; t->fks = realloc(t->fks, sizeof *t->fks * (size_t)t->capfks); }
     SxFk *f = &t->fks[t->nfks++];
     char rt[600]; snprintf(rt, sizeof rt, "%s%s%s", ref_schema && *ref_schema ? ref_schema : "", ref_schema && *ref_schema ? "." : "", ref_name);
-    f->cols = dupz(cols); f->ref_table = dupz(rt); f->ref = -1;
+    f->cols = dupz(cols); f->ref_table = dupz(rt); f->ref = -1; f->name = NULL; f->ref_cols = NULL;
+}
+void schidx_add_fk2(SchIdx *x, int ti, const char *name, const char *cols, const char *ref_schema, const char *ref_name, const char *ref_cols) {
+    if (ti < 0 || ti >= x->n || !ref_name) return;
+    schidx_add_fk(x, ti, cols, ref_schema, ref_name);
+    SxFk *f = &x->t[ti].fks[x->t[ti].nfks - 1];
+    if (name && *name) f->name = dupz(name);
+    if (ref_cols && *ref_cols) f->ref_cols = dupz(ref_cols);
+}
+void schidx_add_unique(SchIdx *x, int ti, const char *cols) {
+    if (ti < 0 || ti >= x->n || !cols || !*cols) return;
+    SxTable *t = &x->t[ti];
+    size_t old = t->uniques ? strlen(t->uniques) : 0, add = strlen(cols);
+    if (old > 8000) return;
+    char *u = realloc(t->uniques, old + add + 2); if (!u) return;
+    t->uniques = u;
+    if (old) t->uniques[old++] = ';';
+    memcpy(t->uniques + old, cols, add); t->uniques[old + add] = 0;
 }
 void schidx_add_usage(SchIdx *x, int ti, const char *text) {
     if (ti < 0 || ti >= x->n || !text || !*text) return;
@@ -442,7 +459,8 @@ bool schidx_save(const SchIdx *x, const char *path) {
         const SxTable *t = &x->t[i];
         fputs("T\t", f); put_field(f, t->schema); fputc('\t', f); put_field(f, t->name); fprintf(f, "\t%d\t", t->is_view); put_field(f, t->comment); fputc('\n', f);
         for (int k = 0; k < t->ncols; k++) { const SxCol *c = &t->cols[k]; fputs("C\t", f); put_field(f, c->name); fputc('\t', f); put_field(f, c->type); fprintf(f, "\t%d\t%d\t", c->pk, c->notnull); put_field(f, c->comment); fputc('\n', f); }
-        for (int k = 0; k < t->nfks; k++) { fputs("F\t", f); put_field(f, t->fks[k].cols); fputc('\t', f); put_field(f, t->fks[k].ref_table); fputc('\n', f); }
+        for (int k = 0; k < t->nfks; k++) { fputs("F\t", f); put_field(f, t->fks[k].cols); fputc('\t', f); put_field(f, t->fks[k].ref_table); fputc('\t', f); put_field(f, t->fks[k].name); fputc('\t', f); put_field(f, t->fks[k].ref_cols); fputc('\n', f); }
+        if (t->uniques) { fputs("U\t", f); put_field(f, t->uniques); fputc('\n', f); }
     }
     bool ok = fflush(f) == 0 && !ferror(f);
     ok = fclose(f) == 0 && ok;
@@ -458,7 +476,9 @@ bool schidx_load(SchIdx *x, const char *path) {
         if (!ok) { if (n >= 4 && !strcmp(fl[0], "LUMESCHIDX") && !strcmp(fl[1], "1")) { snprintf(x->dialect, sizeof x->dialect, "%s", fl[2]); x->built_at = atof(fl[3]); ok = true; continue; } break; }
         if (n >= 5 && !strcmp(fl[0], "T")) { ti = schidx_table(x, fl[1], fl[2], atoi(fl[3]) != 0); schidx_table_comment(x, ti, fl[4]); }
         else if (n >= 6 && !strcmp(fl[0], "C")) schidx_add_col(x, ti, fl[1], fl[2], atoi(fl[3]) != 0, atoi(fl[4]) != 0, fl[5]);
-        else if (n >= 3 && !strcmp(fl[0], "F") && ti >= 0) { SxTable *t = &x->t[ti]; if (t->nfks == t->capfks) { t->capfks = t->capfks ? t->capfks * 2 : 4; t->fks = realloc(t->fks, sizeof *t->fks * (size_t)t->capfks); } t->fks[t->nfks].cols = dupz(fl[1]); t->fks[t->nfks].ref_table = dupz(fl[2]); t->fks[t->nfks].ref = -1; t->nfks++; }
+        else if (n >= 3 && !strcmp(fl[0], "F") && ti >= 0) { SxTable *t = &x->t[ti]; if (t->nfks == t->capfks) { t->capfks = t->capfks ? t->capfks * 2 : 4; t->fks = realloc(t->fks, sizeof *t->fks * (size_t)t->capfks); } t->fks[t->nfks].cols = dupz(fl[1]); t->fks[t->nfks].ref_table = dupz(fl[2]); t->fks[t->nfks].ref = -1;
+            t->fks[t->nfks].name = n >= 4 && fl[3][0] ? dupz(fl[3]) : NULL; t->fks[t->nfks].ref_cols = n >= 5 && fl[4][0] ? dupz(fl[4]) : NULL; t->nfks++; }
+        else if (n >= 2 && !strcmp(fl[0], "U") && ti >= 0) { free(x->t[ti].uniques); x->t[ti].uniques = dupz(fl[1]); }
     }
     free(line); fclose(f);
     if (!ok) { schidx_free(x); return false; }
@@ -496,8 +516,13 @@ bool schidx_sql(const char *d, int k, const char *const *schemas, int ns, int *k
             "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE %s%s", sys, f); return true; }
         if (k == 2) { *kind = SXQ_FKS; snprintf(out, n,
             "SELECT n.nspname, c.relname, (SELECT string_agg(a.attname, ',' ORDER BY u.ord) FROM unnest(co.conkey) WITH ORDINALITY u(attnum, ord) JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = u.attnum), "
-            "rn.nspname, rc.relname FROM pg_constraint co JOIN pg_class c ON c.oid = co.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "rn.nspname, rc.relname, co.conname, (SELECT string_agg(a.attname, ',' ORDER BY u.ord) FROM unnest(co.confkey) WITH ORDINALITY u(attnum, ord) JOIN pg_attribute a ON a.attrelid = rc.oid AND a.attnum = u.attnum) "
+            "FROM pg_constraint co JOIN pg_class c ON c.oid = co.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace "
             "JOIN pg_class rc ON rc.oid = co.confrelid JOIN pg_namespace rn ON rn.oid = rc.relnamespace WHERE co.contype = 'f' AND %s%s", sys, f); return true; }
+        if (k == 3) { *kind = SXQ_UNIQUES; snprintf(out, n,
+            "SELECT n.nspname, c.relname, (SELECT string_agg(a.attname, ',' ORDER BY u.ord) FROM unnest(i.indkey::int2[]) WITH ORDINALITY u(attnum, ord) JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = u.attnum) "
+            "FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE i.indisunique AND NOT i.indisprimary AND i.indpred IS NULL AND %s%s", sys, f); return true; }
         return false;
     }
     if (!strcmp(d, "oracle")) {
@@ -516,10 +541,15 @@ bool schidx_sql(const char *d, int k, const char *const *schemas, int ns, int *k
         if (k == 1) { *kind = SXQ_TCOMMENT; snprintf(out, n,
             "SELECT c.owner, c.table_name, c.comments FROM all_tab_comments c WHERE c.comments IS NOT NULL AND %s%s", sys, fo); return true; }
         if (k == 2) { *kind = SXQ_FKS; snprintf(out, n,
-            "SELECT c.owner, c.table_name, LISTAGG(cc.column_name, ',') WITHIN GROUP (ORDER BY cc.position), r.owner, r.table_name "
+            "SELECT c.owner, c.table_name, LISTAGG(cc.column_name, ',') WITHIN GROUP (ORDER BY cc.position), r.owner, r.table_name, c.constraint_name, "
+            "(SELECT LISTAGG(rc.column_name, ',') WITHIN GROUP (ORDER BY rc.position) FROM all_cons_columns rc WHERE rc.owner = r.owner AND rc.constraint_name = r.constraint_name) "
             "FROM all_constraints c JOIN all_cons_columns cc ON cc.owner = c.owner AND cc.constraint_name = c.constraint_name "
             "JOIN all_constraints r ON r.owner = c.r_owner AND r.constraint_name = c.r_constraint_name "
-            "WHERE c.constraint_type = 'R' AND %s%s GROUP BY c.owner, c.constraint_name, c.table_name, r.owner, r.table_name", sys, fo); return true; }
+            "WHERE c.constraint_type = 'R' AND %s%s GROUP BY c.owner, c.constraint_name, c.table_name, r.owner, r.table_name, r.constraint_name", sys, fo); return true; }
+        if (k == 3) { *kind = SXQ_UNIQUES; snprintf(out, n,
+            "SELECT c.owner, c.table_name, LISTAGG(cc.column_name, ',') WITHIN GROUP (ORDER BY cc.position) "
+            "FROM all_constraints c JOIN all_cons_columns cc ON cc.owner = c.owner AND cc.constraint_name = c.constraint_name "
+            "WHERE c.constraint_type = 'U' AND %s%s GROUP BY c.owner, c.table_name, c.constraint_name", sys, fo); return true; }
         return false;
     }
     if (!strcmp(d, "mysql")) {
@@ -533,9 +563,13 @@ bool schidx_sql(const char *d, int k, const char *const *schemas, int ns, int *k
         if (k == 1) { *kind = SXQ_TCOMMENT; snprintf(out, n,
             "SELECT c.table_schema, c.table_name, c.table_comment FROM information_schema.tables c WHERE c.table_comment <> '' AND %s%s", sys, fm); return true; }
         if (k == 2) { *kind = SXQ_FKS; snprintf(out, n,
-            "SELECT c.table_schema, c.table_name, GROUP_CONCAT(c.column_name ORDER BY c.ordinal_position), c.referenced_table_schema, c.referenced_table_name "
+            "SELECT c.table_schema, c.table_name, GROUP_CONCAT(c.column_name ORDER BY c.ordinal_position), c.referenced_table_schema, c.referenced_table_name, "
+            "c.constraint_name, GROUP_CONCAT(c.referenced_column_name ORDER BY c.ordinal_position) "
             "FROM information_schema.key_column_usage c WHERE c.referenced_table_name IS NOT NULL AND %s%s "
             "GROUP BY c.table_schema, c.table_name, c.constraint_name, c.referenced_table_schema, c.referenced_table_name", sys, fm); return true; }
+        if (k == 3) { *kind = SXQ_UNIQUES; snprintf(out, n,
+            "SELECT c.table_schema, c.table_name, GROUP_CONCAT(c.column_name ORDER BY c.seq_in_index) FROM information_schema.statistics c "
+            "WHERE c.non_unique = 0 AND c.index_name <> 'PRIMARY' AND %s%s GROUP BY c.table_schema, c.table_name, c.index_name", sys, fm); return true; }
         return false;
     }
     if (!strcmp(d, "mssql")) {
@@ -554,12 +588,35 @@ bool schidx_sql(const char *d, int k, const char *const *schemas, int ns, int *k
             "SELECT s.name, o.name, CAST(ep.value AS nvarchar(400)) FROM sys.extended_properties ep JOIN sys.objects o ON o.object_id = ep.major_id "
             "JOIN sys.schemas s ON s.schema_id = o.schema_id WHERE ep.class = 1 AND ep.minor_id = 0 AND ep.name = 'MS_Description'%s", fs); return true; }
         if (k == 2) { *kind = SXQ_FKS; snprintf(out, n,
-            "SELECT s.name, o.name, STRING_AGG(c.name, ',') WITHIN GROUP (ORDER BY fc.constraint_column_id), rs.name, ro.name "
+            "SELECT s.name, o.name, STRING_AGG(c.name, ',') WITHIN GROUP (ORDER BY fc.constraint_column_id), rs.name, ro.name, fk.name, "
+            "STRING_AGG(rcl.name, ',') WITHIN GROUP (ORDER BY fc.constraint_column_id) "
             "FROM sys.foreign_keys fk JOIN sys.foreign_key_columns fc ON fc.constraint_object_id = fk.object_id "
             "JOIN sys.objects o ON o.object_id = fk.parent_object_id JOIN sys.schemas s ON s.schema_id = o.schema_id "
             "JOIN sys.columns c ON c.object_id = fc.parent_object_id AND c.column_id = fc.parent_column_id "
+            "JOIN sys.columns rcl ON rcl.object_id = fc.referenced_object_id AND rcl.column_id = fc.referenced_column_id "
             "JOIN sys.objects ro ON ro.object_id = fk.referenced_object_id JOIN sys.schemas rs ON rs.schema_id = ro.schema_id "
-            "WHERE 1 = 1%s GROUP BY fk.object_id, s.name, o.name, rs.name, ro.name", fs); return true; }
+            "WHERE 1 = 1%s GROUP BY fk.object_id, fk.name, s.name, o.name, rs.name, ro.name", fs); return true; }
+        if (k == 3) { *kind = SXQ_UNIQUES; snprintf(out, n,
+            "SELECT s.name, o.name, STRING_AGG(c.name, ',') WITHIN GROUP (ORDER BY ic.key_ordinal) FROM sys.indexes i "
+            "JOIN sys.objects o ON o.object_id = i.object_id JOIN sys.schemas s ON s.schema_id = o.schema_id "
+            "JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.is_included_column = 0 "
+            "JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id "
+            "WHERE i.is_unique = 1 AND i.is_primary_key = 0 AND o.is_ms_shipped = 0%s GROUP BY s.name, o.name, i.index_id", fs); return true; }
+        return false;
+    }
+    if (!strcmp(d, "sqlite")) {   /* one file; table-valued pragmas read every table in one statement each */
+        (void)schemas; (void)ns;
+        if (k == 0) { *kind = SXQ_COLS; snprintf(out, n,
+            "SELECT '', m.name, CASE WHEN m.type = 'view' THEN 1 ELSE 0 END, p.name, p.type, CASE WHEN p.pk > 0 THEN 1 ELSE 0 END, p.\"notnull\", NULL "
+            "FROM sqlite_schema m JOIN pragma_table_info(m.name) p WHERE m.type IN ('table', 'view') AND m.name NOT LIKE 'sqlite\\_%%' ESCAPE '\\' ORDER BY m.name, p.cid"); return true; }
+        if (k == 1) { *kind = SXQ_TCOMMENT; snprintf(out, n, "SELECT '', '', '' WHERE 0"); return true; }   /* SQLite keeps no comments */
+        if (k == 2) { *kind = SXQ_FKS; snprintf(out, n,
+            "SELECT '', t, group_concat(fc, ','), '', rt, NULL, group_concat(tc, ',') FROM "
+            "(SELECT m.name AS t, f.id AS id, f.seq AS seq, f.\"from\" AS fc, f.\"table\" AS rt, f.\"to\" AS tc FROM sqlite_schema m JOIN pragma_foreign_key_list(m.name) f "
+            "WHERE m.type = 'table' ORDER BY m.name, f.id, f.seq) GROUP BY t, id ORDER BY t, id"); return true; }
+        if (k == 3) { *kind = SXQ_UNIQUES; snprintf(out, n,
+            "SELECT '', m.name, (SELECT group_concat(ii.name, ',') FROM (SELECT name FROM pragma_index_info(il.name) ORDER BY seqno) ii) "
+            "FROM sqlite_schema m JOIN pragma_index_list(m.name) il WHERE m.type = 'table' AND il.\"unique\" = 1 AND il.origin <> 'pk'"); return true; }
         return false;
     }
     return false;

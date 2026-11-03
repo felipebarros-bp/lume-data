@@ -25,6 +25,7 @@ void explorer_refresh(Explorer *e, App *a);
 void explorer_update(Explorer *e, App *a, Rect bounds);
 /* Draws the context menu on top of everything else; call after all panels are drawn. */
 void explorer_draw_overlay(Explorer *e, App *a);     /* context menu */
+void explorer_dump(Explorer *e);   /* harness: "explorer" + the visible rows ("> Folder (n)", indent by depth) */
 Connection *explorer_selected_conn(Explorer *e);     /* connection of the selected row, or NULL */
 /* Centre, in window units (not pixels), of the first visible row labelled `label`; false
  * when there is none or it is scrolled out of view. */

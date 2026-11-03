@@ -44,6 +44,7 @@ struct Dialog {
     int pick_sel;   /* keyboard selection in the picker (index into the shown list) */
     float pick_scroll; ScrollBar pick_sb;
     TextField name;   /* connection name editor */
+    TextField folder; /* Explorer folder ("a/b"), "" = top level */
     TextField fields[CONN_MAX_FIELDS];   /* one editor per driver field */
     TextField ssh[4];          /* SSH tunnel: host, port, user, key file */
     int focus;                 /* 0 = name, 1..nfields = fields, then the SSH fields (when shown) */
@@ -84,15 +85,18 @@ static void load_fields(Dialog *d) {
 }
 
 static void close_dialog(Dialog *d) { test_abandon(d); d->open = false; }
-
 /* The SSH section: shown for drivers with host and port; its fields only while the tunnel is on. */
 enum { SSH_HOST, SSH_PORT, SSH_USER, SSH_KEY, SSH_NFIELDS };
 static int ssh_shown(Dialog *d) { return conn_supports_ssh(drv(d)) && d->draft.ssh ? SSH_NFIELDS : 0; }
-/* The editor behind a focus / bad_field index (1-based: driver fields, then the SSH ones). */
+/* Focus indexes (Tab order): 1..nfields the driver fields, then the SSH ones while shown,
+ * then Folder; 0 is the name, which comes last on Tab. */
+static int folder_focus(Dialog *d) { return 1 + drv(d)->nfields + ssh_shown(d); }
+/* The editor behind a focus / bad_field index. */
 static TextField *field_at(Dialog *d, int idx) {
     int nf = drv(d)->nfields;
     if (idx >= 1 && idx <= nf) return &d->fields[idx - 1];
-    if (idx > nf && idx <= nf + SSH_NFIELDS) return &d->ssh[idx - nf - 1];
+    if (idx > nf && idx <= nf + ssh_shown(d)) return &d->ssh[idx - nf - 1];
+    if (idx == folder_focus(d)) return &d->folder;
     return &d->name;
 }
 
@@ -111,6 +115,7 @@ void dialog_open(Dialog *d, App *a, Connection *existing) {
     d->driver_idx = 0;
     for (int i = 0; i < n; i++) if (strcmp(all[i].id, d->draft.driver) == 0) d->driver_idx = i;
     textfield_set(&d->name, d->draft.name);
+    textfield_set(&d->folder, d->draft.folder);
     textfield_set(&d->search, "");
     load_fields(d);
     d->draft.tunnel = NULL;
@@ -126,6 +131,30 @@ void dialog_open(Dialog *d, App *a, Connection *existing) {
     d->sig = 0;
     d->open = true;
     (void)a;
+}
+
+void dialog_open_copy(Dialog *d, App *a, const Connection *src) {
+    dialog_open(d, a, NULL);
+    if (!src) return;
+    int n; const DriverInfo *all = driver_infos(&n);
+    snprintf(d->draft.driver, sizeof d->draft.driver, "%s", src->driver);
+    d->driver_idx = 0;
+    for (int i = 0; i < n; i++) if (strcmp(all[i].id, d->draft.driver) == 0) d->driver_idx = i;
+    const DriverInfo *di = drv(d);
+    for (int i = 0; i < di->nfields && i < CONN_MAX_FIELDS; i++)   /* passwords are never copied */
+        snprintf(d->draft.values[i], CONN_VALUE_LEN, "%s", di->fields[i].type == FIELD_PASSWORD ? "" : src->values[i]);
+    d->draft.env = src->env; d->draft.env_color = src->env_color; d->draft.read_only = src->read_only;
+    char nm[80]; snprintf(nm, sizeof nm, "%.56s (copy)", src->name);
+    snprintf(d->draft.name, sizeof d->draft.name, "%s", nm);
+    textfield_set(&d->name, d->draft.name);
+    snprintf(d->draft.folder, sizeof d->draft.folder, "%s", src->folder);   /* the copy sits next to the original */
+    textfield_set(&d->folder, d->draft.folder);
+    load_fields(d);
+    d->step = 1;   /* straight to the fields: the database is already chosen */
+    d->ro_touched = true;
+    bool has_pw = false; for (int i = 0; i < di->nfields; i++) if (di->fields[i].type == FIELD_PASSWORD) has_pw = true;
+    snprintf(d->msg, sizeof d->msg, "%s", has_pw ? "A copy of the connection: enter the password (it is never copied)." : "A copy of the connection.");
+    d->msg_ok = true;
 }
 
 /* Changes the draft's driver. Values of fields with the same key in both drivers are kept (the
@@ -163,6 +192,8 @@ static void collect(Dialog *d) {
     snprintf(d->draft.ssh_port, sizeof d->draft.ssh_port, "%s", d->ssh[SSH_PORT].buf);
     snprintf(d->draft.ssh_user, sizeof d->draft.ssh_user, "%s", d->ssh[SSH_USER].buf);
     snprintf(d->draft.ssh_key, sizeof d->draft.ssh_key, "%s", d->ssh[SSH_KEY].buf);
+    snprintf(d->draft.folder, sizeof d->draft.folder, "%s", d->folder.buf);
+    conn_folder_normalize(d->draft.folder, sizeof d->draft.folder);
 }
 
 /* Every non-password field must be filled; otherwise says which, outlines and focuses it. */
@@ -208,6 +239,7 @@ static void save(Dialog *d, App *a, bool connect) {
         c->demo = 0;
         c->env = d->draft.env; c->read_only = d->draft.read_only;
         copy_ssh(c, &d->draft);
+        memcpy(c->folder, d->draft.folder, sizeof c->folder);
         if (was_open) connect = true;
     } else {
         c = conns_add(a->conns, d->draft.driver);
@@ -215,6 +247,7 @@ static void save(Dialog *d, App *a, bool connect) {
         memcpy(c->values, d->draft.values, sizeof c->values);
         c->env = d->draft.env; c->read_only = d->draft.read_only;
         copy_ssh(c, &d->draft);
+        memcpy(c->folder, d->draft.folder, sizeof c->folder);
     }
     app_connections_changed(a);
     close_dialog(d);
@@ -377,7 +410,7 @@ static void frame(Dialog *d, App *a, bool live) {
     float w = px(a, 640), pad = px(a, 24), row = px(a, 40), fh = px(a, 30), lbl_w = px(a, 120);
     float h;
     if (d->step == 0) h = px(a, 470);
-    else h = pad + px(a, 34) + (d->target ? row : 0) + px(a, 24) + row * di->nfields + px(a, 30) + row * 2 + px(a, 26) + px(a, 30) + px(a, 50) + px(a, 52) + pad
+    else h = pad + px(a, 34) + (d->target ? row : 0) + px(a, 24) + row * di->nfields + px(a, 30) + row * 3 + px(a, 26) + px(a, 30) + px(a, 50) + px(a, 52) + pad
              + (conn_supports_ssh(di) ? row + (ssh_shown(d) ? row * 3 : 0) : 0);
     if (h > a->height - px(a, 20)) h = a->height - px(a, 20);
     float x = (a->width - w) / 2, y = (a->height - h) / 2 - px(a, 10);
@@ -438,7 +471,7 @@ static void frame(Dialog *d, App *a, bool live) {
 
     /* ---- the form ---- */
     test_poll(d, a);
-    int nfocus = 1 + di->nfields + ssh_shown(d);
+    int nfocus = 2 + di->nfields + ssh_shown(d);   /* name, the fields, the SSH ones, Folder */
     if (live) for (int k = 0; k < in->nkeys; k++) {
         KeyPress *kp = &in->keys[k]; if (kp->used) continue;
         if (kp->key == SDLK_TAB) { int f = d->focus == 0 ? nfocus - 1 : d->focus - 1;   /* order on screen: fields, then name */
@@ -542,14 +575,21 @@ static void frame(Dialog *d, App *a, bool live) {
       if (ui_textfield(a, &d->name, nr, ph2, d->focus == 0) && live) d->focus = 0;
       if (!live && d->focus == 0) draw_rect_outline(r, nr, px(a, 1), color_hex(T_ACCENT)); }
     cy += row;
+    ui_label(a, rect_make(x + pad, cy, lbl_w, fh), "Folder", ALIGN_LEFT, T_TEXT_MUTED);
+    { Rect fr = rect_make(fx, cy, fw_full, fh); ui_record("conn:folder", fr);
+      bool f = d->focus == folder_focus(d);
+      if (ui_textfield(a, &d->folder, fr, "None (top level); \"/\" nests: Clients/Acme", f) && live) d->focus = folder_focus(d);
+      if (!live && f) draw_rect_outline(r, fr, px(a, 1), color_hex(T_ACCENT));
+      for (const char *p = d->folder.buf; *p; p++) sig = (sig ^ (unsigned char)*p) * 16777619u; }
+    cy += row;
     ui_label(a, rect_make(x + pad, cy, lbl_w, fh), "Environment", ALIGN_LEFT, T_TEXT_MUTED);
-    { static const char *const envs[] = { "None", "DEV", "HML", "PROD" };
+    { static const char *const envs[] = { "None", "DEV", "STG", "PROD" };
       int pe = ui_segmented(a, rect_make(fx, cy, px(a, 260), fh), envs, 4, d->draft.env);
       if (pe >= 0 && live) {
           d->draft.env = pe;
           if (pe == CONN_ENV_PROD && !d->ro_touched && !d->draft.read_only) { d->draft.read_only = true; snprintf(d->msg, sizeof d->msg, "PROD: Read-only in Lume turned on (you can turn it off)."); d->msg_ok = true; }
       }
-      draw_text_fit(a->font_small, r, "HML = homologation / staging", -1, rect_make(fx + px(a, 272), cy, fw_full - px(a, 272), fh), color_hex(T_TEXT_DIM), ALIGN_LEFT); }
+      draw_text_fit(a->font_small, r, "STG = staging (pre-production)", -1, rect_make(fx + px(a, 272), cy, fw_full - px(a, 272), fh), color_hex(T_TEXT_DIM), ALIGN_LEFT); }
     cy += row;
     if (ui_checkbox(a, rect_make(fx, cy, px(a, 200), fh), "Read-only in Lume", d->draft.read_only, true) && live) { d->draft.read_only = !d->draft.read_only; d->ro_touched = true; }
     draw_text_fit(a->font_small, r, "Lume refuses writes; the database login itself is unchanged.", -1, rect_make(fx, cy + fh - px(a, 2), fw_full, px(a, 18)), color_hex(T_TEXT_DIM), ALIGN_LEFT);
@@ -633,11 +673,18 @@ void dialog_draw(Dialog *d, App *a) {
     app_wake_in(a, 530 - (Uint32)((SDL_GetTicks() - f->blink) % 530));
 }
 
+/* See dialog.h. */
+void dialog_open_in_folder(Dialog *d, App *a, const char *folder) {
+    dialog_open(d, a, NULL);
+    textfield_set(&d->folder, folder ? folder : "");
+}
+
 /* See dialog.h. Never prints a field value (a password could be one). */
 void dialog_dump(Dialog *d) {
     const DriverInfo *di = drv(d);
     int nkept = 0; for (int i = 0; i < di->nfields; i++) if (d->fields[i].buf[0]) nkept++;
     printf("dialogstate open=%d step=%d edit=%d focus=%d driver=%s filled=%d/%d env=%d ro=%d ssh=%d testing=%d msg_ok=%d msg=\"%s\"\n", d->open, d->step, d->target != NULL, d->focus, di->id,
            nkept, di->nfields, d->draft.env, d->draft.read_only, d->draft.ssh, d->job != NULL, d->msg_ok, d->msg);
+    printf("dialogfolder \"%s\"\n", d->folder.buf);
     fflush(stdout);
 }

@@ -1,0 +1,7 @@
+wait 30
+dgm open orders "Shop"
+dgmawait
+wait 20
+dgm act minimap
+wait 400
+quit
