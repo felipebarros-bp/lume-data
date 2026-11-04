@@ -17,8 +17,11 @@ static int fails, oks;
 static DbColumn C(const char *n, const char *t, bool pk) { DbColumn c; memset(&c, 0, sizeof c); c.name = strdup(n); c.type = strdup(t); c.pk = pk; return c; }
 static DbTable T(const char *name, DbColumn *cols, int n) { DbTable t; memset(&t, 0, sizeof t); t.name = strdup(name); t.cols = malloc(sizeof *cols * (size_t)n); memcpy(t.cols, cols, sizeof *cols * (size_t)n); t.ncols = n; t.cols_loaded = true; return t; }
 static int loads;
-static bool fks(void *ctx, const char *table, DbFk **out, int *n) {
+/* late_fks: keys of these catalog tables "arrive" later (0 = asked), like the catalog session */
+static char late_fks[200] = ""; static DbFk *late_out; static int late_n;
+static int fks(void *ctx, const char *table, DbFk **out, int *n) {
     (void)ctx; loads++;
+    if (late_fks[0] && !strcmp(table, late_fks)) { if (!late_out) { *out = NULL; *n = 0; return 0; } *out = late_out; *n = late_n; late_out = NULL; return 1; }
     static const struct { const char *tb, *name, *from, *to, *tocol; } all[] = {
         { "orders", "fk_orders_customer", "customer_id", "customers", "id" },
         { "shipments", "fk_ship_item", "order_id", "order_items", "order_id" },
@@ -28,7 +31,7 @@ static bool fks(void *ctx, const char *table, DbFk **out, int *n) {
     int k = 0; DbFk *f = calloc(4, sizeof *f);
     for (size_t i = 0; i < sizeof all / sizeof all[0]; i++) if (!strcmp(all[i].tb, table)) { f[k].name = strdup(all[i].name); f[k].from_col = strdup(all[i].from); f[k].to_table = strdup(all[i].to); f[k].to_col = strdup(all[i].tocol); k++; }
     *out = f; *n = k;
-    return true;
+    return 1;
 }
 static int query(Completer *c, const char *sql, Cand *out) { int pl; return complete_query(c, sql, (int)strlen(sql), (int)strlen(sql), false, out, COMPLETE_MAX, &pl); }
 static bool has(Cand *o, int n, const char *text) { for (int i = 0; i < n; i++) if (!strcmp(o[i].text, text)) return true; return false; }
@@ -75,6 +78,56 @@ int main(void) {
     n = query(c, "SELECT * FROM orders o JOIN profiles p ON ", o);
     CHECK(has(o, n, "p.customer_id = o.customer_id"), "same column name, a primary key on one side: suggested by name");
     for (int i = 0; i < n; i++) if (!strcmp(o[i].text, "p.customer_id = o.customer_id")) CHECK(strstr(o[i].detail, "same column name") != NULL, "  ... and labelled as such (%s)", o[i].detail);
+    /* the implicit join: FROM a, b WHERE */
+    n = query(c, "select o.*, c.* from orders o, customers c where ", o);
+    CHECK(n >= 1 && !strcmp(o[0].text, "o.customer_id = c.id") && strstr(o[0].detail, "fk_orders_customer"), "FROM a, b WHERE: the join condition first, by foreign key (%s)", n ? o[0].text : "-");
+    n = query(c, "select * from orders o, customers c where o.customer_id = c.id and ", o);
+    CHECK(!has(o, n, "o.customer_id = c.id") && has(o, n, "o.id"), "  ... not proposed again once written (the columns follow)");
+    n = query(c, "select * from orders o, customers c where o.customer_id=c.id and ", o);
+    CHECK(!has(o, n, "o.customer_id = c.id"), "  ... spaces aside");
+    n = query(c, "select * from shipments s, order_items oi, orders o where ", o);
+    CHECK(has(o, n, "s.order_id = oi.order_id AND s.item_line = oi.line") && has(o, n, "oi.order_id = o.id"), "three tables: each one joined to the ones before it, in FROM order (composite key whole)");
+    n = query(c, "select * from orders o, customers c where o.customer_id = ", o);
+    CHECK(n >= 1 && !strcmp(o[0].text, "c.id") && strstr(o[0].detail, "foreign key"), "WHERE a.id = : the column the foreign key pairs with, first (%s)", n ? o[0].text : "-");
+    n = query(c, "select * from customers c, orders o where c.id = ", o);
+    CHECK(n >= 1 && !strcmp(o[0].text, "o.customer_id"), "  ... in the other direction too (%s)", n ? o[0].text : "-");
+    n = query(c, "select * from orders o, profiles p where o.customer_id = ", o);
+    CHECK(n >= 1 && !strcmp(o[0].text, "p.customer_id") && strstr(o[0].detail, "same column name"), "  ... same-name key column when there is no foreign key (%s)", n ? o[0].text : "-");
+    n = query(c, "select o. from orders o, customers c", o);
+    { int pl; const char *q = "select o. from orders o, customers c"; n = complete_query(c, q, (int)strlen(q), 9, false, o, COMPLETE_MAX, &pl); }
+    CHECK(n >= 2 && !strcmp(o[0].text, "*") && strstr(o[0].detail, "every column of orders") && has(o, n, "customer_id"), "select a. with several tables: * first, then the columns (%s)", n ? o[0].text : "-");
+    n = query(c, "select * from orders o, customers c where o.", o);
+    CHECK(n >= 1 && strcmp(o[0].text, "*") != 0, "  ... not in a WHERE");
+    n = query(c, "select * from orders o join customers c using (", o);
+    CHECK(has(o, n, "id") && has(o, n, "created_at") && !has(o, n, "customer_id") && !has(o, n, "name"), "JOIN b USING (: the columns both sides have");
+    n = query(c, "merge into orders o using customers c on c.", o);
+    CHECK(has(o, n, "id") && has(o, n, "name"), "MERGE ... USING u c: c is an alias of customers");
+    n = query(c, "update orders set ", o);
+    CHECK(has(o, n, "customer_id") && !has(o, n, "SET"), "UPDATE t SET: SET is not taken for an alias");
+    n = query(c, "select * from orders o, customers c where o.", o);
+    for (int i = 0; i < n; i++) if (!strcmp(o[i].text, "customer_id")) CHECK(strstr(o[i].detail, "FK") == NULL, "one qualifier: the detail is the type only (%s)", o[i].detail);
+    /* query levels: CTEs, derived tables, correlated subqueries */
+    n = query(c, "with t as (select id, name as nm, created_at from customers) select t.", o);
+    CHECK(n == 3 && has(o, n, "id") && has(o, n, "nm") && has(o, n, "created_at"), "a CTE: its select list is its columns (%d)", n);
+    for (int i = 0; i < n; i++) if (!strcmp(o[i].text, "id")) CHECK(strstr(o[i].detail, "INTEGER") && strstr(o[i].detail, "PK"), "  ... a plain column keeps its type and key (%s)", o[i].detail);
+    for (int i = 0; i < n; i++) if (!strcmp(o[i].text, "nm")) CHECK(strstr(o[i].detail, "TEXT") != NULL, "  ... `col AS name` keeps the column's type (%s)", o[i].detail);
+    n = query(c, "select * from (select o.id, o.customer_id cid, count(*) n from orders o) d where d.", o);
+    CHECK(n == 3 && has(o, n, "id") && has(o, n, "cid") && has(o, n, "n"), "a derived table: `q.col`, `expr name` and an aggregate named (%d)", n);
+    for (int i = 0; i < n; i++) if (!strcmp(o[i].text, "n")) CHECK(strstr(o[i].detail, "expression") != NULL, "  ... an expression says so (%s)", o[i].detail);
+    n = query(c, "select * from (select * from orders) as d where d.", o);
+    CHECK(n == 3 && has(o, n, "customer_id"), "a derived table with *: the FROM's columns (%d)", n);
+    n = query(c, "select * from orders o where o.id in (select oi.order_id from order_items oi where oi.", o);
+    CHECK(n == 3 && has(o, n, "qty") && !has(o, n, "customer_id"), "inside a subquery, its own alias: its own columns only (%d)", n);
+    n = query(c, "select * from orders o where o.id in (select oi.order_id from order_items oi where ", o);
+    CHECK(has(o, n, "oi.qty") && has(o, n, "o.customer_id"), "a correlated subquery sees the outer alias too (qualified)");
+    n = query(c, "select * from orders o where exists (select 1 from order_items oi where oi.order_id = ", o);
+    CHECK(n >= 1 && !strcmp(o[0].text, "o.id") && strstr(o[0].detail, "foreign key"), "  ... and pairs with the outer table by foreign key (%s)", n ? o[0].text : "-");
+    n = query(c, "select * from orders o where o.customer_id in (select id from customers) and o.", o);
+    CHECK(has(o, n, "customer_id") && !has(o, n, "name"), "after a subquery closes, the outer level again");
+    n = query(c, "with recursive t as (select id from customers) select * from t join orders o on ", o);
+    CHECK(n >= 1 && has(o, n, "o.id = t.id") == false && n > 0, "a CTE joined: no foreign keys, columns offered (%d)", n);
+    { int pl; const char *q = "select cu from orders o, customers c"; n = complete_query(c, q, (int)strlen(q), 9, false, o, COMPLETE_MAX, &pl); }
+    for (int i = 0; i < n; i++) if (!strcmp(o[i].text, "o.customer_id")) CHECK(strstr(o[i].detail, "FK \xE2\x86\x92 customers.id") != NULL, "several tables: a foreign-key column says what it points at (%s)", o[i].detail);
     n = query(c, "SELECT * FROM customers c JOIN orders o ON ", o);
     CHECK(!has(o, n, "o.id = c.id"), "each table's own id is not a relation");
     CHECK(n >= 1 && !strcmp(o[0].text, "o.customer_id = c.id"), "the FK still comes first (%s)", n ? o[0].text : "-");
@@ -210,6 +263,22 @@ int main(void) {
         CHECK(has(o, n, "PKG_BILLING"), "elsewhere SCHEMA. lists every kind (a package to call)");
         n = query_x(k, "select * from PKG", o, false);
         CHECK(!has(o, n, "APPCORE.PKG_BILLING"), "after FROM, no packages or procedures");
+        /* foreign keys of a catalog table, through the catalog session (late) */
+        complete_set_fk_loader(k, fks);
+        snprintf(late_fks, sizeof late_fks, "APPCORE.PATIENT_VISIT"); late_out = NULL;
+        n = query_x(k, "select * from APPCORE.PATIENT_VISIT v join APPCORE.DOCTOR d on ", o, false);
+        CHECK(n >= 1 && o[0].info && strstr(o[0].label, "Loading foreign keys of APPCORE.PATIENT_VISIT") && complete_pending(k), "JOIN ... ON between two catalog tables: a Loading row while the keys come (%s)", n ? shown(&o[0]) : "-");
+        { DbFk *f = calloc(1, sizeof *f); f[0].name = strdup("FK_VISIT_DOCTOR"); f[0].from_col = strdup("PATIENT_ID"); f[0].to_table = strdup("APPCORE.DOCTOR"); f[0].to_col = strdup("DOCTOR_ID"); late_out = f; late_n = 1; }
+        n = query_x(k, "select * from APPCORE.PATIENT_VISIT v join APPCORE.DOCTOR d on ", o, false);
+        CHECK(n >= 1 && !o[0].info && !strcmp(o[0].text, "d.DOCTOR_ID = v.PATIENT_ID") && strstr(o[0].detail, "FK_VISIT_DOCTOR") && !complete_pending(k), "  ... then the condition from the key (%s)", n ? shown(&o[0]) : "-");
+        n = query_x(k, "select * from APPCORE.PATIENT_VISIT v, APPCORE.DOCTOR d where ", o, false);
+        CHECK(n >= 1 && !strcmp(o[0].text, "v.PATIENT_ID = d.DOCTOR_ID"), "  ... and in the implicit join, in FROM order (%s)", n ? o[0].text : "-");
+        /* a synonym: the app's loader resolves it to its target (objcat_fks); the fake answers for the synonym's name */
+        snprintf(late_fks, sizeof late_fks, "PUBLIC.VISITS");   /* the fake names its tables schema.name */
+        { DbFk *f = calloc(1, sizeof *f); f[0].name = strdup("FK_VISIT_DOCTOR"); f[0].from_col = strdup("PATIENT_ID"); f[0].to_table = strdup("APPCORE.DOCTOR"); f[0].to_col = strdup("DOCTOR_ID"); late_out = f; late_n = 1; }
+        n = query_x(k, "select * from VISITS v join APPCORE.DOCTOR d on ", o, false);
+        CHECK(has(o, n, "d.DOCTOR_ID = v.PATIENT_ID"), "a synonym on one side: its target's keys (through the loader)");
+        late_fks[0] = 0;
         complete_destroy(k); objcat_free(&cat);
     }
     {   /* speed: the popup is recomputed on every key; a 200,000-object catalog must not lag it */

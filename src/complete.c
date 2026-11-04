@@ -46,8 +46,9 @@ typedef struct { char *key; float count; double last; } Entry;
 struct Completer {
     DbTable *tables; int ntables;
     int (*load_cols)(void *ctx, DbTable *t); void *load_ctx;   /* 1 filled, 0 asked in the background, -1 refused / failed */
-    bool (*load_fks)(void *ctx, const char *table, DbFk **out, int *n);
-    DbFk **fks; int *nfks; unsigned char *fks_state;   /* per table: 0 not read, 1 read */
+    int (*load_fks)(void *ctx, const char *table, DbFk **out, int *n);   /* 1 filled, 0 asked in the background, -1 refused / failed */
+    DbFk **fks; int *nfks; unsigned char *fks_state;   /* per table of the schema cache: 0 not read, 1 read, 2 asked in the background */
+    DbFk **xfk; int *nxfk; unsigned char *xfst;        /* the same per catalog table (parallel to xt) */
     Entry *ent; int nent, cap;      /* open addressing, linear probe */
     char path[1024];
     bool dirty;
@@ -56,7 +57,8 @@ struct Completer {
     const ObjCat *cat; char home[128];   /* every visible object (borrowed) and the schema proposed unqualified */
     CompleteTableFn table_fn; void *table_ctx;   /* catalog objects as tables, columns in the background */
     DbTable **xt; int *xst; int nxt, capxt;   /* catalog tables met in statements: index ntables + k (pointers owned by objcat), their OCS_* state */
-    bool pending; char pending_name[200];   /* the last query waits for these columns */
+    bool pending; char pending_name[200]; char pending_what[24];   /* the last query waits for these ("columns" / "foreign keys") of this table */
+    DbTable *dt; int ndt, capdt;   /* derived tables and CTEs of the statement being analysed (index DT_BASE + k; rebuilt per query) */
     int *tset; int tset_cap; DbTable *tset_tables; int tset_n;   /* names of `tables` (index + 1, open addressing): catalog entries already proposed */
 };
 
@@ -193,6 +195,7 @@ static const char *const keywords[] = {
     "ALTER", "DISTINCT", "UNION", "ALL", "CASE", "WHEN", "THEN", "ELSE", "END", "EXISTS", "ASC", "DESC",
     "PRIMARY", "KEY", "DEFAULT", "WITH", "EXPLAIN", "PRAGMA", "BEGIN", "COMMIT", "ROLLBACK", "TRANSACTION",
     "USING", "NATURAL", "IF", "REPLACE", "RETURNING", "TRUE", "FALSE", "COLLATE", "GLOB", "ESCAPE",
+    "MERGE", "MATCHED", "APPLY", "LATERAL", "FULL", "FETCH", "FIRST", "NEXT", "ROWS", "ONLY", "START", "CONNECT",
 };
 /* Built-in (SQLite) function names offered as "name(" completions. */
 static const char *const functions[] = {
@@ -280,7 +283,18 @@ typedef struct {
 } Scope;
 
 /* Table i of the statement's world: the schema cache, then catalog tables (index ntables + k). */
-static DbTable *TB(Completer *c, int i) { return i < c->ntables ? &c->tables[i] : c->xt[i - c->ntables]; }
+#define DT_BASE (1 << 20)   /* indices of derived tables / CTEs, above every real table */
+static DbTable *TB(Completer *c, int i) { return i >= DT_BASE ? &c->dt[i - DT_BASE] : i < c->ntables ? &c->tables[i] : c->xt[i - c->ntables]; }
+static void dt_clear(Completer *c) {
+    for (int k = 0; k < c->ndt; k++) { DbTable *t = &c->dt[k]; for (int i = 0; i < t->ncols; i++) { free(t->cols[i].name); free(t->cols[i].type); } free(t->cols); free(t->name); }
+    c->ndt = 0;
+}
+/* the matching ')' of the '(' at lp, or `end` when it never closes */
+static int match_paren(Tok *tk, int end, int lp) {
+    int d = 0;
+    for (int i = lp; i < end; i++) { if (tk[i].type == TK_LPAREN) d++; else if (tk[i].type == TK_RPAREN && --d == 0) return i; }
+    return end;
+}
 static bool is_relation(int kind) { return kind == OC_TABLE || kind == OC_VIEW || kind == OC_MVIEW || kind == OC_SYNONYM; }
 /* The catalog object named by the n bytes at s ("SCHEMA.NAME", or NAME in the current schema,
  * then a PUBLIC synonym) as a table index, its columns asked for in the background; -1. */
@@ -304,9 +318,12 @@ static int catalog_table(Completer *c, const char *s, int n) {
             int nc = c->capxt ? c->capxt * 2 : 16;
             DbTable **nx = realloc(c->xt, sizeof *nx * (size_t)nc); if (!nx) return -1; c->xt = nx;
             int *ns = realloc(c->xst, sizeof *ns * (size_t)nc); if (!ns) return -1; c->xst = ns;
+            DbFk **nf = realloc(c->xfk, sizeof *nf * (size_t)nc); if (!nf) return -1; c->xfk = nf;
+            int *nn = realloc(c->nxfk, sizeof *nn * (size_t)nc); if (!nn) return -1; c->nxfk = nn;
+            unsigned char *nst = realloc(c->xfst, (size_t)nc); if (!nst) return -1; c->xfst = nst;
             c->capxt = nc;
         }
-        c->xst[c->nxt] = st; c->xt[c->nxt++] = t;
+        c->xst[c->nxt] = st; c->xfk[c->nxt] = NULL; c->nxfk[c->nxt] = 0; c->xfst[c->nxt] = 0; c->xt[c->nxt++] = t;
         return c->ntables + c->nxt - 1;
     }
     return -1;
@@ -316,6 +333,7 @@ static int catalog_table(Completer *c, const char *s, int n) {
 /* Index in the schema cache of the table named by the n bytes at s, or -1. Exact name first, then
  * the last dotted part of s, or (for an unqualified s) a cached "schema.name" whose name matches. */
 static int find_table_ex(Completer *c, const char *s, int n, bool ask_catalog) {
+    for (int k = 0; k < c->ndt; k++) if (ieq(s, n, c->dt[k].name)) return DT_BASE + k;   /* a CTE or derived table shadows a real one */
     for (int i = 0; i < c->ntables; i++) if (ieq(s, n, c->tables[i].name)) return i;
     if (ask_catalog) { int ct = catalog_table(c, s, n); if (ct >= 0) return ct; }   /* another schema's object, a synonym: before guessing by the last part */
     else for (int k = 0; k < c->nxt; k++) if (ieq(s, n, c->xt[k]->name)) return c->ntables + k;   /* only what this statement already met: no column request as a side effect */
@@ -341,7 +359,7 @@ static void ensure_cols(Completer *c, DbTable *t) {
     bool loading = false;
     if (own) { if (c->load_cols) loading = c->load_cols(c->load_ctx, t) == 0 && !t->cols_loaded; }   /* 0: asked in the background; a refusal or failure is not waited for */
     else for (int k = 0; k < c->nxt; k++) if (c->xt[k] == t) loading = c->xst[k] == OCS_LOADING;   /* catalog tables: asked for by catalog_table */
-    if (loading && !t->cols_loaded && !c->pending) { c->pending = true; snprintf(c->pending_name, sizeof c->pending_name, "%s", t->name); }
+    if (loading && !t->cols_loaded && !c->pending) { c->pending = true; snprintf(c->pending_what, sizeof c->pending_what, "columns"); snprintf(c->pending_name, sizeof c->pending_name, "%s", t->name); }
 }
 
 /* Index of the column named by the n bytes at s in table t (columns loaded on demand), or -1. */
@@ -356,7 +374,8 @@ static bool kw_is(const char *s, Tok *t, const char *kw) { return t->type == TK_
 
 /* True when a table name follows token t (FROM, JOIN, INTO, UPDATE, TABLE). */
 static bool expects_table(const char *s, Tok *t) {
-    return kw_is(s, t, "FROM") || kw_is(s, t, "JOIN") || kw_is(s, t, "INTO") || kw_is(s, t, "UPDATE") || kw_is(s, t, "TABLE");
+    return kw_is(s, t, "FROM") || kw_is(s, t, "JOIN") || kw_is(s, t, "INTO") || kw_is(s, t, "UPDATE") || kw_is(s, t, "TABLE")
+        || kw_is(s, t, "USING") || kw_is(s, t, "APPLY");   /* MERGE ... USING u b; CROSS APPLY f(x) c (a JOIN ... USING ( is followed by a parenthesis, not a name) */
 }
 
 /* True when token t ends a FROM-style list of tables (a clause keyword, ';' or a parenthesis). */
@@ -382,35 +401,128 @@ static void scope_add(Scope *sc, int table) {
     if (sc->ntables < MAX_SCOPE) sc->tables[sc->ntables++] = table;
 }
 
-/* Walks tokens [0, ntok) collecting tables and aliases. When `upto` >= 0, also reports whether
+static int dt_from_query(Completer *c, const char *s, Tok *tk, int L, int R, int nametok, int depth);
+static int resolve_qualifier(Completer *c, Scope *sc, const char *s, int n);
+static void ensure_cols(Completer *c, DbTable *t);
+static void scope_alias(Scope *sc, const char *s, Tok *t, int table) {
+    if (sc->naliases >= MAX_SCOPE) return;
+    Alias *al = &sc->aliases[sc->naliases++];
+    int n = t->end - t->start; if (n > 63) n = 63;
+    memcpy(al->alias, s + t->start, n); al->alias[n] = 0; al->table = table;
+}
+/* Walks tokens [L, R) of one query level collecting its tables and aliases: real tables, CTEs
+ * (WITH name AS (...)) and derived tables ((...) alias) — each defined by its own select list —
+ * while nested parentheses (subqueries, calls) are skipped. When `upto` >= 0, also reports whether
  * the position right after token `upto` expects a table name (FROM list state). */
-static void analyse(Completer *c, const char *s, Tok *tk, int ntok, Scope *sc, int upto, bool *table_ctx) {
+static void analyse_range(Completer *c, const char *s, Tok *tk, int L, int R, Scope *sc, int upto, bool *table_ctx, int depth) {
     memset(sc, 0, sizeof *sc);
     bool from_list = false;
     if (table_ctx) *table_ctx = false;
-    for (int i = 0; i < ntok; i++) {
+    int i = L;
+    if (i < R && kw_is(s, &tk[i], "WITH")) {   /* the CTEs: each one a table of this level (and of the levels below) */
+        i++;
+        if (i < R && tk[i].type == TK_IDENT && ieq(s + tk[i].start, tk[i].end - tk[i].start, "RECURSIVE")) i++;
+        while (i < R && tk[i].type == TK_IDENT) {
+            int name = i++;
+            if (i < R && tk[i].type == TK_LPAREN) i = match_paren(tk, R, i) + 1;   /* (column list): the select list names them anyway */
+            if (!(i < R && kw_is(s, &tk[i], "AS"))) break;
+            i++;
+            if (!(i < R && tk[i].type == TK_LPAREN)) break;
+            int M = match_paren(tk, R, i);
+            if (depth < 8) dt_from_query(c, s, tk, i + 1, M, name, depth + 1);
+            i = M + 1;
+            if (i < R && tk[i].type == TK_COMMA) i++; else break;
+        }
+    }
+    for (; i < R; i++) {
+        if (tk[i].type == TK_LPAREN) {
+            int M = match_paren(tk, R, i);
+            bool want_here = i > L && (expects_table(s, &tk[i - 1]) || (from_list && tk[i - 1].type == TK_COMMA));
+            if (want_here && depth < 8) {   /* a derived table: (select ...) alias */
+                int k = M + 1;
+                if (k < R && kw_is(s, &tk[k], "AS")) k++;
+                if (k < R && tk[k].type == TK_IDENT) {
+                    int t = dt_from_query(c, s, tk, i + 1, M, k, depth + 1);
+                    if (t >= 0) { scope_add(sc, t); scope_alias(sc, s, &tk[k], t); }
+                }
+            }
+            if (table_ctx && upto > i && upto <= M) *table_ctx = false;
+            i = M;   /* the inside is another level */
+            continue;
+        }
         bool want = expects_table(s, &tk[i]) || (from_list && tk[i].type == TK_COMMA);
         if (expects_table(s, &tk[i])) from_list = true;
         else if (ends_from_list(s, &tk[i])) from_list = false;
         if (table_ctx && i == upto) *table_ctx = want;
-        if (!want || i + 1 >= ntok || tk[i + 1].type != TK_IDENT) continue;
+        if (!want || i + 1 >= R || tk[i + 1].type != TK_IDENT) continue;
         int j = i + 1;
         /* schema.table: match the dotted name as a whole, then fall back to the last part */
-        while (j + 2 < ntok && tk[j + 1].type == TK_DOT && tk[j + 2].type == TK_IDENT) j += 2;
+        while (j + 2 < R && tk[j + 1].type == TK_DOT && tk[j + 2].type == TK_IDENT) j += 2;
         int table = find_table(c, s + tk[i + 1].start, tk[j].end - tk[i + 1].start);
         if (table < 0) continue;
         scope_add(sc, table);
         int k = j + 1;
-        if (k < ntok && kw_is(s, &tk[k], "AS")) k++;
-        if (k < ntok && tk[k].type == TK_IDENT && sc->naliases < MAX_SCOPE) {
-            Alias *al = &sc->aliases[sc->naliases++];
-            int n = tk[k].end - tk[k].start;
-            if (n > 63) n = 63;
-            memcpy(al->alias, s + tk[k].start, n);
-            al->alias[n] = 0;
-            al->table = table;
-        }
+        if (k < R && kw_is(s, &tk[k], "AS")) k++;
+        if (k < R && tk[k].type == TK_IDENT) scope_alias(sc, s, &tk[k], table);
     }
+}
+static void analyse(Completer *c, const char *s, Tok *tk, int ntok, Scope *sc, int upto, bool *table_ctx) { analyse_range(c, s, tk, 0, ntok, sc, upto, table_ctx, 0); }
+
+/* copies a column (name, type, pk) into the derived table t */
+static void dt_col(DbTable *t, const char *name, int nlen, const char *type, bool pk) {
+    DbColumn *nc = realloc(t->cols, sizeof *nc * (size_t)(t->ncols + 1)); if (!nc) return;
+    t->cols = nc; DbColumn *col = &t->cols[t->ncols++]; memset(col, 0, sizeof *col);
+    col->name = malloc((size_t)nlen + 1); memcpy(col->name, name, (size_t)nlen); col->name[nlen] = 0;
+    col->type = strdup(type ? type : "expression"); col->pk = pk;
+}
+/* The query at tokens [L, R) ("select ... from ...") as a table named by token nametok: its select
+ * list is its columns (a plain column keeps its type, `expr AS name` and `expr name` their name,
+ * `*` and `t.*` expand what the query's own FROM knows). Returns the DT_BASE index, or -1. */
+static int dt_from_query(Completer *c, const char *s, Tok *tk, int L, int R, int nametok, int depth) {
+    if (c->ndt == c->capdt) { int nc = c->capdt ? c->capdt * 2 : 8; DbTable *nd = realloc(c->dt, sizeof *nd * (size_t)nc); if (!nd) return -1; c->dt = nd; c->capdt = nc; }
+    int idx = c->ndt++;
+    DbTable *t = &c->dt[idx]; memset(t, 0, sizeof *t);
+    { int n = tk[nametok].end - tk[nametok].start; t->name = malloc((size_t)n + 1); memcpy(t->name, s + tk[nametok].start, (size_t)n); t->name[n] = 0; }
+    t->cols_loaded = true; t->is_view = true;
+    Scope inner; analyse_range(c, s, tk, L, R, &inner, -1, NULL, depth);   /* may add more derived tables: t's address is refreshed below */
+    t = &c->dt[idx];
+    int i = L;
+    while (i < R && !kw_is(s, &tk[i], "SELECT")) i++;   /* a CTE body may start with parentheses or UNION parts: the first select list */
+    if (i >= R) return DT_BASE + idx;
+    i++;
+    if (i < R && kw_is(s, &tk[i], "DISTINCT")) i++;
+    int a = i, d = 0;
+    for (int j = i; j <= R; j++) {
+        bool end = j == R || (d == 0 && (tk[j].type == TK_COMMA || kw_is(s, &tk[j], "FROM")));
+        if (j < R && tk[j].type == TK_LPAREN) d++;
+        else if (j < R && tk[j].type == TK_RPAREN) d--;
+        if (!end) continue;
+        int b = j;   /* item [a, b) */
+        if (b > a) {
+            if (b - a == 1 && tk[a].type == TK_OP && s[tk[a].start] == '*') {   /* every column of the FROM */
+                for (int q = 0; q < inner.ntables; q++) { DbTable *src = TB(c, inner.tables[q]); ensure_cols(c, src); for (int k = 0; k < src->ncols; k++) dt_col(t, src->cols[k].name, (int)strlen(src->cols[k].name), src->cols[k].type, src->cols[k].pk); t = &c->dt[idx]; }
+            } else if (b - a == 3 && tk[a].type == TK_IDENT && tk[a + 1].type == TK_DOT && tk[a + 2].type == TK_OP && s[tk[a + 2].start] == '*') {   /* q.* */
+                int tb = resolve_qualifier(c, &inner, s + tk[a].start, tk[a].end - tk[a].start);
+                if (tb >= 0) { DbTable *src = TB(c, tb); ensure_cols(c, src); for (int k = 0; k < src->ncols; k++) dt_col(t, src->cols[k].name, (int)strlen(src->cols[k].name), src->cols[k].type, src->cols[k].pk); t = &c->dt[idx]; }
+            } else if (tk[b - 1].type == TK_IDENT) {
+                int last = b - 1, se = b;   /* the name is the last identifier; the expression before it may be a plain column */
+                if (b - a >= 3 && kw_is(s, &tk[b - 2], "AS")) se = b - 2;
+                else if (b - a >= 2 && tk[b - 2].type != TK_DOT && tk[b - 2].type != TK_OP && tk[b - 2].type != TK_LPAREN && tk[b - 2].type != TK_KW) se = b - 1;   /* expr name */
+                const char *type = NULL; bool pk = false;
+                int ce = se == b ? b : se;   /* the expression [a, ce) */
+                if (ce - a == 1 && tk[a].type == TK_IDENT) {   /* a column of one of the FROM tables */
+                    for (int q = 0; q < inner.ntables && !type; q++) { DbTable *src = TB(c, inner.tables[q]); ensure_cols(c, src); for (int k = 0; k < src->ncols; k++) if (ieq(s + tk[a].start, tk[a].end - tk[a].start, src->cols[k].name)) { type = src->cols[k].type; pk = src->cols[k].pk; break; } }
+                } else if (ce - a == 3 && tk[a].type == TK_IDENT && tk[a + 1].type == TK_DOT && tk[a + 2].type == TK_IDENT) {   /* q.col */
+                    int tb = resolve_qualifier(c, &inner, s + tk[a].start, tk[a].end - tk[a].start);
+                    if (tb >= 0) { DbTable *src = TB(c, tb); ensure_cols(c, src); for (int k = 0; k < src->ncols; k++) if (ieq(s + tk[a + 2].start, tk[a + 2].end - tk[a + 2].start, src->cols[k].name)) { type = src->cols[k].type; pk = src->cols[k].pk; break; } }
+                }
+                dt_col(t, s + tk[last].start, tk[last].end - tk[last].start, type, pk); t = &c->dt[idx];
+            }
+        }
+        if (j < R && kw_is(s, &tk[j], "FROM")) break;
+        a = j + 1;
+    }
+    return DT_BASE + idx;
 }
 
 /* true when the position right after token i expects a table name (a comma in a FROM list) */
@@ -465,12 +577,15 @@ void complete_destroy(Completer *c) {
     if (c->dirty) store_save(c);
     store_clear(c);
     for (int i = 0; c->fks && i < c->ntables; i++) if (c->fks[i]) db_fks_free(c->fks[i], c->nfks[i]);
+    for (int k = 0; k < c->nxt; k++) if (c->xfk[k]) db_fks_free(c->xfk[k], c->nxfk[k]);
     free(c->fks); free(c->nfks); free(c->fks_state);
-    free(c->tset); free(c->xt); free(c->xst);
+    free(c->tset); free(c->xt); free(c->xst); free(c->xfk); free(c->nxfk); free(c->xfst);
+    dt_clear(c); free(c->dt);
     free(c);
 }
 bool complete_pending(const Completer *c) { return c->pending; }
 void complete_set_catalog(Completer *c, const ObjCat *cat, const char *schema, CompleteTableFn table_fn, void *ctx) {
+    for (int k = 0; k < c->nxt; k++) if (c->xfk[k]) db_fks_free(c->xfk[k], c->nxfk[k]);
     c->cat = cat; c->table_fn = table_fn; c->table_ctx = ctx; c->nxt = 0;
     snprintf(c->home, sizeof c->home, "%s", schema && schema[0] ? schema : cat ? cat->home : "");
 }
@@ -483,6 +598,7 @@ void complete_set_schema(Completer *c, DbTable *tables, int ntables, const char 
     store_clear(c);
     for (int i = 0; c->fks && i < c->ntables; i++) if (c->fks[i]) db_fks_free(c->fks[i], c->nfks[i]);
     free(c->fks); free(c->nfks); free(c->fks_state); c->fks = NULL; c->nfks = NULL; c->fks_state = NULL;
+    for (int k = 0; k < c->nxt; k++) if (c->xfk[k]) db_fks_free(c->xfk[k], c->nxfk[k]);
     c->tables = tables; c->ntables = ntables; c->nxt = 0;   /* catalog tables are numbered after these */
     if (ntables > 0) { c->fks = calloc((size_t)ntables, sizeof *c->fks); c->nfks = calloc((size_t)ntables, sizeof *c->nfks); c->fks_state = calloc((size_t)ntables, 1); }
     c->load_cols = load_cols; c->load_ctx = ctx;
@@ -499,11 +615,28 @@ void complete_set_schema(Completer *c, DbTable *tables, int ntables, const char 
     SDL_free(pref);
 }
 
-void complete_set_fk_loader(Completer *c, bool (*load_fks)(void *ctx, const char *table, DbFk **out, int *n)) { c->load_fks = load_fks; }
+void complete_set_fk_loader(Completer *c, int (*load_fks)(void *ctx, const char *table, DbFk **out, int *n)) { c->load_fks = load_fks; }
+/* the foreign keys of table t as known now (NULL / 0 until read) */
+static DbFk *fks_of(Completer *c, int t, int *n) {
+    if (t < 0 || t >= DT_BASE) { *n = 0; return NULL; }
+    if (t < c->ntables) { *n = c->fks && c->fks_state[t] == 1 ? c->nfks[t] : 0; return *n ? c->fks[t] : NULL; }
+    int k = t - c->ntables;
+    *n = k < c->nxt && c->xfst[k] == 1 ? c->nxfk[k] : 0; return *n ? c->xfk[k] : NULL;
+}
+/* Reads t's foreign keys the first time (state 0), or collects them when they were asked for in the
+ * background (state 2). A refusal leaves state 0: asked again next time. */
 static void ensure_fks(Completer *c, int t) {
-    if (!c->fks || t < 0 || t >= c->ntables || c->fks_state[t]) return;
-    c->fks_state[t] = 1;
-    if (c->load_fks && !c->tables[t].is_view && !c->load_fks(c->load_ctx, c->tables[t].name, &c->fks[t], &c->nfks[t])) { c->fks[t] = NULL; c->nfks[t] = 0; c->fks_state[t] = 0; }   /* busy or failed: asked again next time */
+    if (!c->load_fks || t < 0 || t >= DT_BASE) return;
+    DbFk **slot; int *nslot; unsigned char *st; DbTable *tb;
+    if (t < c->ntables) { if (!c->fks) return; slot = &c->fks[t]; nslot = &c->nfks[t]; st = &c->fks_state[t]; tb = &c->tables[t]; }
+    else { int k = t - c->ntables; if (k >= c->nxt) return; slot = &c->xfk[k]; nslot = &c->nxfk[k]; st = &c->xfst[k]; tb = c->xt[k]; }
+    if (*st == 1 || tb->is_view) return;
+    int r = c->load_fks(c->load_ctx, tb->name, slot, nslot);
+    if (r > 0) *st = 1;
+    else {
+        *slot = NULL; *nslot = 0; *st = r == 0 ? 2 : 0;
+        if (r == 0 && !c->pending) { c->pending = true; snprintf(c->pending_what, sizeof c->pending_what, "foreign keys"); snprintf(c->pending_name, sizeof c->pending_name, "%s", tb->name); }
+    }
 }
 
 /* Save the usage file once SAVE_DEBOUNCE_MS passed since the first unsaved change. Returns true
@@ -521,6 +654,7 @@ bool complete_tick(Completer *c) {
 static void learn_one(Completer *c, const char *s, Tok *tk, int ntok) {
     if (ntok == 0) return;
     Scope sc;
+    dt_clear(c);
     analyse(c, s, tk, ntok, &sc, -1, NULL);
     char key[160], p1[128] = "", p2[128] = "";
     for (int i = 0; i < sc.ntables; i++) {
@@ -598,7 +732,16 @@ typedef struct {
     Scope *sc;
     char p1[128], p2[128];
     int worst;   /* index of the weakest candidate once out[] is full, -1 = to recompute */
+    char *compact;   /* the statement without whitespace, lower-case: a condition already written is not proposed again */
 } Gen;
+/* true when the statement already contains cond (spaces and case aside) */
+static bool stmt_has(Gen *g, const char *cond) {
+    if (!g->compact) return false;
+    char k[300]; int w = 0;
+    for (const char *p = cond; *p && w + 1 < (int)sizeof k; p++) if (!isspace((unsigned char)*p)) k[w++] = (char)tolower((unsigned char)*p);
+    k[w] = 0;
+    return w > 0 && strstr(g->compact, k) != NULL;
+}
 
 /* Usage of `key` following the previous one / two tokens; trigrams weigh twice. */
 static float ngram_usage(Gen *g, const char *key) {
@@ -664,14 +807,18 @@ static void add_columns(Gen *g, int table, bool qualify) {
     ensure_cols(g->c, t);
     char key[300], detail[96], text[300];
     const char *q = qualify ? qual_of(g->sc, g->c, table) : NULL;
+    int nf; DbFk *f = q ? fks_of(g->c, table, &nf) : NULL;   /* several tables: a key column ranks first among equals, and says what it points at */
     for (int i = 0; i < t->ncols; i++) {
         snprintf(key, sizeof key, "c:%s.%s", t->name, t->cols[i].name);
-        if (q) snprintf(detail, sizeof detail, "%s \xC2\xB7 %s%s", q, t->cols[i].type, t->cols[i].pk ? " \xC2\xB7 PK" : "");   /* several tables: which one */
+        const DbFk *fk = NULL; for (int k = 0; f && k < nf; k++) if (!strcasecmp(f[k].from_col, t->cols[i].name)) { fk = &f[k]; break; }
+        char fkd[120] = ""; if (fk) { const char *tt = strrchr(fk->to_table, '.'); snprintf(fkd, sizeof fkd, " \xC2\xB7 FK \xE2\x86\x92 %s.%s", tt ? tt + 1 : fk->to_table, fk->to_col ? fk->to_col : ""); }
+        if (q) snprintf(detail, sizeof detail, "%s \xC2\xB7 %s%s%s", q, t->cols[i].type, t->cols[i].pk ? " \xC2\xB7 PK" : "", fkd);   /* several tables: which one */
         else snprintf(detail, sizeof detail, "%s%s", t->cols[i].type, t->cols[i].pk ? " \xC2\xB7 PK" : "");
-        if (!q) { add(g, t->cols[i].name, detail, key, CAND_COLUMN, usage_of(g->c, key)); continue; }
+        float u = usage_of(g->c, key) + (q ? (t->cols[i].pk ? 0.5f : 0) + (fk ? 0.3f : 0) : 0);
+        if (!q) { add(g, t->cols[i].name, detail, key, CAND_COLUMN, u); continue; }
         snprintf(text, sizeof text, "%s.%s", q, t->cols[i].name);
         int m = match_score(t->cols[i].name, g->prefix, g->plen), m2 = match_score(text, g->prefix, g->plen);
-        add_m(g, text, detail, key, CAND_COLUMN, usage_of(g->c, key), m > m2 ? m : m2);
+        add_m(g, text, detail, key, CAND_COLUMN, u, m > m2 ? m : m2);
     }
 }
 /* INSERT INTO t: every writable column at once, first in the list. paren: "(" is typed already. */
@@ -716,19 +863,19 @@ static bool same_table(const char *fk_target, const char *name) {
 /* "JOIN b ON |": the conditions linking b to the tables before it. Real foreign keys first (every
  * pair of a composite key, either direction); then columns with exactly the same name that are a
  * primary key on at least one side (no naming convention assumed). */
-static void add_join_conditions(Gen *g, Scope *sc, int joined) {
+static void add_join_conditions_ex(Gen *g, Scope *sc, int joined, int before_only) {
     Completer *c = g->c;
     char text[240], detail[96], done[24][240]; int nd = 0;
     const char *qb = qual_of(sc, c, joined);
     ensure_fks(c, joined);
     for (int si = 0; si < sc->ntables; si++) {
         int t = sc->tables[si]; if (t == joined) continue;
+        if (before_only >= 0 && si >= before_only) continue;   /* a WHERE join: each table against the ones listed before it */
         const char *qa = qual_of(sc, c, t);
         ensure_fks(c, t);
         for (int dir = 0; dir < 2; dir++) {   /* 0: joined -> t, 1: t -> joined */
             int from = dir ? t : joined, to = dir ? joined : t;
-            const char *qf = dir ? qa : qb, *qt = dir ? qb : qa;
-            DbFk *f = c->fks ? c->fks[from] : NULL; int nf = c->nfks ? c->nfks[from] : 0;
+            int nf; DbFk *f = fks_of(c, from, &nf);
             for (int i = 0; i < nf; i++) {
                 if (!same_table(f[i].to_table, TB(c, to)->name)) continue;
                 bool first = true; for (int q = 0; q < i; q++) if (f[q].name && f[i].name && !strcmp(f[q].name, f[i].name) && same_table(f[q].to_table, f[i].to_table)) first = false;
@@ -737,13 +884,17 @@ static void add_join_conditions(Gen *g, Scope *sc, int joined) {
                 for (int q = i; q < nf && w < sizeof text - 8; q++) {
                     bool same = q == i || (f[q].name && f[i].name && !strcmp(f[q].name, f[i].name));
                     if (!same || !same_table(f[q].to_table, f[i].to_table)) continue;
-                    /* written with the joined table first: "b.x = a.y" */
-                    if (dir == 0) w += (size_t)snprintf(text + w, sizeof text - w, "%s%s.%s = %s.%s", pairs ? " AND " : "", qf, f[q].from_col, qt, f[q].to_col ? f[q].to_col : f[q].from_col);
-                    else w += (size_t)snprintf(text + w, sizeof text - w, "%s%s.%s = %s.%s", pairs ? " AND " : "", qt, f[q].to_col ? f[q].to_col : f[q].from_col, qf, f[q].from_col);
+                    /* ON: written with the joined table first ("b.x = a.y"); WHERE: in FROM order (the earlier table first) */
+                    bool joined_first = before_only < 0;
+                    const char *lq = joined_first ? qb : qa, *rq = joined_first ? qa : qb;
+                    const char *jc = f[q].from_col, *tc = f[q].to_col ? f[q].to_col : f[q].from_col;   /* from = dir ? t : joined */
+                    const char *jcol = dir == 0 ? jc : tc, *tcol = dir == 0 ? tc : jc;   /* the joined table's column, the other's */
+                    w += (size_t)snprintf(text + w, sizeof text - w, "%s%s.%s = %s.%s", pairs ? " AND " : "", lq, joined_first ? jcol : tcol, rq, joined_first ? tcol : jcol);
                     pairs++;
                 }
                 snprintf(detail, sizeof detail, "foreign key%s%s%s", f[i].name && f[i].name[0] ? " " : "", f[i].name ? f[i].name : "", pairs > 1 ? " (composite)" : "");
                 if (nd < 24) snprintf(done[nd++], sizeof done[0], "%s", text);
+                if (stmt_has(g, text)) continue;   /* written already */
                 add(g, text, detail, NULL, CAND_COLUMN, 3.0f);
             }
         }
@@ -753,13 +904,81 @@ static void add_join_conditions(Gen *g, Scope *sc, int joined) {
         for (int i = 0; i < B->ncols; i++) for (int j = 0; j < A->ncols; j++) {
             if (strcasecmp(B->cols[i].name, A->cols[j].name) || !(B->cols[i].pk || A->cols[j].pk)) continue;
             if (B->cols[i].pk && A->cols[j].pk && !strcasecmp(B->cols[i].name, "id")) continue;   /* each table's own "id": not a relation */
-            snprintf(text, sizeof text, "%s.%s = %s.%s", qb, B->cols[i].name, qa, A->cols[j].name);
+            if (before_only < 0) snprintf(text, sizeof text, "%s.%s = %s.%s", qb, B->cols[i].name, qa, A->cols[j].name);
+            else snprintf(text, sizeof text, "%s.%s = %s.%s", qa, A->cols[j].name, qb, B->cols[i].name);
             bool dup = false; for (int q = 0; q < nd; q++) if (strstr(done[q], text)) dup = true;
-            if (dup) continue;
+            if (dup || stmt_has(g, text)) continue;
+            { char rev[240]; snprintf(rev, sizeof rev, "%s.%s = %s.%s", qa, A->cols[j].name, qb, B->cols[i].name); if (stmt_has(g, rev)) continue; }
             snprintf(detail, sizeof detail, "same column name (key in %s)", A->cols[j].pk ? qa : qb);
             add(g, text, detail, NULL, CAND_COLUMN, 1.0f);
         }
     }
+}
+static void add_join_conditions(Gen *g, Scope *sc, int joined) { add_join_conditions_ex(g, sc, joined, -1); }
+/* "FROM a, b WHERE |": the conditions joining each table to the ones before it (the implicit join) */
+static void add_where_joins(Gen *g, Scope *sc) {
+    for (int si = 1; si < sc->ntables; si++) add_join_conditions_ex(g, sc, sc->tables[si], si);
+}
+/* "WHERE a.id = |": the columns of the other tables that pair with a.id: by foreign key first
+ * (either direction), then same-name key columns. */
+static void add_pair_columns(Gen *g, Scope *sc, int table, const char *col, int clen) {
+    Completer *c = g->c;
+    char text[240], detail[96];
+    ensure_fks(c, table);
+    for (int si = 0; si < sc->ntables; si++) {
+        int t = sc->tables[si]; if (t == table) continue;
+        const char *qt = qual_of(sc, c, t);
+        ensure_fks(c, t);
+        int nf; DbFk *f = fks_of(c, table, &nf);   /* table -> t */
+        for (int i = 0; i < nf; i++) if (ieq(col, clen, f[i].from_col) && same_table(f[i].to_table, TB(c, t)->name)) {
+            snprintf(text, sizeof text, "%s.%s", qt, f[i].to_col ? f[i].to_col : f[i].from_col);
+            snprintf(detail, sizeof detail, "foreign key%s%s", f[i].name && f[i].name[0] ? " " : "", f[i].name ? f[i].name : "");
+            add(g, text, detail, NULL, CAND_COLUMN, 3.0f);
+        }
+        f = fks_of(c, t, &nf);   /* t -> table */
+        for (int i = 0; i < nf; i++) if (same_table(f[i].to_table, TB(c, table)->name) && ieq(col, clen, f[i].to_col ? f[i].to_col : f[i].from_col)) {
+            snprintf(text, sizeof text, "%s.%s", qt, f[i].from_col);
+            snprintf(detail, sizeof detail, "foreign key%s%s", f[i].name && f[i].name[0] ? " " : "", f[i].name ? f[i].name : "");
+            add(g, text, detail, NULL, CAND_COLUMN, 3.0f);
+        }
+        DbTable *A = TB(c, table), *B = TB(c, t); ensure_cols(c, A); ensure_cols(c, B);
+        int ca = -1; for (int i = 0; i < A->ncols; i++) if (ieq(col, clen, A->cols[i].name)) ca = i;
+        for (int j = 0; ca >= 0 && j < B->ncols; j++) {
+            if (strcasecmp(A->cols[ca].name, B->cols[j].name) || !(A->cols[ca].pk || B->cols[j].pk)) continue;
+            if (A->cols[ca].pk && B->cols[j].pk && !strcasecmp(B->cols[j].name, "id")) continue;
+            snprintf(text, sizeof text, "%s.%s", qt, B->cols[j].name);
+            snprintf(detail, sizeof detail, "same column name (key in %s)", B->cols[j].pk ? qt : qual_of(sc, c, table));
+            add(g, text, detail, NULL, CAND_COLUMN, 1.0f);
+        }
+    }
+}
+/* "JOIN b USING (|": the columns both sides have, by name */
+static void add_using_columns(Gen *g, Scope *sc, int joined) {
+    Completer *c = g->c;
+    DbTable *B = TB(c, joined); ensure_cols(c, B);
+    char detail[96];
+    for (int si = 0; si < sc->ntables; si++) {
+        int t = sc->tables[si]; if (t == joined) continue;
+        DbTable *A = TB(c, t); ensure_cols(c, A);
+        for (int i = 0; i < B->ncols; i++) for (int j = 0; j < A->ncols; j++) {
+            if (strcasecmp(B->cols[i].name, A->cols[j].name)) continue;
+            snprintf(detail, sizeof detail, "in %s and %s", qual_of(sc, c, joined), qual_of(sc, c, t));
+            add(g, B->cols[i].name, detail, NULL, CAND_COLUMN, B->cols[i].pk || A->cols[j].pk ? 2.0f : 1.0f);
+        }
+    }
+}
+/* true when position i (a token index) is in a select list: the nearest clause keyword before it is SELECT */
+static bool in_select_list(const char *s, Tok *tk, int i) {
+    int depth = 0;
+    for (int k = i - 1; k >= 0; k--) {
+        if (tk[k].type == TK_RPAREN) depth++;
+        else if (tk[k].type == TK_LPAREN) { if (depth == 0) return false; depth--; }
+        else if (depth == 0 && tk[k].type == TK_KW) {
+            if (kw_is(s, &tk[k], "SELECT") || kw_is(s, &tk[k], "DISTINCT")) return true;
+            if (kw_is(s, &tk[k], "FROM") || kw_is(s, &tk[k], "WHERE") || kw_is(s, &tk[k], "ON") || kw_is(s, &tk[k], "BY") || kw_is(s, &tk[k], "SET") || kw_is(s, &tk[k], "HAVING") || kw_is(s, &tk[k], "VALUES") || kw_is(s, &tk[k], "INTO")) return false;
+        }
+    }
+    return false;
 }
 
 static void add_tables(Gen *g) {
@@ -979,13 +1198,30 @@ int complete_query(Completer *c, const char *s, int len, int cursor, bool explic
     for (int i = 0; i < nall; i++) {
         if (all[i].start < cursor && all[i].end > ps) { memmove(all + i, all + i + 1, sizeof *all * (nall - i - 1)); nall--; i--; }
     }
-    analyse(c, s, all, nall, &sc, -1, NULL);
+    dt_clear(c);
+    {   /* the query level the caret is in: its own tables first, then the enclosing levels' */
+        int stack[32], ns = 0;
+        for (int i = 0; i < nall && all[i].start < cursor; i++) {
+            if (all[i].type == TK_LPAREN) { if (ns < 32) stack[ns++] = i; }
+            else if (all[i].type == TK_RPAREN && all[i].end <= cursor && ns > 0) ns--;
+        }
+        int L = ns ? stack[ns - 1] + 1 : 0, R = ns ? match_paren(all, nall, stack[ns - 1]) : nall;
+        if (ns) analyse_range(c, s, all, 0, nall, &sc, -1, NULL, 0);   /* the top level first: its CTEs and derived tables get defined */
+        analyse_range(c, s, all, L, R, &sc, -1, NULL, 0);
+        for (int lv = ns - 1; lv >= 0; lv--) {   /* enclosing levels, nearest first */
+            int oL = lv ? stack[lv - 1] + 1 : 0, oR = lv ? match_paren(all, nall, stack[lv - 1]) : nall;
+            Scope outer; analyse_range(c, s, all, oL, oR, &outer, -1, NULL, 0);
+            for (int i = 0; i < outer.ntables; i++) scope_add(&sc, outer.tables[i]);
+            for (int i = 0; i < outer.naliases; i++) { bool dup = false; for (int k = 0; k < sc.naliases; k++) if (!strcasecmp(sc.aliases[k].alias, outer.aliases[i].alias)) dup = true; if (!dup && sc.naliases < MAX_SCOPE) sc.aliases[sc.naliases++] = outer.aliases[i]; }
+        }
+    }
     if (prev >= 0) {
         Scope tmp;
         analyse(c, s, tk, ntok, &tmp, prev, &table_ctx);
     }
 
-    Gen g = { c, out, 0, max, s + ps, plen, &sc, "", "", -1 };
+    Gen g = { c, out, 0, max, s + ps, plen, &sc, "", "", -1, NULL };
+    { g.compact = malloc((size_t)len + 1); int w = 0; for (int i = 0; g.compact && i < len; i++) if (!isspace((unsigned char)s[i])) g.compact[w++] = (char)tolower((unsigned char)s[i]); if (g.compact) g.compact[w] = 0; }
     if (prev >= 0) norm_token(c, &sc, s, tk, prev, g.p1, sizeof g.p1);
     if (prev >= 1) norm_token(c, &sc, s, tk, prev - 1, g.p2, sizeof g.p2);
     memcpy(c->prev1, g.p1, sizeof c->prev1);
@@ -1016,7 +1252,13 @@ int complete_query(Completer *c, const char *s, int len, int cursor, bool explic
         int q0 = prev - 1;   /* the whole qualifier: "a.", "X.", "HUMASTER.X." */
         while (q0 >= 2 && tk[q0 - 1].type == TK_DOT && tk[q0 - 2].type == TK_IDENT) q0 -= 2;
         int table = resolve_qualifier(c, &sc, s + tk[q0].start, tk[prev - 1].end - tk[q0].start);
-        if (table >= 0) add_columns(&g, table, false);
+        if (table >= 0) {
+            if (sc.ntables > 1 && plen == 0 && in_select_list(s, tk, q0)) {   /* "a.": every column of a, first, when several tables are in play */
+                Cand *cd = slot(&g, 100000, 1e9f, CAND_COLUMN);
+                if (cd) { snprintf(cd->text, sizeof cd->text, "*"); snprintf(cd->detail, sizeof cd->detail, "every column of %s", TB(c, table)->name); cd->key[0] = 0; cd->kind = CAND_COLUMN; cd->match = 100000; cd->usage = 1e9f; }
+            }
+            add_columns(&g, table, false);
+        }
         else if (q0 == prev - 1) {   /* "SCHEMA.": that schema's objects */
             const OcSchema *sch = objcat_schema(c->cat, s + tk[prev - 1].start, tk[prev - 1].end - tk[prev - 1].start);
             bool rel = q0 >= 1 && (expects_table(s, &tk[q0 - 1]) || (tk[q0 - 1].type == TK_COMMA && table_ctx_at(c, s, tk, q0 - 1)));
@@ -1025,6 +1267,23 @@ int complete_query(Completer *c, const char *s, int len, int cursor, bool explic
     } else if (prev >= 0 && table_ctx) {
         add_tables(&g);
         add_catalog(&g, NULL, true);
+    } else if (prev >= 1 && tk[prev].type == TK_LPAREN && kw_is(s, &tk[prev - 1], "USING") && sc.ntables >= 2) {
+        /* "JOIN b USING (": the columns both sides share */
+        int joined = -1;
+        for (int i = prev - 2; i >= 0 && joined < 0; i--) if (kw_is(s, &tk[i], "JOIN") && i + 1 < ntok && tk[i + 1].type == TK_IDENT) {
+            int j = i + 1; while (j + 2 < ntok && tk[j + 1].type == TK_DOT && tk[j + 2].type == TK_IDENT) j += 2;
+            joined = find_table(c, s + tk[i + 1].start, tk[j].end - tk[i + 1].start);
+        }
+        if (joined >= 0) add_using_columns(&g, &sc, joined);
+    } else if (prev >= 1 && tk[prev].type == TK_OP && tk[prev].end - tk[prev].start == 1 && s[tk[prev].start] == '=' && tk[prev - 1].type == TK_IDENT && sc.ntables >= 2 && plen == 0) {
+        /* "WHERE a.id = ": what pairs with a.id in the other tables (the implicit join) */
+        int ci = prev - 1, table = -1;
+        if (ci >= 2 && tk[ci - 1].type == TK_DOT && tk[ci - 2].type == TK_IDENT) {
+            int q0 = ci - 2; while (q0 >= 2 && tk[q0 - 1].type == TK_DOT && tk[q0 - 2].type == TK_IDENT) q0 -= 2;
+            table = resolve_qualifier(c, &sc, s + tk[q0].start, tk[ci - 2].end - tk[q0].start);
+        } else for (int i = 0; i < sc.ntables && table < 0; i++) { DbTable *t = TB(c, sc.tables[i]); ensure_cols(c, t); for (int k = 0; k < t->ncols; k++) if (ieq(s + tk[ci].start, tk[ci].end - tk[ci].start, t->cols[k].name)) table = sc.tables[i]; }
+        if (table >= 0) add_pair_columns(&g, &sc, table, s + tk[ci].start, tk[ci].end - tk[ci].start);
+        if (explicit || !g.n) for (int i = 0; i < sc.ntables; i++) add_columns(&g, sc.tables[i], sc.ntables > 1);
     } else if (prev >= 0 && kw_is(s, &tk[prev], "ON") && sc.ntables >= 2) {
         /* the table joined by this ON: the identifier after the closest JOIN before it */
         int joined = -1;
@@ -1035,10 +1294,13 @@ int complete_query(Completer *c, const char *s, int len, int cursor, bool explic
         if (joined >= 0) add_join_conditions(&g, &sc, joined);
         if (plen > 0 || explicit || !g.n) for (int i = 0; i < sc.ntables; i++) add_columns(&g, sc.tables[i], sc.ntables > 1);
     } else if (plen == 0 && !explicit && prev >= 0 && sc.ntables > 0 && expects_column(s, &tk[prev])) {
-        /* "UPDATE t SET ", "WHERE ", "INSERT INTO t (": columns of the tables in scope */
+        /* "UPDATE t SET ", "WHERE ", "INSERT INTO t (": columns of the tables in scope; with several
+         * tables listed, "WHERE " / "AND " offer the join conditions first (the implicit join) */
+        if (sc.ntables >= 2 && (kw_is(s, &tk[prev], "WHERE") || kw_is(s, &tk[prev], "AND") || kw_is(s, &tk[prev], "OR"))) add_where_joins(&g, &sc);
         for (int i = 0; i < sc.ntables; i++) add_columns(&g, sc.tables[i], sc.ntables > 1);
         add_extra(&g);
     } else if (plen > 0 || explicit) {
+        if (plen == 0 && prev >= 0 && sc.ntables >= 2 && (kw_is(s, &tk[prev], "WHERE") || kw_is(s, &tk[prev], "AND") || kw_is(s, &tk[prev], "OR"))) add_where_joins(&g, &sc);
         add_extra(&g);
         for (int i = 0; i < sc.ntables; i++) add_columns(&g, sc.tables[i], sc.ntables > 1);
         char key[160];
@@ -1053,6 +1315,7 @@ int complete_query(Completer *c, const char *s, int len, int cursor, bool explic
     }
     free(tk);
     free(all);
+    free(g.compact);
 
     /* rank */
     g_has_prefix = plen > 0;
@@ -1061,7 +1324,7 @@ int complete_query(Completer *c, const char *s, int len, int cursor, bool explic
         if (g.n == max) g.n--;
         memmove(out + 1, out, sizeof *out * (size_t)g.n);
         memset(&out[0], 0, sizeof out[0]);
-        snprintf(out[0].label, sizeof out[0].label, "Loading columns of %.110s\xE2\x80\xA6", c->pending_name);
+        snprintf(out[0].label, sizeof out[0].label, "Loading %s of %.100s\xE2\x80\xA6", c->pending_what, c->pending_name);
         out[0].info = true; out[0].kind = CAND_KEYWORD;
         g.n++;
     }

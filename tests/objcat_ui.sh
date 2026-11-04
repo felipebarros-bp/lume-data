@@ -17,7 +17,8 @@ if [ -n "$LUME_SKIP_ORACLE" ] || ! docker ps --format '{{.Names}}' | grep -qx db
 else
   OPW=$(grep '^ORACLE_PASSWORD=' "$OENV" | cut -d= -f2- | tr -d '"')
   ora() { docker exec -i dbv-oracle bash -c 'sqlplus -s system/"$1"@localhost:1521/FREEPDB1' -- "$OPW" >/dev/null 2>&1; }
-  printf 'CREATE OR REPLACE PUBLIC SYNONYM LUME_AC_VISITS FOR SYN_FAT.T00001;\nCREATE OR REPLACE PACKAGE LUME_PKG AS\n  PROCEDURE P_LOG(P_MSG VARCHAR2);\n  FUNCTION F_TOTAL(P_A NUMBER, P_B NUMBER) RETURN NUMBER;\nEND;\n/\nexit\n' | ora
+  printf 'CREATE TABLE LUME_AC_P (ID NUMBER PRIMARY KEY, NAME VARCHAR2(20));\nCREATE TABLE LUME_AC_C (ID NUMBER PRIMARY KEY, P_ID NUMBER REFERENCES LUME_AC_P (ID), QTY NUMBER);\nexit\n' | ora
+printf 'CREATE OR REPLACE PUBLIC SYNONYM LUME_AC_VISITS FOR SYN_FAT.T00001;\nCREATE OR REPLACE PACKAGE LUME_PKG AS\n  PROCEDURE P_LOG(P_MSG VARCHAR2);\n  FUNCTION F_TOTAL(P_A NUMBER, P_B NUMBER) RETURN NUMBER;\nEND;\n/\nexit\n' | ora
   O=build/objcat-ora; rm -rf $O; mkdir -p $O
   printf '[connection]\nid=ora1\nname=ora DEV\ndriver=oracle\nhost=localhost\nport=15210\nservice=FREEPDB1\nuser=system\nenv=DEV\n' > $O/connections.txt
   ( umask 077; printf 'ora1\tpassword\t%s\n' "$OPW" > $O/secrets.txt )
@@ -35,6 +36,10 @@ else
   expect "no alias: the table name as qualifier" 'nth "$out" completestate 8 | grep -q "\[C001|"'
   expect "a synonym's alias: the target's columns" 'nth "$out" completestate 9 | grep -q "\[C001|"'
   expect "INSERT INTO: every column first, then VALUES (" 'nth "$out" completestate 10 | grep -qE "\[all [0-9]+ columns, then VALUES \(\|"'
+  expect "joins: FROM a, b WHERE proposes the join condition by foreign key (in FROM order)" 'nth "$out" completestate 11 | grep -q "\[p.ID = c.P_ID|foreign key"'
+  expect "joins: JOIN b ON proposes the condition with the joined table first" 'nth "$out" completestate 12 | grep -q "\[c.P_ID = p.ID|foreign key"'
+  expect "joins: WHERE c.p_id = proposes the key it pairs with, first" 'nth "$out" completestate 13 | grep -q "^completestate open=1 n=[0-9]* \[p.ID|foreign key"'
+  expect "joins: inside a subquery, the inner alias lists its own columns only" 'nth "$out" completestate 14 | grep -q "\[P_ID|" && ! nth "$out" completestate 14 | grep -q "\[p\.ID|"'
   expect "the catalog is cached on disk (names only)" 'test -s $O/objcat-ora1.tsv && grep -q "^TABLE	SYN_FAT	T00001	" $O/objcat-ora1.tsv && ! grep -qi "password" $O/objcat-ora1.tsv'
   expect "the window was never blocked: columns read in the catalog session" 'grep -q "object catalog: reading ora DEV in a second session" $O/logs/lume.log'
 
@@ -55,7 +60,7 @@ else
   expect "  ... opening the package shows Loading members first, or the members already (a local server answers within the frame)" 'nth "$out" "explorer rows" 2 | grep -qE "\|\.*Loading members|\|\.*P_LOG\(P_MSG\)"'
   expect "  ... then its procedure and function, with parameter names, in declaration order" 'nth "$out" "explorer rows" 3 | grep -q "|\.*LUME_PKG |\.*P_LOG(P_MSG) |\.*F_TOTAL(P_A, P_B)"'
   expect "  ... read by the catalog session" 'nth "$out" objcatstate 1 | grep -q "members_loaded=1"'
-  printf 'DROP PUBLIC SYNONYM LUME_AC_VISITS;\nDROP PACKAGE LUME_PKG;\nexit\n' | ora
+  printf 'DROP PUBLIC SYNONYM LUME_AC_VISITS;\nDROP PACKAGE LUME_PKG;\nDROP TABLE LUME_AC_C;\nDROP TABLE LUME_AC_P;\nexit\n' | ora
 fi
 
 # ---- PostgreSQL ----
@@ -65,7 +70,7 @@ if docker ps --format '{{.Names}}' | grep -qx dbv-postgres && [ -n "$PGPW" ]; th
   P=build/objcat-pg; rm -rf $P; mkdir -p $P
   printf '[connection]\nid=pg1\nname=pg DEV\ndriver=postgres\nhost=localhost\nport=15432\ndatabase=syn\nuser=postgres\nenv=DEV\n' > $P/connections.txt
   ( umask 077; printf 'pg1\tpassword\t%s\n' "$PGPW" > $P/secrets.txt )
-  docker exec -e PGPASSWORD="$PGPW" dbv-postgres psql -U postgres -d syn -qc "CREATE SEQUENCE IF NOT EXISTS public.lume_seq" >/dev/null 2>&1
+  docker exec -e PGPASSWORD="$PGPW" dbv-postgres psql -U postgres -d syn -qc "CREATE SEQUENCE IF NOT EXISTS public.lume_seq; CREATE TABLE IF NOT EXISTS public.lume_ac_p (id int PRIMARY KEY, name text); CREATE TABLE IF NOT EXISTS public.lume_ac_c (id int PRIMARY KEY, p_id int REFERENCES public.lume_ac_p (id), qty int)" >/dev/null 2>&1
   out=$(LUME_PREF_DIR=$P LUME_SCRIPT=tests/scripts/objcat_pg.txt ./build/lume 2>&1)
   printf '%s\n' "$out" > build/objcat_ui_pg.out
   expect "PostgreSQL: the object list is read in a second session (every schema)" 'nth "$out" objcatstate 1 | grep -qE "have=1 n=[0-9]{4,} schemas=[0-9]+ home=\"public\" session=1"'
@@ -73,8 +78,12 @@ if docker ps --format '{{.Names}}' | grep -qx dbv-postgres && [ -n "$PGPW" ]; th
   expect "PostgreSQL: syn_mid. lists its tables" 'nth "$out" completestate 2 | grep -q "\[t00001|table\]"'
   expect "PostgreSQL: a.: the Loading row, or the columns already (a local server answers within the frame)" 'nth "$out" completestate 3 | grep -qE "\[Loading columns of syn_mid.t00001…\||\[c002\|numeric"'
   expect "PostgreSQL:   ... then that table's columns" 'nth "$out" completestate 4 | grep -q "\[c002|numeric"'
+  expect "PostgreSQL joins: FROM a, b WHERE proposes the join condition by foreign key" 'nth "$out" completestate 5 | grep -q "\[p.id = c.p_id|foreign key"'
+  expect "PostgreSQL joins: JOIN b ON, the joined table first" 'nth "$out" completestate 6 | grep -q "\[c.p_id = p.id|foreign key"'
+  expect "PostgreSQL joins: WHERE c.p_id = pairs with p.id first" 'nth "$out" completestate 7 | grep -q "^completestate open=1 n=[0-9]* \[p.id|foreign key"'
+  expect "PostgreSQL joins: inside a subquery, the inner alias only" 'nth "$out" completestate 8 | grep -q "\[p_id|" && ! nth "$out" completestate 8 | grep -q "\[p\.id|"'
   expect "PostgreSQL: the Explorer's Objects group of public lists the catalog's Sequences" 'nth "$out" "explorer rows" 1 | grep -q "|\.*Sequences |\.*lume_seq"'
-  docker exec -e PGPASSWORD="$PGPW" dbv-postgres psql -U postgres -d syn -qc "DROP SEQUENCE IF EXISTS public.lume_seq" >/dev/null 2>&1
+  docker exec -e PGPASSWORD="$PGPW" dbv-postgres psql -U postgres -d syn -qc "DROP SEQUENCE IF EXISTS public.lume_seq; DROP TABLE IF EXISTS public.lume_ac_c; DROP TABLE IF EXISTS public.lume_ac_p" >/dev/null 2>&1
 else echo "skip  PostgreSQL catalog: dbv-postgres not available"; fi
 
 # ---- MySQL and MariaDB ----
@@ -83,6 +92,8 @@ MYPW=$(grep '^MYSQL_PW=' "$MYENV" 2>/dev/null | cut -d= -f2- | tr -d '"')
 for pair in "mysql lume-mysql 13306" "mariadb lume-mariadb 13307"; do
   set -- $pair; drv=$1; ctr=$2; port=$3
   if ! docker ps --format '{{.Names}}' | grep -qx $ctr || [ -z "$MYPW" ]; then echo "skip  $drv catalog: $ctr not available"; continue; fi
+  cli=$([ "$drv" = mariadb ] && echo mariadb || echo mysql)
+  docker exec $ctr $cli -uroot -p"$MYPW" -e "CREATE TABLE IF NOT EXISTS shop.lume_ac_p (id int PRIMARY KEY, name varchar(20)) ENGINE=InnoDB; CREATE TABLE IF NOT EXISTS shop.lume_ac_c (id int PRIMARY KEY, p_id int, qty int, FOREIGN KEY (p_id) REFERENCES shop.lume_ac_p (id)) ENGINE=InnoDB" >/dev/null 2>&1
   M=build/objcat-$drv; rm -rf $M; mkdir -p $M
   printf '[connection]\nid=my1\nname=my DEV\ndriver=%s\nhost=127.0.0.1\nport=%s\ndatabase=shop\nuser=root\nenv=DEV\n' "$drv" "$port" > $M/connections.txt
   ( umask 077; printf 'my1\tpassword\t%s\n' "$MYPW" > $M/secrets.txt )
@@ -92,6 +103,11 @@ for pair in "mysql lume-mysql 13306" "mariadb lume-mariadb 13307"; do
   expect "$drv: sho proposes the database shop as a schema" 'nth "$out" completestate 1 | grep -qE "\[shop\|schema · [0-9,]+ objects ›\]"'
   expect "$drv: shop. lists its tables and views" 'nth "$out" completestate 2 | grep -q "\[pl_customers|table\]" && nth "$out" completestate 2 | grep -q "\[v_sales|view\]"'
   expect "$drv: a. proposes the columns" 'nth "$out" completestate 3 | grep -qE "open=1 n=[1-9]" && ! nth "$out" completestate 3 | grep -q "Loading"'
+  expect "$drv joins: FROM a, b WHERE proposes the join condition by foreign key" 'nth "$out" completestate 4 | grep -q "\[p.id = c.p_id|foreign key"'
+  expect "$drv joins: JOIN b ON, the joined table first" 'nth "$out" completestate 5 | grep -q "\[c.p_id = p.id|foreign key"'
+  expect "$drv joins: WHERE c.p_id = pairs with p.id first" 'nth "$out" completestate 6 | grep -q "^completestate open=1 n=[0-9]* \[p.id|foreign key"'
+  expect "$drv joins: inside a subquery, the inner alias only" 'nth "$out" completestate 7 | grep -q "\[p_id|" && ! nth "$out" completestate 7 | grep -q "\[p\.id|"'
+  docker exec $ctr $cli -uroot -p"$MYPW" -e "DROP TABLE IF EXISTS shop.lume_ac_c; DROP TABLE IF EXISTS shop.lume_ac_p" >/dev/null 2>&1
 done
 
 if [ $fails = 0 ]; then echo "OBJCAT UI: all passed"; else echo "OBJCAT UI: FAILED ($fails failures)"; fi

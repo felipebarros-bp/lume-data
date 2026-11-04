@@ -43,9 +43,13 @@ void complete_set_catalog(Completer *c, const ObjCat *cat, const char *schema, C
 /* The last complete_query needed columns that are still loading (the popup shows a Loading row;
  * the editor asks again when they arrive). */
 bool complete_pending(const Completer *c);
-/* Foreign keys of a table, read on demand the first time a JOIN ... ON needs them (cached per schema).
+/* Foreign keys of a table (its name as the completer knows it: NAME or SCHEMA.NAME, a catalog
+ * table or a synonym included), read on demand the first time a JOIN ... ON or a WHERE between
+ * several tables needs them, cached per schema. Returns 1 with *out / *n filled (owned by the
+ * completer, freed with db_fks_free), 0 when they were asked for in the background (the editor is
+ * told when they arrive and the popup shows "Loading foreign keys of X…"), -1 refused or failed.
  * Same ctx as complete_set_schema. NULL: JOIN conditions come only from column names. */
-void complete_set_fk_loader(Completer *c, bool (*load_fks)(void *ctx, const char *table, DbFk **out, int *n));
+void complete_set_fk_loader(Completer *c, int (*load_fks)(void *ctx, const char *table, DbFk **out, int *n));
 /* Learns object usage and token n-grams from SQL text (one or more statements). */
 void complete_learn_statement(Completer *c, const char *sql, int len);
 /* Learns from a proposal accepted in the popup. */

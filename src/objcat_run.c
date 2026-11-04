@@ -19,9 +19,9 @@
 /* A request to the catalog session: RQ_COLUMNS (`key` names the table as asked, lower-case
  * "schema.name"; `query` the object whose columns are read, a synonym's target) or RQ_MEMBERS
  * (`key` the package, `query` the SQL listing its subprograms). */
-enum { RQ_COLUMNS, RQ_MEMBERS };
+enum { RQ_COLUMNS, RQ_MEMBERS, RQ_FKS };
 typedef struct Req { int kind; char key[300]; char query[2400]; } Req;
-typedef struct Res { int kind; char key[300]; DbTable t; OcMember *m; int nm; char err[200]; } Res;
+typedef struct Res { int kind; char key[300]; DbTable t; OcMember *m; int nm; DbFk *fks; int nfks; char err[200]; } Res;
 static void res_free(Res *r);
 
 /* The catalog session. Shared by the main thread and the worker; the last one to let go frees it
@@ -34,6 +34,7 @@ typedef struct Job {
     ObjCat cat;                /* filled by the worker; the main thread takes it once cat_ready */
     char err[300];
     volatile int cancel, done, refs, cat_ready, open_ok, inflight;   /* inflight: the session is inside a statement (a cancel reaches it); idle otherwise */
+    volatile int pending;      /* requests enqueued and not yet answered: the app polls only while this is not 0 (an idle session costs no wake-ups) */
     Db *volatile db;           /* the session while it is open (cancel reaches its statement) */
     SDL_Mutex *mu;             /* guards db, the queues */
     SDL_Condition *cv;         /* a request arrived / cancel */
@@ -43,6 +44,7 @@ typedef struct Job {
 
 typedef struct ColT { char key[300]; DbTable *t; int state; } ColT;   /* state OCS_* */
 typedef struct MemT { char key[300]; OcMembers *ms; } MemT;             /* a package's members (state inside) */
+typedef struct FkT { char key[300]; DbFk *fks; int n; int state; } FkT;   /* a table's foreign keys, state OCS_* */
 typedef struct Entry {
     char conn_id[16]; unsigned generation;
     ObjCat cat; bool have;     /* the catalog in use (cache or last read) */
@@ -53,6 +55,7 @@ typedef struct Entry {
     double t0;
     ColT *ct; int nct, capct;  /* tables whose columns were asked for (stable DbTable pointers) */
     MemT *mt; int nmt, capmt;  /* packages whose members were asked for (stable pointers) */
+    FkT *ft; int nft, capft;   /* tables whose foreign keys were asked for */
 } Entry;
 static Entry *E; static int nE, capE;
 static App *A;
@@ -78,6 +81,7 @@ static void table_free(DbTable *t) {
 
 static void res_free(Res *r) {
     table_free(&r->t);
+    if (r->fks) db_fks_free(r->fks, r->nfks); r->fks = NULL; r->nfks = 0;
     for (int i = 0; i < r->nm; i++) { free(r->m[i].name); free(r->m[i].args); }
     free(r->m); r->m = NULL; r->nm = 0;
 }
@@ -149,6 +153,9 @@ static int worker(void *ud) {
                 out.t.name = strdup(r.query);
                 if (!db->drv->list_columns(db, &out.t, out.err, sizeof out.err) && !out.err[0]) snprintf(out.err, sizeof out.err, "the columns could not be read");
                 if (!out.err[0]) out.t.cols_loaded = true;
+            } else if (r.kind == RQ_FKS) {
+                if (!db->drv->list_fks) snprintf(out.err, sizeof out.err, "this driver lists no foreign keys");
+                else if (!db->drv->list_fks(db, r.query, &out.fks, &out.nfks, out.err, sizeof out.err) && !out.err[0]) snprintf(out.err, sizeof out.err, "the foreign keys could not be read");
             } else {
                 ResultSet rs; rs_init(&rs);
                 db->drv->exec(db, r.query, (int)strlen(r.query), 0, &rs);
@@ -170,6 +177,7 @@ static int worker(void *ud) {
             if (j->nres == j->capres) { int nc = j->capres ? j->capres * 2 : 16; Res *nr = realloc(j->res, sizeof *nr * (size_t)nc); if (nr) { j->res = nr; j->capres = nc; } }
             if (j->nres < j->capres) j->res[j->nres++] = out; else res_free(&out);
             SDL_UnlockMutex(j->mu);
+            __atomic_sub_fetch(&j->pending, 1, __ATOMIC_SEQ_CST);
         }
         SDL_LockMutex(j->mu); j->db = NULL; SDL_UnlockMutex(j->mu);
         db_close(db);
@@ -212,6 +220,8 @@ static void columns_clear(Entry *e) {
     free(e->ct); e->ct = NULL; e->nct = e->capct = 0;
     for (int i = 0; i < e->nmt; i++) { objcat_members_free(e->mt[i].ms); free(e->mt[i].ms); }
     free(e->mt); e->mt = NULL; e->nmt = e->capmt = 0;
+    for (int i = 0; i < e->nft; i++) if (e->ft[i].fks) db_fks_free(e->ft[i].fks, e->ft[i].n);
+    free(e->ft); e->ft = NULL; e->nft = e->capft = 0;
 }
 
 static bool start_session(Entry *e, Connection *c, bool skip_catalog) {
@@ -299,7 +309,7 @@ static bool enqueue(Entry *e, Connection *c, int kind, const char *key, const ch
     SDL_LockMutex(j->mu);
     bool ok = true;
     if (j->nreq == j->capreq) { int nc = j->capreq ? j->capreq * 2 : 16; Req *nr = realloc(j->req, sizeof *nr * (size_t)nc); if (nr) { j->req = nr; j->capreq = nc; } else ok = false; }
-    if (ok) { Req *r = &j->req[j->nreq++]; r->kind = kind; snprintf(r->key, sizeof r->key, "%s", key); snprintf(r->query, sizeof r->query, "%s", query); SDL_SignalCondition(j->cv); }
+    if (ok) { Req *r = &j->req[j->nreq++]; r->kind = kind; snprintf(r->key, sizeof r->key, "%s", key); snprintf(r->query, sizeof r->query, "%s", query); __atomic_add_fetch(&j->pending, 1, __ATOMIC_SEQ_CST); SDL_SignalCondition(j->cv); }
     SDL_UnlockMutex(j->mu);
     return ok;
 }
@@ -320,6 +330,19 @@ DbTable *objcat_table(App *a, Connection *c, const char *schema, const char *nam
     ct->state = enqueue(e, c, RQ_COLUMNS, key, query) ? OCS_LOADING : OCS_UNAVAILABLE;
     *state = ct->state;
     return t;
+}
+
+int objcat_fks(App *a, Connection *c, const char *schema, const char *name, DbFk **out, int *n) {
+    A = a; *out = NULL; *n = 0;
+    if (!c || !c->db || !a->catalog_session || !objcat_sql(c->driver, 1, false)) return OCS_UNAVAILABLE;
+    Entry *e = entry_now(c); if (!e) return OCS_UNAVAILABLE;
+    char key[300]; lower_key(key, sizeof key, schema, name);
+    for (int i = 0; i < e->nft; i++) if (!strcmp(e->ft[i].key, key)) { *out = e->ft[i].fks; *n = e->ft[i].n; return e->ft[i].state; }
+    if (e->nft == e->capft) { int nc = e->capft ? e->capft * 2 : 32; FkT *n2 = realloc(e->ft, sizeof *n2 * (size_t)nc); if (!n2) return OCS_UNAVAILABLE; e->ft = n2; e->capft = nc; }
+    FkT *ft = &e->ft[e->nft++]; memset(ft, 0, sizeof *ft); snprintf(ft->key, sizeof ft->key, "%s", key);
+    char query[300]; column_source(e->have ? &e->cat : NULL, schema, name, query, sizeof query);   /* a synonym: its target's keys */
+    ft->state = enqueue(e, c, RQ_FKS, key, query) ? OCS_LOADING : OCS_UNAVAILABLE;
+    return ft->state;
 }
 
 const OcMembers *objcat_members(App *a, Connection *c, const char *schema, const char *name) {
@@ -391,6 +414,17 @@ void objcat_pump(App *a) {
         Res *res = j->res; int nres = j->nres; j->res = NULL; j->nres = j->capres = 0;
         SDL_UnlockMutex(j->mu);
         for (int r = 0; r < nres; r++) {
+            if (res[r].kind == RQ_FKS) {   /* a table's foreign keys */
+                FkT *ft = NULL;
+                for (int k = 0; k < e->nft; k++) if (!strcmp(e->ft[k].key, res[r].key)) ft = &e->ft[k];
+                if (!ft) { res_free(&res[r]); continue; }
+                if (ft->fks) db_fks_free(ft->fks, ft->n);
+                ft->fks = res[r].fks; ft->n = res[r].nfks; res[r].fks = NULL; res[r].nfks = 0;
+                ft->state = res[r].err[0] ? OCS_FAILED : OCS_LOADED;
+                if (res[r].err[0]) LOG_W("object catalog: foreign keys of %s: %s", res[r].key, res[r].err);
+                arrived = true;
+                continue;
+            }
             if (res[r].kind == RQ_MEMBERS) {   /* a package's members */
                 MemT *mt = NULL;
                 for (int k = 0; k < e->nmt; k++) if (!strcmp(e->mt[k].key, res[r].key)) mt = &e->mt[k];
@@ -419,9 +453,10 @@ void objcat_pump(App *a) {
             e->job = NULL;
             for (int k = 0; k < e->nct; k++) if (e->ct[k].state == OCS_LOADING) e->ct[k].state = OCS_UNAVAILABLE;
             for (int k = 0; k < e->nmt; k++) if (e->mt[k].ms->state == OCS_LOADING) e->mt[k].ms->state = OCS_UNAVAILABLE;
+            for (int k = 0; k < e->nft; k++) if (e->ft[k].state == OCS_LOADING) e->ft[k].state = OCS_UNAVAILABLE;
             job_release(j);
             arrived = true;
-        } else app_wake_in(a, 150);
+        } else if (!e->cat_taken || __atomic_load_n(&j->pending, __ATOMIC_SEQ_CST) > 0) app_wake_in(a, 150);   /* only while something is on its way: an idle catalog session never wakes the app */
     }
     if (arrived) {
         if (a->editor) editor_metadata_arrived(a->editor, a);

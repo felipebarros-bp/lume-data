@@ -30,6 +30,12 @@ What it proposes depends on where the caret is:
 | `alias.`, `table.` or `schema.table.` | the columns of that table only |
 | `schema.` | that schema's objects (after `FROM` / `JOIN`: only what can be queried) |
 | `FROM`, `JOIN`, `INTO`, `UPDATE`, `TABLE`, a comma in a `FROM` list | tables, views, materialized views and synonyms; schemas; other schemas' objects as `SCHEMA.NAME` |
+| `FROM a, b WHERE` (and after `AND`) | the join conditions first, from the foreign keys (`a.id = b.a_id`, in `FROM` order; composite keys whole), then the columns; a condition already written is not proposed again |
+| `WHERE a.id =` | the column of another table that the foreign key pairs with `a.id`, first; then same-name key columns; then the rest |
+| `a.` in the select list, several tables | `*` first ("every column of a"), then the columns |
+| `JOIN b USING (` | the columns both tables have |
+| a subquery | the subquery's own tables, then the enclosing query's (a correlated subquery sees the outer alias) |
+| a CTE or a derived table (`WITH t AS (...)`, `(SELECT ...) d`) | its select list as its columns (`t.`, `d.`): a plain column keeps its type, `expr AS name` its name, `*` expands the FROM |
 | `INSERT INTO t` and a space | first, **all N columns, then VALUES (**, which inserts `(A, B, C) VALUES (`; then the single columns |
 | `INSERT INTO t (` | first, every column: `A, B, C)`; then the single columns |
 | `SELECT`, `WHERE`, `ON`, `SET`, `BY`, `AND`, `OR`, `HAVING`, `(` | the columns of the tables already in the statement, with nothing typed |

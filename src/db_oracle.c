@@ -135,6 +135,22 @@ static void ora_close(Db *db);
 
 /* open: parses the three-line location, creates a threaded UTF-8 environment, logs on and
  * looks up the session's "sid,serial#" for the cancel fallback. Blocks until connected. */
+/* One OCI environment for the whole process, created the first time and never freed. OCI keeps
+ * per-thread state tied to the environment, released by a pthread key destructor when a thread
+ * exits: with an environment per connection, a thread that closed its connection (freeing the
+ * environment) and then ended crashed in that destructor (sltsqKeyDestructor). Connections close
+ * on short-lived threads (db_close, the cancel fallback, the connect worker), so the environment
+ * must outlive every thread. OCI_THREADED: handles of one environment are used from several
+ * threads (a statement on the executor, OCIBreak from the UI thread). */
+#include <pthread.h>
+static OCIEnv *g_env; static pthread_mutex_t g_env_mu = PTHREAD_MUTEX_INITIALIZER;
+static OCIEnv *shared_env(void) {
+    pthread_mutex_lock(&g_env_mu);
+    if (!g_env && oci.EnvNlsCreate(&g_env, OCI_THREADED, NULL, NULL, NULL, NULL, 0, NULL, OCI_UTF8_CHARSET, OCI_UTF8_CHARSET) != OCI_SUCCESS) g_env = NULL;
+    OCIEnv *e = g_env;
+    pthread_mutex_unlock(&g_env_mu);
+    return e;
+}
 /* open with a limit on establishing the connection (connect_s seconds), see ora_open */
 static bool ora_open_within(Db *db, const char *location, char *err, size_t errlen, int connect_s) {
     if (!oci_load(err, errlen)) return false;
@@ -157,10 +173,8 @@ static bool ora_open_within(Db *db, const char *location, char *err, size_t errl
     }
 
     OraConn *c = calloc(1, sizeof *c);
-    /* OCI_THREADED: the executor thread runs statements while the UI thread may call OCIBreak */
-    if (oci.EnvNlsCreate(&c->env, OCI_THREADED, NULL, NULL, NULL, NULL, 0, NULL, OCI_UTF8_CHARSET, OCI_UTF8_CHARSET) != OCI_SUCCESS) {
-        snprintf(err, errlen, "OCIEnvNlsCreate failed"); free(c); return false;
-    }
+    c->env = shared_env();
+    if (!c->env) { snprintf(err, errlen, "OCIEnvNlsCreate failed"); free(c); return false; }
     oci.HandleAlloc(c->env, (void **)&c->err, OCI_HTYPE_ERROR, 0, NULL);
     oci.HandleAlloc(c->env, (void **)&c->errb, OCI_HTYPE_ERROR, 0, NULL);
     sword rc = oci.Logon2(c->env, c->err, &c->svc, (OraText *)user, (ub4)strlen(user), (OraText *)pass, (ub4)strlen(pass),
@@ -168,7 +182,8 @@ static bool ora_open_within(Db *db, const char *location, char *err, size_t errl
     if (rc != OCI_SUCCESS && rc != OCI_SUCCESS_WITH_INFO) {
         ora_error(c->err, err, errlen);
         oci.HandleFree(c->err, OCI_HTYPE_ERROR);
-        oci.HandleFree(c->env, OCI_HTYPE_ENV);
+        if (c->errb) oci.HandleFree(c->errb, OCI_HTYPE_ERROR);
+        if (c->svc) oci.HandleFree(c->svc, OCI_HTYPE_SVCCTX);   /* the environment is shared: never freed */
         free(c);
         return false;
     }
@@ -201,7 +216,7 @@ static void ora_close(Db *db) {
     }
     if (c->err) oci.HandleFree(c->err, OCI_HTYPE_ERROR);
     if (c->errb) oci.HandleFree(c->errb, OCI_HTYPE_ERROR);
-    if (c->env) oci.HandleFree(c->env, OCI_HTYPE_ENV);
+    /* c->env is the process-wide environment (shared_env): never freed */
     free(c);
 }
 

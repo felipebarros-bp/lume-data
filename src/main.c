@@ -215,10 +215,27 @@ static int load_cols_cb(void *ctx, DbTable *t) {
 /* Completer callback: another schema's object (or a synonym) as a table, columns in the background */
 static DbTable *cat_table_cb(void *ctx, const char *schema, const char *name, int *state) { return g_app ? objcat_table(g_app, (Connection *)ctx, schema, name, state) : NULL; }
 /* Completer callback: a table's foreign keys (JOIN ... ON), read once through the connection */
-static bool load_fks_cb(void *ctx, const char *table, DbFk **out, int *n) {
+static int load_fks_cb(void *ctx, const char *table, DbFk **out, int *n) {
     Connection *c = ctx; char err[200];
-    if (!c || !c->db || !c->db->drv->list_fks || c->db->busy) return false;
-    return c->db->drv->list_fks(c->db, table, out, n, err, sizeof err);
+    *out = NULL; *n = 0;
+    if (!c || !c->db || !c->db->drv->list_fks) return -1;
+    /* through the catalog session when there is one: never a round trip on this thread */
+    const char *dot = strrchr(table, '.');
+    char schema[160] = "";
+    if (dot) snprintf(schema, sizeof schema, "%.*s", (int)(dot - table), table);
+    else snprintf(schema, sizeof schema, "%s", c->schema[0] ? c->schema : "");
+    DbFk *src = NULL; int ns = 0;
+    int st = g_app ? objcat_fks(g_app, c, schema, dot ? dot + 1 : table, &src, &ns) : OCS_UNAVAILABLE;
+    if (st == OCS_LOADING) return 0;
+    if (st == OCS_FAILED) return -1;
+    if (st == OCS_LOADED) {   /* the completer owns its copy */
+        DbFk *cp = ns ? calloc((size_t)ns, sizeof *cp) : NULL;
+        for (int i = 0; cp && i < ns; i++) { cp[i].name = src[i].name ? strdup(src[i].name) : NULL; cp[i].from_col = strdup(src[i].from_col ? src[i].from_col : ""); cp[i].to_table = strdup(src[i].to_table ? src[i].to_table : ""); cp[i].to_col = src[i].to_col ? strdup(src[i].to_col) : NULL; }
+        *out = cp; *n = cp ? ns : 0;
+        return 1;
+    }
+    if (__atomic_load_n(&c->db->busy, __ATOMIC_SEQ_CST)) return -1;   /* no catalog session: only while the editor's session is idle */
+    return c->db->drv->list_fks(c->db, table, out, n, err, sizeof err) ? 1 : -1;
 }
 
 /* Point the completer at the active connection's cached schema (or clear it). */

@@ -76,6 +76,11 @@ DbTable *objcat_table(App *a, struct Connection *c, const char *schema, const ch
  * current schema): OCS_LOADED (filled now), OCS_LOADING (asked; filled on a later call), or
  * OCS_UNAVAILABLE / OCS_FAILED. Never blocks. */
 int objcat_columns_into(App *a, struct Connection *c, DbTable *t);
+/* Foreign keys of the table schema.name (a synonym: its target's), read by the catalog session the
+ * first time; returns OCS_LOADED with *out / *n (borrowed, stable until the connection closes),
+ * OCS_LOADING (asked; objcat_pump tells the editor when they arrive), OCS_FAILED, or
+ * OCS_UNAVAILABLE (no catalog session: the caller may read them itself). */
+int objcat_fks(App *a, struct Connection *c, const char *schema, const char *name, DbFk **out, int *n);
 /* ---- package members: the subprograms a package declares (Oracle) ---- */
 typedef struct OcMember { char *name, *args; bool function; } OcMember;   /* args: "P_ID, P_NAME" ("" when none / not listed) */
 typedef struct OcMembers { OcMember *m; int n; int state; } OcMembers;   /* state OCS_* */
