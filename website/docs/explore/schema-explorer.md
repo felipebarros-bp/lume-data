@@ -39,19 +39,23 @@ Pinning or moving a schema never touches your open tabs.
 - **Find Objects...** on a schema searches its objects by type and name: tables open a preview, views and routines open in the [object editor](object-editor.md).
 - **Quick Open** (**Cmd+P**) finds tables, views, schemas and connections already loaded in any connection, without querying.
 
+## Object types
+
+An open schema (a database on MySQL and MariaDB) lists one group per type of object, each with its count on the right: **Tables**, **Views**, then what the database has, such as **Materialized views**, **Functions**, **Procedures**, **Packages**, **Triggers**, **Types**, **Sequences** and **Synonyms**. A type with no objects has no group. **Tables** and **Views** start open when they hold 200 rows or fewer; the other groups start closed. Lume remembers which groups you opened.
+
 ## Tables
 
 - **Double-click** a table to preview its rows.
 - Right-click for **Modify Table...**, **Edit Data**, **Generate SQL > CREATE**, **Duplicate Structure...**, **Dependencies...**, **Show ER Diagram**, **Add to Current Diagram** and **Drop Table...** (always confirmed).
 - **Cmd+click** several tables, or **Shift+click** a range, then **Show ER Diagram (N tables)**.
 
-A schema's table list shows its first 5,000 tables and views; beyond that it says so and points to **Find Objects...**.
+A schema's table list shows its first 5,000 tables and views; beyond that the group says so and points to **Find Objects...**. The count then comes from completion's catalog of every object when it is loaded, or reads **5,000+**.
 
 On a large database, listing a schema's tables can take a while (Oracle checks your grants on every table). The schema shows **Loading... 12 s** while it works, and keeps waiting for up to 10 minutes (change it in [Settings > Schema Explorer](../settings.md#schema-explorer)). Click **Cancel** under the schema to stop it; it then says **Listing cancelled** with **Retry**. While the list loads, the connection's session is busy: running a query in the editor on the same connection asks you to wait or cancel the listing.
 
 ## Views, routines and other objects
 
-Under a schema, **Objects** groups list views, materialized views, functions, procedures, triggers, packages and types (what the database has), then its **Sequences** and **Synonyms** (a synonym shows its target). Double-click a routine, package, trigger or type to open its definition in the [object editor](object-editor.md). An object whose definition is invalid is marked **INVALID** in red; one with a local draft is marked **draft**.
+The other object type groups list what the connection's own session reads, and Lume reads it only when you ask: when you open the schema yourself or open one of its groups. A schema that opened by itself at connect (the connection's own schema) shows the groups counted by completion's catalog, which reads on a second session, and opening one reads the list. Without that catalog, the schema shows **Show functions, procedures and other objects**. This way your first query after connecting never waits for the Explorer. **Triggers** and other kinds the catalog does not count appear once the list is read. **Sequences** and **Synonyms** come from completion's catalog (a synonym shows its target). Double-click a routine, package, trigger or type to open its definition in the [object editor](object-editor.md). An object whose definition is invalid is marked **INVALID** in red; one with a local draft is marked **draft**.
 
 On Oracle, a package opens like a folder: its procedures (**P**) and functions (**F**) are listed with their parameter names, read in the background by the same second session that serves [completion](../sql/editor.md#every-object-you-can-see) (with completion's second session off in Settings, the row says so). Double-click a member to open the package specification.
 

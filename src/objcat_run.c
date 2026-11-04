@@ -311,6 +311,7 @@ static bool enqueue(Entry *e, Connection *c, int kind, const char *key, const ch
     if (j->nreq == j->capreq) { int nc = j->capreq ? j->capreq * 2 : 16; Req *nr = realloc(j->req, sizeof *nr * (size_t)nc); if (nr) { j->req = nr; j->capreq = nc; } else ok = false; }
     if (ok) { Req *r = &j->req[j->nreq++]; r->kind = kind; snprintf(r->key, sizeof r->key, "%s", key); snprintf(r->query, sizeof r->query, "%s", query); __atomic_add_fetch(&j->pending, 1, __ATOMIC_SEQ_CST); SDL_SignalCondition(j->cv); }
     SDL_UnlockMutex(j->mu);
+    if (ok && A) app_wake_in(A, 150);   /* the pump may already have run this frame and seen nothing pending: without this wake an idle app never collects the answer */
     return ok;
 }
 
@@ -399,6 +400,7 @@ void objcat_pump(App *a) {
                 e->cat = j->cat; memset(&j->cat, 0, sizeof j->cat); e->have = true;
                 if (c && a->active == c) app_refresh_schema(a);
                 objcat_free(&old);
+                if (a->explorer) explorer_rebuild(a->explorer, a);   /* its kind groups count from the catalog */
                 snprintf(e->state, sizeof e->state, "%d object%s in %d schema%s (%.1f s)", e->cat.n, e->cat.n == 1 ? "" : "s", e->cat.ns, e->cat.ns == 1 ? "" : "s", secs);
                 LOG_I("object catalog: %s: %d objects in %d schemas, %.1f s", c ? c->name : e->conn_id, e->cat.n, e->cat.ns, secs);
                 if (c) { char p[1200]; cache_path(c, p, sizeof p); if (!objcat_save(&e->cat, p)) LOG_W("object catalog: could not write the cache"); }

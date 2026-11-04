@@ -43,7 +43,7 @@ type select * from lume_ac_p p where p.id in (select c.p_id from lume_ac_c c whe
 wait 800
 completestate
 key Escape
-node "public/Objects"
+node "public/Sequences"
 wait 4000
 explorerdump rows
 node "Sequences"

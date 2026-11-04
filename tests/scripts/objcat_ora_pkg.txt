@@ -3,7 +3,9 @@ wait 500
 dnode "ora DEV"
 awaitconn "ora DEV" 60000
 objcatawait 300000
-node "SYSTEM/Objects"
+node "Show functions, procedures and other objects"
+wait 3000
+node "SYSTEM/Packages"
 wait 4000
 explorerdump rows
 xnode "LUME_PKG"

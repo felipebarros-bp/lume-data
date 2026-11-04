@@ -4,7 +4,6 @@
 wait 500
 dnode "Second"
 wait 400
-node "Objects"
 wait 600
 objopen "Second" view main v1
 wait 800

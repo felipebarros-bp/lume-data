@@ -15,7 +15,7 @@ Double-click it in the Explorer, or right-click > **Open Definition**. Each obje
 - System objects, encrypted or wrapped sources, and special objects (extension members, aggregates, virtual tables...) open **read-only** and say why. You can still copy and export them.
 - An object tab is not a console: **Run** is refused there. **Open in Query Console** runs a copy.
 
-The right-click menu of an **Objects** group offers **New from template** (view, function, procedure, trigger, package) in the database's dialect, and **Refresh Objects**.
+The right-click menu of an object type group in the Explorer (**Tables**, **Functions**, **Procedures**...) offers **New from template** (view, function, procedure, trigger, package) in the database's dialect, and **Refresh Objects**.
 
 ## Edit
 

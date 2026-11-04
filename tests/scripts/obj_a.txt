@@ -2,7 +2,6 @@
 wait 600
 dnode "Shop"
 wait 400
-node "Objects"
 wait 600
 shot build/ui/obj_explorer.bmp
 rnode "v_revenue"

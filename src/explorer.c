@@ -51,9 +51,9 @@
  * rows), a table or view, a column, an object, a namespace (schema / database), an action row. */
 typedef enum { NODE_CONN, NODE_GROUP, NODE_TABLE, NODE_COLUMN, NODE_OBJECT, NODE_SCHEMA, NODE_ACTION, NODE_FOLDER } NodeKind;
 /* Schema Explorer roles of a group */
-enum { NR_NONE, NR_ROOT, NR_OTHERS };
+enum { NR_NONE, NR_ROOT, NR_OTHERS, NR_KIND };
 /* action rows */
-enum { ACT_NONE, ACT_SEARCH_OTHERS, ACT_LOAD_MORE, ACT_RETRY_PAGE, ACT_RETRY_TABLES, ACT_RETRY_SCOPE, ACT_CANCEL_TABLES };
+enum { ACT_NONE, ACT_SEARCH_OTHERS, ACT_LOAD_MORE, ACT_RETRY_PAGE, ACT_RETRY_TABLES, ACT_RETRY_SCOPE, ACT_CANCEL_TABLES, ACT_LOAD_OBJECTS };
 
 /* One row of the tree. Owns its label, detail and children. */
 typedef struct Node {
@@ -65,13 +65,14 @@ typedef struct Node {
     int depth;   /* indent level, 0 for roots */
     DbTable *table;   /* borrowed from Connection.tables or the Explorer's schema cache (NODE_TABLE only) */
     Connection *conn;   /* owning connection, inherited from the parent */
-    bool objgroup;      /* the "Objects" group of a schema: filled from the object editor's list on expand */
+    bool objgroup;      /* a kind group of a schema (Tables, Functions...): its menu creates objects from templates */
     char *schema;       /* objgroup: the schema it lists ("" = the connection's current one) */
     ObjKey *okey;       /* NODE_OBJECT: the object's identity (owned) */
     bool pkg;           /* NODE_OBJECT of a package: expands to its subprograms (from the catalog session) */
     bool member;        /* NODE_OBJECT: a package's subprogram (opens the package) */
     bool chip, member_fn;   /* NODE_OBJECT of a routine: drawn as an F / P chip (member_fn: a function, else a procedure) */
     unsigned char ckind;   /* NODE_OBJECT from the catalog (no editor): OC_* + 1, 0 otherwise */
+    bool needs_list;       /* a kind group counted by the catalog: opening it reads the schema's object list */
     int role, action;   /* NR_* of a group; ACT_* of an action row */
     int order;          /* NODE_CONN under folders: the connection's position in the store (sorting) */
     char *sname;        /* NODE_SCHEMA / action rows: the namespace */
@@ -428,20 +429,7 @@ static void ns_pump(App *a) {
     }
 }
 
-/* "Objects" groups the user expanded, by "connection id|schema": the tree is rebuilt often and
- * this state must survive it */
-static char obj_open[32][160]; static int nobj_open;
 static int g_waiting;   /* rows showing "Loading columns..." / "Loading members..." since the last rebuild */
-static bool objgroup_is_open(Connection *c, const char *schema) {
-    char k[160]; snprintf(k, sizeof k, "%s|%s", c->id, schema);
-    for (int i = 0; i < nobj_open; i++) if (!strcmp(obj_open[i], k)) return true;
-    return false;
-}
-static void objgroup_set_open(Connection *c, const char *schema, bool open) {
-    char k[160]; snprintf(k, sizeof k, "%s|%s", c->id, schema);
-    for (int i = 0; i < nobj_open; i++) if (!strcmp(obj_open[i], k)) { if (!open) { obj_open[i][0] = 0; snprintf(obj_open[i], sizeof obj_open[i], "%s", obj_open[--nobj_open]); } return; }
-    if (open && nobj_open < 32) snprintf(obj_open[nobj_open++], sizeof obj_open[0], "%s", k);
-}
 /* Fills a package node with its subprograms, read by the catalog session in the background
  * ("Loading members..." until objcat_pump calls explorer_columns_arrived). Each member opens the
  * package's specification on double-click. */
@@ -462,19 +450,40 @@ static void fill_members(Node *n) {
         m->okey = malloc(sizeof *m->okey); *m->okey = *n->okey;
     }
 }
-/* The catalog's objects of a kind in grp's schema, as a subgroup of leaf rows (sequences and
- * synonyms are not edited: names only, a synonym with its target). */
-static int add_catalog_kind(Node *grp, const ObjCat *cat, int kind, const char *title) {
+/* "14,020" (or "5,000+" when the list stopped there): a kind group's count */
+static void fmt_count(char *out, size_t n, long v, bool more) {
+    char d[32]; int len = snprintf(d, sizeof d, "%ld", v < 0 ? 0 : v), o = 0;
+    for (int i = 0; i < len && o + 2 < (int)n; i++) { if (i && (len - i) % 3 == 0) out[o++] = ','; out[o++] = d[i]; }
+    out[o] = 0;
+    if (more && o + 1 < (int)n) { out[o++] = '+'; out[o] = 0; }
+}
+/* A group of one kind of object directly under a schema / database (Tables, Views, Functions...),
+ * its count on the right. Its open / closed state survives rebuilds; its menu offers the templates. */
+static Node *kind_group(Node *parent, const char *title, const char *schema, long count, bool more, bool def_open) {
+    char buf[40]; fmt_count(buf, sizeof buf, count, more);
+    Node *g = node_new(NODE_GROUP, title, buf, parent);
+    g->role = NR_KIND; g->objgroup = true; g->schema = SDL_strdup(schema ? schema : "");
+    g->expanded = xs_get(g, def_open);
+    return g;
+}
+/* How many objects of a kind the catalog session knows in a schema (0 without a catalog) */
+static int catalog_count(const ObjCat *cat, const char *schema, int kind) {
     if (!cat) return 0;
-    const char *sname = grp->schema && grp->schema[0] ? grp->schema : cat->home;
-    const OcSchema *s = sname[0] ? objcat_schema(cat, sname, (int)strlen(sname)) : NULL;
+    const char *sname = schema && schema[0] ? schema : cat->home;
+    const OcSchema *s = sname && sname[0] ? objcat_schema(cat, sname, (int)strlen(sname)) : NULL;
     if (!s) return 0;
     int count = 0;
     for (int i = s->first; i < s->first + s->n; i++) count += cat->o[i].kind == kind;
+    return count;
+}
+/* The catalog's objects of a kind in grp's schema, as a subgroup of leaf rows (sequences and
+ * synonyms are not edited: names only, a synonym with its target). */
+static int add_catalog_kind(Node *parent, const char *schema, const ObjCat *cat, int kind, const char *title) {
+    int count = catalog_count(cat, schema, kind);
     if (!count) return 0;
-    char buf[16]; snprintf(buf, sizeof buf, "%d", count);
-    Node *sub = node_new(NODE_GROUP, title, buf, grp);
-    sub->expanded = count <= 200;
+    const char *sname = schema && schema[0] ? schema : cat->home;
+    const OcSchema *s = objcat_schema(cat, sname, (int)strlen(sname));
+    Node *sub = kind_group(parent, title, schema, count, false, false);
     for (int i = s->first; i < s->first + s->n; i++) {
         if (cat->o[i].kind != kind) continue;
         char detail[300] = "";
@@ -484,16 +493,60 @@ static int add_catalog_kind(Node *grp, const ObjCat *cat, int kind, const char *
     }
     return count;
 }
-/* Fills an "Objects" group from the object editor's cached list (one subgroup per kind), then
- * the catalog's sequences and synonyms of the schema. Views are not repeated: they are already
- * in the tree, and their menu opens the definition. */
-static void build_objects(Node *grp) {
+static Node *add_action(Node *parent, const char *label, int act, const char *schema);
+static Node *add_msg(Node *parent, const char *label);
+
+/* Schemas whose object list the user asked for, by "connection id|schema". The list is read on
+ * the connection's own session, so it is never read just because a schema opened by itself (at
+ * connect the user's first query or another feature would find the session busy): opening a
+ * schema or a kind group by hand, or "Show...", asks for it. */
+static char (*objs_wanted)[160]; static int nwanted, capwanted;
+static bool objs_is_wanted(Connection *c, const char *schema) {
+    if (!strcmp(c->driver, "sqlite")) return true;   /* a local file: nothing waits on it */
+    char k[160]; snprintf(k, sizeof k, "%s|%s", c->id, schema ? schema : "");
+    for (int i = 0; i < nwanted; i++) if (!strcmp(objs_wanted[i], k)) return true;
+    return false;
+}
+static void objs_want(Connection *c, const char *schema) {
+    if (!c || objs_is_wanted(c, schema)) return;
+    if (nwanted == capwanted) { int nc = capwanted ? capwanted * 2 : 16; void *nw = realloc(objs_wanted, sizeof *objs_wanted * (size_t)nc); if (!nw) return; objs_wanted = nw; capwanted = nc; }
+    snprintf(objs_wanted[nwanted++], sizeof objs_wanted[0], "%s|%s", c->id, schema ? schema : "");
+}
+static bool session_idle(Connection *c) { return c->db && !__atomic_load_n(&c->db->busy, __ATOMIC_SEQ_CST); }
+
+/* Adds the schema's other kinds of objects under parent, one group per kind. With the object
+ * editor's list (read when wanted and the session is idle; the rebuild after a listing or a query
+ * asks again) every kind is exact; before it, the catalog session's counts give the groups
+ * (opening one reads the list) or a "Show..." row does. Then the catalog's sequences and
+ * synonyms. Views are not repeated: the Views group lists them from the tables. */
+static void build_objects(Node *grp, const char *schema) {
     Connection *c = grp->conn;
-    node_clear_kids(grp);
-    ObjListView v = E_APP ? objed_list(E_APP, c, grp->schema, grp->expanded) : (ObjListView){ 0 };
-    if (v.loading || (!v.loaded && grp->expanded)) { node_new(NODE_GROUP, "Loading objects\xE2\x80\xA6", NULL, grp)->leaf = true; return; }
-    if (v.error) { node_new(NODE_GROUP, v.error, NULL, grp)->leaf = true; return; }
-    if (!v.loaded) return;
+    if (!obj_engine_for_driver(c->driver) || !obj_engine_for_driver(c->driver)->list_sql) return;
+    bool want = objs_is_wanted(c, schema);
+    ObjListView v = E_APP ? objed_list(E_APP, c, schema, want && session_idle(c)) : (ObjListView){ 0 };
+    const ObjCat *cat = E_APP ? objcat_for(E_APP, c) : NULL;
+    if (!v.loaded || v.error) {
+        static const struct { int oc; const char *title; } ck[] = { { OC_MVIEW, "Materialized views" }, { OC_FUNCTION, "Functions" }, { OC_PROCEDURE, "Procedures" },
+                                                                    { OC_PACKAGE, "Packages" }, { OC_TYPE, "Types" } };
+        const char *inner = v.error ? v.error : "Loading objects\xE2\x80\xA6";
+        int groups = 0;
+        for (size_t i = 0; i < sizeof ck / sizeof ck[0]; i++) {
+            int n = catalog_count(cat, schema, ck[i].oc);
+            if (!n) continue;
+            Node *g = kind_group(grp, ck[i].title, schema, n, false, false);
+            g->needs_list = true;
+            add_msg(g, inner);
+            groups++;
+        }
+        if (v.error) add_msg(grp, v.error);
+        else if (v.loading && !groups) add_msg(grp, "Loading objects\xE2\x80\xA6");
+        else if (!v.loading && !groups) {
+            add_action(grp, "Show functions, procedures and other objects", ACT_LOAD_OBJECTS, schema);
+        }
+        add_catalog_kind(grp, schema, cat, OC_SEQUENCE, "Sequences");
+        add_catalog_kind(grp, schema, cat, OC_SYNONYM, "Synonyms");
+        return;
+    }
     static const char *names[OBJK_COUNT] = { "Views", "Materialized views", "Functions", "Procedures", "Packages", "Package bodies", "Triggers", "Types", "Type bodies",
                                                 "Operators", "Event triggers", "Virtual tables" };
     int count[OBJK_COUNT] = { 0 };
@@ -501,9 +554,7 @@ static void build_objects(Node *grp) {
     int shown = 0;
     for (int k = OBJK_MATVIEW; k < OBJK_COUNT; k++) {
         if (!count[k]) continue;
-        char buf[16]; snprintf(buf, sizeof buf, "%d", count[k]);
-        Node *sub = node_new(NODE_GROUP, names[k], buf, grp);
-        sub->expanded = count[k] <= 200;
+        Node *sub = kind_group(grp, names[k], schema, count[k], false, false);
         for (int i = 0; i < v.n; i++) {
             const ObjListItem *it = &v.items[i];
             if (it->key.kind != k) continue;
@@ -530,24 +581,9 @@ static void build_objects(Node *grp) {
             shown++;
         }
     }
-    const ObjCat *cat = E_APP ? objcat_for(E_APP, c) : NULL;
-    shown += add_catalog_kind(grp, cat, OC_SEQUENCE, "Sequences");
-    shown += add_catalog_kind(grp, cat, OC_SYNONYM, "Synonyms");
-    if (!shown) {
-        bool pk = objcat_members_sql(c->driver, "", "", NULL, 0), syn = !strcmp(c->driver, "oracle") || !strcmp(c->driver, "sqlserver");
-        bool seq = strcmp(c->driver, "mysql") && strcmp(c->driver, "mariadb") && strcmp(c->driver, "sqlite");
-        char txt[120]; snprintf(txt, sizeof txt, "No routines%s%s%s", pk ? ", packages" : "", seq ? (syn ? ", sequences" : " or sequences") : "", syn ? " or synonyms" : "");
-        node_new(NODE_GROUP, txt, NULL, grp)->leaf = true;
-    }
-}
-static Node *add_objgroup(Node *parent, Connection *c, const char *schema) {
-    const ObjEngine *eng = obj_engine_for_driver(c->driver);
-    if (!eng || !eng->list_sql) return NULL;
-    Node *g = node_new(NODE_GROUP, "Objects", NULL, parent);
-    g->objgroup = true; g->schema = SDL_strdup(schema);
-    g->expanded = objgroup_is_open(c, schema);
-    build_objects(g);
-    return g;
+    shown += add_catalog_kind(grp, schema, cat, OC_SEQUENCE, "Sequences");
+    shown += add_catalog_kind(grp, schema, cat, OC_SYNONYM, "Synonyms");
+    (void)shown;   /* a kind with nothing in it has no group */
 }
 
 /* Fills a table node with its column nodes. The first time they come from the catalog session in
@@ -596,8 +632,29 @@ static Node *add_action(Node *parent, const char *label, int act, const char *sc
 }
 static Node *add_msg(Node *parent, const char *label) { Node *n = node_new(NODE_GROUP, label, NULL, parent); n->leaf = true; return n; }
 
-/* Children of an open schema: its tables / views (the connection's list, else read on demand),
- * then its Objects group. Never DDL, never the routines' text (DBX-090). */
+/* Tables and Views groups of a schema from its table list (labels without the schema). A list
+ * that stopped early (`more`) counts what the catalog session knows when it knows more. Small
+ * groups start open, as the tables did before they were grouped. */
+typedef struct { DbTable *t; const char *label; } TRow;
+static void add_table_groups(Node *parent, const char *schema, const TRow *rows, int n, bool more) {
+    int nt = 0, nv = 0;
+    for (int i = 0; i < n; i++) rows[i].t->is_view ? nv++ : nt++;
+    const ObjCat *cat = E_APP && parent->conn ? objcat_for(E_APP, parent->conn) : NULL;
+    long ct = nt, cv = nv; bool mt = more, mv = more && nv;
+    if (more) {
+        int kt = catalog_count(cat, schema, OC_TABLE), kv = catalog_count(cat, schema, OC_VIEW);
+        if (kt >= nt && kt) { ct = kt; mt = false; }
+        if (kv >= nv && kv) { cv = kv; mv = false; }
+    }
+    Node *tg = kind_group(parent, "Tables", schema, ct, mt, ct <= 200 && !mt);
+    Node *vg = nv || cv ? kind_group(parent, "Views", schema, cv, mv, cv <= 200 && !mv) : NULL;
+    for (int i = 0; i < n; i++) add_table(rows[i].t->is_view ? vg : tg, rows[i].t, rows[i].label);
+    if (!nt) add_msg(tg, "No tables visible to this session");   /* not "empty" (DBX-078) */
+    if (more) { add_msg(tg, "More than 5,000 listed: use Find Objects"); if (vg) add_msg(vg, "More than 5,000 listed: use Find Objects"); }
+}
+
+/* Children of an open schema: a group per kind of object, Tables and Views first (the connection's
+ * list, else read on demand), then the object list's kinds. Never DDL, never the routines' text (DBX-090). */
 static void fill_schema(Node *n) {
     Connection *c = n->conn;
     NsState *s = nsx_find(c->id);
@@ -606,14 +663,16 @@ static void fill_schema(Node *n) {
     const char *home = home_schema(c, s);
     int shown = 0;
     if (s->ad->caps.conn_tables_all || (home && !strcmp(home, n->sname))) {
-        for (int i = 0; i < c->ntables; i++) {
+        TRow *rows = malloc(sizeof *rows * (size_t)(c->ntables ? c->ntables : 1));
+        for (int i = 0; rows && i < c->ntables; i++) {
             char sc[128]; const char *name = c->tables[i].name;
             if (s->ad->caps.conn_tables_all) { table_schema(c, name, sc, sizeof sc); if (strcmp(sc, n->sname)) continue; }
             const char *dot = s->ad->caps.conn_tables_all ? strchr(name, '.') : NULL;
-            add_table(n, &c->tables[i], dot ? dot + 1 : name);
-            shown++;
+            rows[shown++] = (TRow){ &c->tables[i], dot ? dot + 1 : name };
         }
-        if (!shown) add_msg(n, c->error[0] ? c->error : "No tables or views visible to this session");
+        if (!shown && c->error[0]) add_msg(n, c->error);
+        else if (rows) add_table_groups(n, n->sname, rows, shown, false);
+        free(rows);
     } else {
         NsInfo *in = nsx_info(s, n->sname, false);
         if (!in || (!in->tables_loaded && !in->tables_loading && !in->tables_err[0])) { nsx_load_tables(s, n->sname); in = nsx_info(s, n->sname, false); }
@@ -630,12 +689,13 @@ static void fill_schema(Node *n) {
         else if (in && in->tables_err[0]) { char m[260]; snprintf(m, sizeof m, "Could not list tables: %s", in->tables_err); add_msg(n, m); add_action(n, "Retry", ACT_RETRY_TABLES, n->sname); }
         else if (in && in->tables_loaded) {
             ExtTables *x = ext_get(c->id, in);
-            for (int i = 0; i < x->n; i++) { const char *dot = strchr(x->t[i].name, '.'); add_table(n, &x->t[i], dot ? dot + 1 : x->t[i].name); }
-            if (!x->n) add_msg(n, "No tables or views visible to this session");   /* not "empty" (DBX-078) */
-            if (in->tables_more) add_msg(n, "More than 5,000: use Find Objects");
+            TRow *rows = malloc(sizeof *rows * (size_t)(x->n ? x->n : 1));
+            for (int i = 0; rows && i < x->n; i++) { const char *dot = strchr(x->t[i].name, '.'); rows[i] = (TRow){ &x->t[i], dot ? dot + 1 : x->t[i].name }; }
+            if (rows) add_table_groups(n, n->sname, rows, x->n, in->tables_more);
+            free(rows);
         }
     }
-    add_objgroup(n, c, n->sname);
+    build_objects(n, n->sname);
 }
 
 /* a schema row (highlighted or in Others); its detail never carries a visibility badge (DBX-078.5) */
@@ -722,7 +782,6 @@ static Node *build_conn(Connection *c, bool expanded) {
     if (ns && ns->ad) { build_ns(root, c, ns); return root; }
     bool schemas = false;
     for (int i = 0; i < c->ntables && !schemas; i++) schemas = strchr(c->tables[i].name, '.') != NULL;
-    char buf[64];
     if (schemas) {
         /* one group per schema (names are "schema.table"; bare names belong to the default schema) */
         for (int i = 0; i < c->ntables; i++) {
@@ -731,38 +790,30 @@ static Node *build_conn(Connection *c, bool expanded) {
             snprintf(schema, sizeof schema, "%.*s", dot ? (int)(dot - name) : 6, dot ? name : "public");
             Node *grp = NULL;
             for (int k = 0; k < root->nkids; k++) if (strcmp(root->kids[k]->label, schema) == 0) grp = root->kids[k];
-            if (!grp) grp = node_new(NODE_GROUP, schema, "", root);
-            Node *n = node_new(NODE_TABLE, dot ? dot + 1 : name, NULL, grp);
-            n->table = &c->tables[i];
+            if (!grp) { grp = node_new(NODE_GROUP, schema, NULL, root); grp->role = NR_KIND; grp->expanded = xs_get(grp, true); }
         }
-        for (int k = 0; k < root->nkids; k++) {
-            Node *grp = root->kids[k];
-            snprintf(buf, sizeof buf, "%d", grp->nkids);
-            free(grp->detail);
-            grp->detail = SDL_strdup(buf);
-            grp->expanded = grp->nkids <= 200;   /* huge schemas start collapsed */
+        TRow *rows = malloc(sizeof *rows * (size_t)c->ntables);
+        for (int k = 0; rows && k < root->nkids; k++) {   /* each schema: Tables, Views, then its other kinds */
+            Node *grp = root->kids[k]; int nr = 0;
+            for (int i = 0; i < c->ntables; i++) {
+                const char *name = c->tables[i].name, *dot = strchr(name, '.');
+                char schema[256]; snprintf(schema, sizeof schema, "%.*s", dot ? (int)(dot - name) : 6, dot ? name : "public");
+                if (!strcmp(schema, grp->label)) rows[nr++] = (TRow){ &c->tables[i], dot ? dot + 1 : name };
+            }
+            char cnt[40]; fmt_count(cnt, sizeof cnt, nr, false); grp->detail = SDL_strdup(cnt);
+            add_table_groups(grp, grp->label, rows, nr, false);
+            if (grp->expanded) { build_objects(grp, grp->label); grp->loaded = true; }   /* else read when opened (toggle) */
         }
-        int ngroups = root->nkids;
-        for (int k = 0; k < ngroups; k++) add_objgroup(root->kids[k], c, root->kids[k]->label);
+        free(rows);
         return root;
     }
-    int nt = 0, nv = 0;
-    for (int i = 0; i < c->ntables; i++) c->tables[i].is_view ? nv++ : nt++;
-    snprintf(buf, sizeof buf, "%d", nt);
-    Node *tables = node_new(NODE_GROUP, "Tables", buf, root);
-    tables->expanded = true;
-    Node *views = NULL;
-    if (nv) {
-        snprintf(buf, sizeof buf, "%d", nv);
-        views = node_new(NODE_GROUP, "Views", buf, root);
-        views->expanded = true;
-    }
-    for (int i = 0; i < c->ntables; i++) {
-        Node *n = node_new(NODE_TABLE, c->tables[i].name, NULL, c->tables[i].is_view ? views : tables);
-        n->table = &c->tables[i];
-    }
-    if (!nt) node_new(NODE_GROUP, c->error[0] ? c->error : "No tables yet", NULL, tables)->leaf = true;
-    add_objgroup(root, c, strcmp(c->driver, "sqlite") ? "" : "main");
+    const char *sch = strcmp(c->driver, "sqlite") ? "" : "main";
+    if (c->error[0] && !c->ntables) { add_msg(root, c->error); return root; }
+    TRow *rows = malloc(sizeof *rows * (size_t)(c->ntables ? c->ntables : 1));
+    for (int i = 0; rows && i < c->ntables; i++) rows[i] = (TRow){ &c->tables[i], c->tables[i].name };
+    if (rows) add_table_groups(root, sch, rows, c->ntables, false);
+    free(rows);
+    build_objects(root, sch);
     return root;
 }
 
@@ -943,11 +994,15 @@ static void toggle(Node *n) {
     if (n->expanded && n->kind == NODE_TABLE) { if (!n->loaded) node_clear_kids(n); load_columns(n); }
     if (n->kind == NODE_SCHEMA && n->conn) {
         NsState *s = nsx_find(n->conn->id);
-        if (n->expanded) { fill_schema(n); if (s) nsx_note_recent(s, n->sname); }   /* lazy (DBX-090) */
+        if (n->expanded) { objs_want(n->conn, n->sname); fill_schema(n); if (s) nsx_note_recent(s, n->sname); }   /* lazy (DBX-090); opened by hand: its object list too */
     }
     if (n->role == NR_OTHERS && n->expanded && n->conn) { NsState *s = nsx_find(n->conn->id); if (s) nsx_expand_others(s); }
-    if (n->objgroup) { objgroup_set_open(n->conn, n->schema, n->expanded); if (n->expanded) build_objects(n); }   /* lazy (OBJ-004) */
     if (n->pkg) { xs_set(n, n->expanded); if (n->expanded) fill_members(n); }
+    if (n->role == NR_KIND && !n->objgroup && n->expanded && !n->loaded) { objs_want(n->conn, n->label); build_objects(n, n->label); n->loaded = true; }
+    if (n->needs_list && n->expanded && n->conn) {   /* a group counted by the catalog: read the list now (it rebuilds the tree when it arrives) */
+        objs_want(n->conn, n->schema);
+        if (E_APP && session_idle(n->conn)) objed_list(E_APP, n->conn, n->schema, true);
+    }   /* a schema group without the Schemas node: its object kinds */
 }
 
 /* Identity of the object a node stands for: an object node, or a view of the table list. */
@@ -1073,6 +1128,7 @@ static void copy_text(App *a, const char *t, const char *what) {
 /* runs an action row (Enter / double click / single click) */
 static void run_action(Explorer *e, App *a, Node *n) {
     Connection *c = n->conn;
+    if (n->action == ACT_LOAD_OBJECTS && c) { objs_want(c, n->sname); explorer_rebuild(e, a); return; }
     NsState *s = c ? nsx_find(c->id) : NULL;
     if (!s) return;
     switch (n->action) {
@@ -1570,7 +1626,7 @@ static void hit_open(Explorer *e, App *a, int i, bool reveal_only) {
         key.kind = k; snprintf(key.schema, sizeof key.schema, "%s", h.schema); snprintf(key.name, sizeof key.name, "%s", h.name); snprintf(key.conn_id, sizeof key.conn_id, "%s", c->id);
         if (objed_open(a, c, &key)) return;
     }
-    search_close(e); reveal_schema(e, a, c, h.schema, true);   /* PostgreSQL overloads: pick it in the schema's Objects */
+    search_close(e); reveal_schema(e, a, c, h.schema, true);   /* PostgreSQL overloads: pick it in the schema's Functions */
 }
 
 /* the search bar and its result rows inside `b`; returns the rows area left for the tree */

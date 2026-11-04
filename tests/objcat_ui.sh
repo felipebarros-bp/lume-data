@@ -56,7 +56,7 @@ printf 'CREATE OR REPLACE PUBLIC SYNONYM LUME_AC_VISITS FOR SYN_FAT.T00001;\nCRE
   rm -f $O/settings.txt
   out=$(LUME_PREF_DIR=$O LUME_SCRIPT=tests/scripts/objcat_ora_pkg.txt ./build/lume 2>&1)
   printf '%s\n' "$out" > build/objcat_ui_pkg.out
-  expect "Explorer: the Objects group lists Packages with LUME_PKG" 'nth "$out" "explorer rows" 1 | grep -q "|\.*Packages" && nth "$out" "explorer rows" 1 | grep -q "|\.*LUME_PKG"'
+  expect "Explorer: SYSTEM (not in the catalog) offers Show..., then a Packages group with LUME_PKG" 'nth "$out" "explorer rows" 1 | grep -q "|\.*Packages" && nth "$out" "explorer rows" 1 | grep -q "|\.*LUME_PKG"'
   expect "  ... opening the package shows Loading members first, or the members already (a local server answers within the frame)" 'nth "$out" "explorer rows" 2 | grep -qE "\|\.*Loading members|\|\.*P_LOG\(P_MSG\)"'
   expect "  ... then its procedure and function, with parameter names, in declaration order" 'nth "$out" "explorer rows" 3 | grep -q "|\.*LUME_PKG |\.*P_LOG(P_MSG) |\.*F_TOTAL(P_A, P_B)"'
   expect "  ... read by the catalog session" 'nth "$out" objcatstate 1 | grep -q "members_loaded=1"'
