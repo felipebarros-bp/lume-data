@@ -8,6 +8,10 @@
 #   macOS   one universal DMG (Apple Silicon + Intel), signed and notarized when the secrets exist
 #   Linux   portable .tar.gz for x86_64 and arm64
 #   Windows portable .zip for x64 (experimental: the Windows port is not validated yet, BL-058)
+# One platform at a time: "platforms" builds only that one, and "reuse_run" (the id of an earlier run of
+# this workflow, in its URL) supplies the installers of the others, e.g. when a runner queue cancelled the
+# macOS job: platforms=macos, reuse_run=<that run>. Publishing still needs a DMG and both Linux archives,
+# all of the version being released.
 # Tests: tests/run_ci.sh, the suites that need no database server (those stay on a developer machine).
 # Secrets (Settings > Secrets and variables > Actions), all optional; without them the DMG is ad-hoc signed:
 #   MACOS_CERT_P12        base64 of the exported "Developer ID Application" certificate + key (.p12)
@@ -46,6 +50,15 @@ on:
         description: Notarize the DMG (needs the NOTARY_* secrets)
         type: boolean
         default: true
+      platforms:
+        description: Platforms to build in this run (the others come from reuse_run, or are left out)
+        type: choice
+        options: [all, macos, linux, windows]
+        default: all
+      reuse_run:
+        description: Run id whose installers fill in the platforms not built now (empty = none)
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -101,6 +114,7 @@ jobs:
   macos:
     name: macOS (universal DMG)
     needs: version
+    if: ${{ inputs.platforms == 'all' || inputs.platforms == 'macos' }}
     runs-on: macos-15
     env:
       HAS_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
@@ -221,6 +235,7 @@ jobs:
             runner: ubuntu-22.04-arm
     runs-on: ${{ matrix.runner }}
     needs: version
+    if: ${{ inputs.platforms == 'all' || inputs.platforms == 'linux' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -286,6 +301,7 @@ jobs:
     runs-on: windows-2022
     continue-on-error: true   # until the Windows port is validated (BL-058): never blocks the other platforms
     needs: version
+    if: ${{ inputs.platforms == 'all' || inputs.platforms == 'windows' }}
     defaults:
       run:
         shell: msys2 {0}
@@ -334,11 +350,16 @@ jobs:
   release:
     name: Tag and publish v${{ needs.version.outputs.version }}
     needs: [version, macos, linux, windows]
-    # macOS and Linux must succeed; Windows is attached when it built (experimental)
-    if: ${{ always() && inputs.publish && needs.version.result == 'success' && needs.macos.result == 'success' && needs.linux.result == 'success' }}
+    # macOS and Linux must succeed, or be skipped with reuse_run supplying them (checked below); Windows is
+    # attached when it built (experimental)
+    if: >-
+      ${{ always() && inputs.publish && needs.version.result == 'success'
+      && (needs.macos.result == 'success' || (needs.macos.result == 'skipped' && inputs.reuse_run != ''))
+      && (needs.linux.result == 'success' || (needs.linux.result == 'skipped' && inputs.reuse_run != '')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read   # the artifacts of reuse_run
     env:
       V: ${{ needs.version.outputs.version }}
       DV: ${{ needs.version.outputs.docs_version }}
@@ -350,7 +371,34 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
+          pattern: lume-*
           path: dist
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.reuse_run != '' }}
+        with:
+          run-id: ${{ inputs.reuse_run }}
+          github-token: ${{ github.token }}
+          pattern: lume-*
+          path: dist-reuse
+      - name: Installers of the platforms not built in this run
+        if: ${{ inputs.reuse_run != '' }}
+        run: |
+          set -eu
+          mkdir -p dist
+          for d in dist-reuse/*/; do
+            n=$(basename "$d")
+            if [ -d "dist/$n" ]; then echo "$n: built in this run"; else cp -R "$d" "dist/$n"; echo "$n: from run ${{ inputs.reuse_run }}"; fi
+          done
+      - name: Every installer present and of v${{ needs.version.outputs.version }}
+        run: |
+          set -eu
+          ls -R dist
+          find dist -type f \( -name '*.dmg' -o -name '*.tar.gz' -o -name '*.zip' \) | while read -r f; do
+            case "$(basename "$f")" in *-"$V"-*) ;; *) echo "::error::$f is not of version $V"; exit 1 ;; esac
+          done
+          for want in '*macos*.dmg' '*linux-x86_64.tar.gz' '*linux-aarch64.tar.gz'; do
+            [ -n "$(find dist -type f -name "$want")" ] || { echo "::error::no installer matching $want (build it or pass reuse_run)"; exit 1; }
+          done
       - uses: actions/setup-node@v4
         if: ${{ needs.version.outputs.docs_version != '' }}
         with:
