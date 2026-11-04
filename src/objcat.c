@@ -108,7 +108,7 @@ unsigned objcat_mask(const char *s, int n) {
     }
     return m;
 }
-static char *dup(const char *s) { return s ? strdup(s) : NULL; }
+static char *str_dup(const char *s) { return s ? strdup(s) : NULL; }
 void objcat_add(ObjCat *c, const char *schema, const char *name, int kind, const char *target) {
     if (!name || !name[0] || kind < 0 || kind >= OC_N) return;
     if (c->n == c->cap) {
@@ -117,7 +117,7 @@ void objcat_add(ObjCat *c, const char *schema, const char *name, int kind, const
         c->o = no; c->cap = nc;
     }
     OcObj *o = &c->o[c->n++];
-    o->schema = dup(schema ? schema : ""); o->name = dup(name); o->target = target && target[0] ? dup(target) : NULL; o->kind = (unsigned char)kind; o->mask = objcat_mask(name, 1 << 30);
+    o->schema = str_dup(schema ? schema : ""); o->name = str_dup(name); o->target = target && target[0] ? str_dup(target) : NULL; o->kind = (unsigned char)kind; o->mask = objcat_mask(name, 1 << 30);
 }
 static int cmp_obj(const void *a, const void *b) {
     const OcObj *x = a, *y = b;
@@ -143,7 +143,7 @@ void objcat_finish(ObjCat *c) {
     for (int i = 0; i < c->n;) {
         int j = i; while (j < c->n && !strcmp(c->o[j].schema, c->o[i].schema)) j++;
         if (c->ns == cap) { cap = cap ? cap * 2 : 64; OcSchema *ns = realloc(c->s, sizeof *ns * (size_t)cap); if (!ns) break; c->s = ns; }
-        c->s[c->ns].name = dup(c->o[i].schema); c->s[c->ns].first = i; c->s[c->ns].n = j - i; c->ns++;
+        c->s[c->ns].name = str_dup(c->o[i].schema); c->s[c->ns].first = i; c->s[c->ns].n = j - i; c->ns++;
         i = j;
     }
 }
