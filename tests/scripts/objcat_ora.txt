@@ -1,0 +1,57 @@
+# Completion knows every object the user may see (Oracle): schemas, SCHEMA. lists, other schemas'
+# objects, a PUBLIC synonym, and other schemas' columns read in the catalog session
+wait 500
+dnode "ora DEV"
+awaitconn "ora DEV" 60000
+objcatawait 300000
+objcatstate
+click 700 300
+key cmd+a
+type select * from SYN_F
+wait 400
+completestate
+shot build/ui/objcat_ora_schema.bmp
+type AT.
+wait 400
+completestate
+type T0000
+wait 400
+completestate
+key Escape
+key cmd+a
+type select * from LUME_AC_V
+wait 400
+completestate
+key Escape
+key cmd+a
+type select * from SYN_CODE.
+wait 400
+completestate
+key Escape
+key cmd+a
+type select * from SYN_FAT.T00001 a where a.
+wait 100
+completestate
+wait 3000
+completestate
+key Escape
+key cmd+a
+type select * from SYN_FAT.T00001 where T00001.
+wait 1500
+completestate
+key Escape
+key cmd+a
+type select * from LUME_AC_VISITS v where v.
+wait 3000
+completestate
+key Escape
+key cmd+a
+type insert into SYN_FAT.T00001 
+wait 1500
+completestate
+shot build/ui/objcat_ora_insert.bmp
+key Escape
+key cmd+a
+type select 1 from dual
+objcatstate
+quit

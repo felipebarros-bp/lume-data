@@ -74,13 +74,53 @@ Db *db_open(const DbDriver *drv, const char *location, char *err, size_t errlen)
     return db;
 }
 
-/* See db.h. The caller must make sure no statement is running on the Db. */
-void db_close(Db *db) {
-    if (!db) return;
+/* ---- closing and cancelling without blocking the caller (see db.h) ---- */
+
+static void close_now(Db *db) {
     db->drv->close(db);
     free(db->label);
     free(db->location);
     free(db);
+}
+typedef struct CloseJob { Db *db; volatile int done; } CloseJob;
+static int close_worker(void *ud) {
+    CloseJob *cj = ud;
+    Uint64 t0 = SDL_GetTicks();   /* a cancel in flight still uses the handle: let it finish first */
+    while (__atomic_load_n(&cj->db->cancels, __ATOMIC_SEQ_CST) && SDL_GetTicks() - t0 < 10000) SDL_Delay(20);
+    close_now(cj->db);
+    __atomic_store_n(&cj->done, 1, __ATOMIC_SEQ_CST);
+    return 0;
+}
+/* See db.h. */
+void db_close(Db *db) {
+    if (!db) return;
+    if (__atomic_load_n(&db->abandoned, __ATOMIC_SEQ_CST)) return;   /* leaked on purpose: see Db.abandoned */
+    if (db->drv == &db_sqlite_driver) { close_now(db); return; }     /* a file: nothing to wait for */
+    const char *name = db->drv->name;
+    CloseJob *cj = calloc(1, sizeof *cj);
+    if (cj) cj->db = db;
+    SDL_Thread *th = cj ? SDL_CreateThread(close_worker, "lume-close", cj) : NULL;
+    if (!th) { free(cj); close_now(db); return; }
+    Uint64 t0 = SDL_GetTicks();
+    while (!__atomic_load_n(&cj->done, __ATOMIC_SEQ_CST) && SDL_GetTicks() - t0 < 5000) SDL_Delay(5);
+    if (__atomic_load_n(&cj->done, __ATOMIC_SEQ_CST)) { SDL_WaitThread(th, NULL); free(cj); return; }
+    SDL_Log("closing a %s session did not finish in 5 s (the network died under it?): it is left to finish on its own", name);
+    SDL_DetachThread(th);   /* cj and db are freed by the worker when the driver returns */
+}
+static int cancel_worker(void *ud) {
+    Db *db = ud;
+    db->drv->cancel(db);
+    __atomic_sub_fetch(&db->cancels, 1, __ATOMIC_SEQ_CST);
+    return 0;
+}
+/* See db.h. */
+void db_cancel(Db *db) {
+    if (!db || !db->drv->cancel) return;
+    if (db->drv == &db_sqlite_driver) { db->drv->cancel(db); return; }   /* sqlite3_interrupt: a flag, instant */
+    __atomic_add_fetch(&db->cancels, 1, __ATOMIC_SEQ_CST);
+    SDL_Thread *th = SDL_CreateThread(cancel_worker, "lume-cancel", db);
+    if (!th) { cancel_worker(db); return; }
+    SDL_DetachThread(th);
 }
 
 /* ---- SQLite driver ----------------------------------------------------- */

@@ -16,3 +16,11 @@ static inline const char *SDL_getenv(const char *k) { return getenv(k); }
 static inline Uint64 SDL_GetPerformanceCounter(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (Uint64)ts.tv_sec * 1000000000ull + ts.tv_nsec; }
 static inline Uint64 SDL_GetPerformanceFrequency(void) { return 1000000000ull; }
 #define SDL_Log(...) fprintf(stderr, __VA_ARGS__)
+static inline Uint64 SDL_GetTicks(void) { return SDL_GetPerformanceCounter() / 1000000ull; }
+static inline void SDL_Delay(Uint32 ms) { struct timespec ts = { ms / 1000, (long)(ms % 1000) * 1000000L }; nanosleep(&ts, NULL); }
+/* threads run to completion at once: headless tests need the work done, not the concurrency */
+typedef struct SDL_Thread SDL_Thread;
+typedef int (*SDL_ThreadFunction)(void *data);
+static inline SDL_Thread *SDL_CreateThread(SDL_ThreadFunction fn, const char *name, void *data) { (void)name; fn(data); return (SDL_Thread *)(void *)fn; }
+static inline void SDL_WaitThread(SDL_Thread *t, int *status) { (void)t; if (status) *status = 0; }
+static inline void SDL_DetachThread(SDL_Thread *t) { (void)t; }

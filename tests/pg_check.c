@@ -15,6 +15,8 @@
 extern const DbDriver db_pg_driver;
 
 char *db_strdup(const char *s) { return s ? SDL_strdup(s) : NULL; }
+/* db.c is not linked here: the cancel goes straight to the driver (no thread) */
+void db_cancel(Db *db) { if (db && db->drv->cancel) db->drv->cancel(db); }
 void db_tables_free(DbTable *tables, int count) {
     for (int i = 0; i < count; i++) {
         for (int c = 0; c < tables[i].ncols; c++) { free(tables[i].cols[c].name); free(tables[i].cols[c].type); }

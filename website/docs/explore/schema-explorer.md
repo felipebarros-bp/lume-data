@@ -51,7 +51,9 @@ On a large database, listing a schema's tables can take a while (Oracle checks y
 
 ## Views, routines and other objects
 
-Under a schema, **Objects** groups list views, materialized views, functions, procedures, triggers, packages and types (what the database has). Double-click one to open its definition in the [object editor](object-editor.md). An object whose definition is invalid is marked **INVALID** in red; one with a local draft is marked **draft**.
+Under a schema, **Objects** groups list views, materialized views, functions, procedures, triggers, packages and types (what the database has), then its **Sequences** and **Synonyms** (a synonym shows its target). Double-click a routine, package, trigger or type to open its definition in the [object editor](object-editor.md). An object whose definition is invalid is marked **INVALID** in red; one with a local draft is marked **draft**.
+
+On Oracle, a package opens like a folder: its procedures (**P**) and functions (**F**) are listed with their parameter names, read in the background by the same second session that serves [completion](../sql/editor.md#every-object-you-can-see) (with completion's second session off in Settings, the row says so). Double-click a member to open the package specification.
 
 ## Refresh
 

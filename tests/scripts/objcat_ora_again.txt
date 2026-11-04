@@ -1,0 +1,14 @@
+# the next connect: the cached catalog is used at once, then refreshed in the background
+wait 500
+dnode "ora DEV"
+awaitconn "ora DEV" 60000
+wait 300
+objcatstate
+click 700 300
+key cmd+a
+type select * from SYN_F
+wait 400
+completestate
+objcatawait 300000
+objcatstate
+quit

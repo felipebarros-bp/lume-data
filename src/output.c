@@ -79,6 +79,8 @@ typedef struct OutJob {
     SqlStmt dparts[64]; int ndparts;   /* statements of display, matched by index */
     char *export_path;           /* Execute to File: the first result is written there, or NULL */
     const void *editor;          /* the query tab's editor that started it (compared, never dereferenced) */
+    char *qtable; bool no_history; int replace_exec;   /* OutRunOpts */
+    void (*landed)(App *a, int tab_exec_id, const char *err, void *ud); void *ud; int landed_tab; char landed_err[300];
     int timed_cur; double timed_t0; bool timed_out;   /* query timeout: statement watched, when it was first seen running (monotonic s), cancelled by it */
 } OutJob;
 #define OUT_MAX_JOBS 8
@@ -254,18 +256,24 @@ int output_run_opts(Output *o, App *a, Db *db, const char *sql, int len, uint32_
     if (explorer_reading(a, db)) { app_status(a, "The Explorer is still listing tables on this connection: wait for it, or click Cancel under the schema"); return 0; }
     if (o->njobs >= OUT_MAX_JOBS) { app_status(a, "%d executions are running: wait for one to finish", OUT_MAX_JOBS); return 0; }
     if (len < 0) len = (int)strlen(sql);
-    OutLog *l = output_current(o, a);
+    /* the job belongs to db's connection, which need not be the active one (a preview, a Re-run or
+     * an FK step on another tab): its session, its Output log, its name */
+    const Connection *dc = NULL;
+    for (int k = 0; a->conns && k < a->conns->n; k++) if (a->conns->items[k]->db == db) dc = a->conns->items[k];
+    const char *cid = dc ? dc->id : session_id(a);
+    const char *cname = dc ? dc->name : a->active ? a->active->name : "no connection";
+    OutLog *l = dc ? &session_for(o, cid, cname)->log : output_current(o, a);
     /* a re-run replaces this tab's results: BEFORE the worker owns the connection, since freeing a
      * result closes its open cursor on this same session (doing it after crashed SQLite, 01/11/2026) */
-    if (a->results && op->mode != RUN_NEW_TAB) results_begin_run(a->results, a, a->editor);
+    if (a->results && op->mode != RUN_NEW_TAB && !op->keep_tabs) results_begin_run(a->results, a, a->editor);
     int tx = db->drv->tx_state ? db->drv->tx_state(db) : -1;      /* before the worker owns the connection */
     ExecJob *j = exec_start(db, sql, len, a->fetch_size, !a->continue_on_error);
     if (!j) { app_status(a, __atomic_load_n(&db->busy, __ATOMIC_SEQ_CST) ? "The connection is busy with another statement" : "Nothing to run"); return 0; }
     OutJob *oj = &o->jobs[o->njobs++];
     memset(oj, 0, sizeof *oj);
     oj->j = j; oj->tx_before = tx;
-    snprintf(oj->sid, sizeof oj->sid, "%s", session_id(a));
-    snprintf(oj->conn_name, sizeof oj->conn_name, "%s", a->active ? a->active->name : "no connection");
+    snprintf(oj->sid, sizeof oj->sid, "%s", cid);
+    snprintf(oj->conn_name, sizeof oj->conn_name, "%s", cname);
     oj->editor = a->editor;
     j->mode = mode; j->editor_rev = editor_rev; j->sql_base = sql_base;
     j->exec_id = outlog_exec_begin(l, op->display ? op->display : sql, op->display ? -1 : len, editor_rev, sql_base);
@@ -281,6 +289,8 @@ int output_run_opts(Output *o, App *a, Db *db, const char *sql, int len, uint32_
         if (oj->ndparts != j->n) oj->ndparts = 0;   /* no reliable match: show the whole display text */
     }
     if (op->export_path) oj->export_path = strdup(op->export_path);
+    if (op->qtable && op->qtable[0]) oj->qtable = strdup(op->qtable);
+    oj->no_history = op->no_history; oj->replace_exec = op->replace_exec; oj->landed = op->landed; oj->ud = op->ud;
     if (op->note && op->note[0]) { outlog_push(l, j->exec_id, 0, OT_DB_MESSAGE, OL_INFO, op->note); LOG_I("execution %d: %s", j->exec_id, op->note); }   /* what ran and where; never the SQL or values */
     else LOG_I("execution %d on %s: %d statement(s)", j->exec_id, oj->conn_name, j->n);
     o->dirty = true;
@@ -408,10 +418,12 @@ static void statement_done(Output *o, App *a, OutJob *oj, OutLog *l, int i) {
         bool other_session = strcmp(oj->sid, session_id(a)) != 0;
         int mode = oj->rows_landed || other_session ? RUN_NEW_TAB : j->mode;
         results_set_owner(a->results, oj->editor);
-        results_set(a->results, a, &rs, oj->title, sp, sn, mode, NULL);   /* rs moved into the tab (its SQL as shown: no parameter values) */
+        if (mode == RUN_REPLACE && !oj->rows_landed) results_target_replace(a->results, oj->replace_exec);
+        results_set(a->results, a, &rs, oj->title, sp, sn, mode, oj->rows_landed ? NULL : oj->qtable);   /* rs moved into the tab (its SQL as shown: no parameter values) */
         if (a->panels) panels_reveal_results(a->panels, a);   /* the result is in view, even when Results was folded */
         oj->rows_landed = true;
         int tab = results_current_exec_id(a->results);
+        if (!oj->landed_tab) oj->landed_tab = tab;
         results_tag_output(a->results, tab, j->exec_id);
         if (oj->export_path) {   /* Execute to File: the first result goes to the chosen file */
             bool ok = results_export(a->results, a, oj->export_path);
@@ -503,7 +515,7 @@ static const char *fmt_secs(int s) {
 static bool pump_job(Output *o, App *a, OutJob *oj) {
     ExecJob *j = oj->j;
     OutLog *l = job_log(o, oj);
-    if (!l) { exec_free(j); free(oj->display); free(oj->export_path); return true; }
+    if (!l) { if (oj->landed) oj->landed(a, 0, "the session was closed", oj->ud); exec_free(j); free(oj->display); free(oj->export_path); free(oj->qtable); return true; }
     int i;
     /* each statement's start is recorded before its outcome, and the outcome before the
      * next statement's start, whatever the polling interval saw */
@@ -535,11 +547,15 @@ static bool pump_job(Output *o, App *a, OutJob *oj) {
     }
     int overall = exec_overall(j);
     outlog_exec_finish(l, j->exec_id, overall, exec_elapsed_ms(j));
-    history_append(o, a, l->session_name[0] ? l->session_name : "no connection", overall, exec_elapsed_ms(j), j->n, oj->display ? oj->display : j->text, oj->display ? (int)strlen(oj->display) : j->len);   /* parameters: the template only */
+    if (!oj->no_history) history_append(o, a, l->session_name[0] ? l->session_name : "no connection", overall, exec_elapsed_ms(j), j->n, oj->display ? oj->display : j->text, oj->display ? (int)strlen(oj->display) : j->len);   /* parameters: the template only */
     if (overall == ES_CANCELLED) { if (oj->timed_out) app_status(a, "Execution #%d on %s cancelled by the query timeout (%s, Settings > Query Execution)", j->exec_id, oj->conn_name, fmt_secs(a->query_timeout_s)); else app_status(a, "Execution #%d on %s cancelled after %.1f s", j->exec_id, oj->conn_name, exec_elapsed_ms(j) / 1000.0); results_show_output(a->results, true); output_mark_seen(o, a); }
     if (oj->touched_schema) explorer_refresh(a->explorer, a);
     app_execution_finished(a, db, j->exec_id, overall);
-    exec_free(j); free(oj->display); free(oj->export_path);
+    if (oj->landed) {
+        if (!oj->landed_tab && !oj->landed_err[0]) for (int k = 0; k < j->n; k++) if (j->stmts[k].status == XS_FAILED) { snprintf(oj->landed_err, sizeof oj->landed_err, "the statement failed (see the Output)"); break; }
+        oj->landed(a, oj->landed_tab, oj->landed_err[0] ? oj->landed_err : NULL, oj->ud); oj->landed = NULL; oj->ud = NULL;
+    }
+    exec_free(j); free(oj->display); free(oj->export_path); free(oj->qtable);
     return true;
 }
 

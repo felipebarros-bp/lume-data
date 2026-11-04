@@ -14,6 +14,9 @@ extern const DbDriver db_oracle_driver;
 
 /* helpers normally provided by db.c (which needs sqlite3) */
 char *db_strdup(const char *s) { return s ? SDL_strdup(s) : NULL; }
+/* db.c is not linked here: the cancel goes straight to the driver (no thread) */
+void db_cancel(Db *db) { if (db && db->drv->cancel) db->drv->cancel(db); }
+int db_connect_timeout_s = 10;   /* db_pg.c (which defines it) is not linked here */
 void db_tables_free(DbTable *tables, int count) {
     for (int i = 0; i < count; i++) {
         free(tables[i].name);

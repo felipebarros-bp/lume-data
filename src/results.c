@@ -146,6 +146,8 @@ struct Results {
     const void *next_owner;      /* owner of the next results_set (results_set_owner) */
     ResultView *tabs[RES_MAX_TABS]; int ntabs, cur;   /* owned tabs, in strip order; cur = selected index */
     int next_id;   /* next exec_id to hand out */
+    struct FetchJob *fj;   /* rows being fetched on a worker (fetch_start), or NULL */
+    int replace_target;   /* results_target_replace: the tab (exec_id) the next RUN_REPLACE lands in, 0 = the current one */
     HistEntry hist[HIST_MAX]; int nhist;   /* oldest first */
     OutHistItem saved[12]; int nsaved; char saved_lbl[2][160];   /* earlier sessions in the History menu (OUT-025) */
     char menu_text[POPUP_MAX][160];          /* labels of the top-level context menu */
@@ -555,8 +557,9 @@ static void apply_changes(Results *r, ResultView *v, App *a) {
     if (v->srv_sort[0]) { char qs[300]; drv->quote_ident(v->srv_sort, qs, sizeof qs); snprintf(order, sizeof order, "%s %s", qs, v->srv_desc ? "DESC" : "ASC"); }
     drv->select_sql(v->qtable, v->srv_where[0] ? v->srv_where : NULL, order[0] ? order : NULL, a->fetch_size > 200 ? a->fetch_size : 200, sql, sizeof sql);
     Db *db = v->db;
-    app_run_sql_mode(a, db, sql, -1, v->title, RUN_REPLACE, v->qtable);
-    app_status(a, "Applied %d statement%s in one transaction and committed; table reloaded", n, n == 1 ? "" : "s");
+    bool reloading = app_run_sql_mode(a, db, sql, -1, v->title, RUN_REPLACE, v->qtable);
+    if (reloading) app_status(a, "Applied %d statement%s and committed. Reloading the table\xE2\x80\xA6", n, n == 1 ? "" : "s");
+    else app_status(a, "Applied %d statement%s and committed. The session is busy: use Re-run to reload", n, n == 1 ? "" : "s");
 }
 
 /* Records a landed tab in the session history (oldest dropped past HIST_MAX); copies its SQL. */
@@ -616,8 +619,11 @@ static void tab_remove(Results *r, App *a, int i) {
 
 /* Allocates the Results with export defaults (CSV, loaded rows, headers, formula guard, 1,000,000
  * rows / 1,024 MB / no time limit for full exports). Freed by results_destroy. */
+static Results *g_results;   /* for the connection close hook */
+static void fetch_on_close(Connection *c);
 Results *results_create(void) {
     Results *r = calloc(1, sizeof *r);
+    g_results = r; conn_add_close_hook(fetch_on_close);
     r->next_id = 1;
     r->ex_headers = true; r->ex_guard = true; r->ex_scope = 1; r->ex_fmt = FMT_CSV;
     textfield_set(&r->ex_rows, "1000000");
@@ -629,7 +635,10 @@ Results *results_create(void) {
 }
 
 /* Frees every tab, the history and the value-viewer state, then the Results itself. */
+static void fetch_stop(Results *r);
 void results_destroy(Results *r) {
+    fetch_stop(r);
+    conn_remove_close_hook(fetch_on_close); if (g_results == r) g_results = NULL;
     for (int i = 0; i < r->ntabs; i++) view_free(r->tabs[i]);
     for (int i = 0; i < r->nhist; i++) free(r->hist[i].sql);
     if (r->vv_json_ok) json_free(&r->vv_json);
@@ -648,6 +657,12 @@ void results_destroy(Results *r) {
 void results_set(Results *r, App *a, ResultSet *set, const char *title, const char *sql, int len, int mode, const char *qtable) {
     ResultView *old = cur(r);
     int slot = -1;
+    if (mode == RUN_REPLACE && r->replace_target > 0) {   /* an async reload: the tab it started from, even if another one is shown now */
+        old = NULL;
+        for (int i = 0; i < r->ntabs; i++) if (r->tabs[i]->exec_id == r->replace_target) { old = r->tabs[i]; r->cur = i; }
+        if (!old) mode = RUN_NEW_TAB;   /* that tab was closed meanwhile */
+    }
+    r->replace_target = 0;
     /* which tab receives the result (US-006): editor runs reuse the current unpinned editor
      * tab, previews reuse the same table's tab, RUN_REPLACE always lands in the current tab */
     if (mode == RUN_REPLACE && old) slot = r->cur;
@@ -745,22 +760,147 @@ void results_release_db(Results *r, Db *db) {
     }
 }
 
-/* Fetches up to n more rows from the current tab cursor. Refused while a fetch runs or while
- * pending inserts exist (they sit after the stored rows). Returns true when rows arrived. */
-bool results_fetch_more(Results *r, App *a, int n) {
+/* ---- fetching more rows, on a worker (a slow fetch never freezes the window) ----
+ * The tab's cursor moves into a scratch ResultSet with the same columns; the worker fetches into
+ * it while the grid keeps drawing the rows it has; when it is done the rows are appended to the
+ * tab and the cursor moves back. The session is marked busy meanwhile, like during a run. */
+typedef struct FetchJob {
+    ResultSet tmp; int tab; int n; bool all; volatile int done, cancel; SDL_Thread *th; Db *db;
+    /* Fetch all streams in blocks: the worker hands FETCH_BLOCK rows over in `ready` and the UI
+     * appends them to the tab, so the memory held twice is one block, never the whole result */
+    SDL_Mutex *mu; ResultSet ready; bool has_ready; int delivered;
+    Uint64 last_refresh;   /* the grid re-indexes at most once a second while blocks land (its order map is the size of the result) */
+} FetchJob;
+#define FETCH_BLOCK 5000   /* small: what is held twice is one block, and the UI lands several per frame */
+/* columns of src copied into an empty dst (its rows come from take_rows / the driver) */
+static void rs_like(ResultSet *dst, const ResultSet *src) {
+    rs_init(dst);
+    for (int c = 0; c < src->ncols; c++) rs_add_column(dst, src->cols[c], src->types[c] ? src->types[c] : "", src->kinds ? src->kinds[c] : CK_OTHER);
+    dst->ok = true; dst->has_rows = true;
+}
+/* moves the rows (cell table and arena) of from into to, leaving from empty */
+static void take_rows(ResultSet *to, ResultSet *from) {
+    to->cells = from->cells; to->nrows = from->nrows; to->cap_rows = from->cap_rows;
+    to->arena = from->arena; to->arena_len = from->arena_len; to->arena_cap = from->arena_cap;
+    from->cells = NULL; from->nrows = from->cap_rows = 0; from->arena = NULL; from->arena_len = from->arena_cap = 0;
+}
+/* worker: a block is ready; waits (briefly, polling) until the UI took the previous one */
+static void fetch_handover(FetchJob *f) {
+    SDL_LockMutex(f->mu);
+    while (f->has_ready && !__atomic_load_n(&f->cancel, __ATOMIC_SEQ_CST)) { SDL_UnlockMutex(f->mu); SDL_Delay(5); SDL_LockMutex(f->mu); }
+    if (!f->has_ready) {
+        rs_like(&f->ready, &f->tmp); take_rows(&f->ready, &f->tmp); f->has_ready = true; f->delivered += f->ready.nrows;
+        rs_reserve(&f->tmp, f->ready.nrows, f->ready.arena_len);   /* the next block, sized like this one: no doubling churn */
+    }
+    SDL_UnlockMutex(f->mu);
+}
+/* UI: appends a block handed over by the worker to its tab; true when one landed */
+static bool fetch_take_block(Results *r, App *a, FetchJob *f) {
+    ResultSet blk; bool got = false;
+    SDL_LockMutex(f->mu);
+    if (f->has_ready) { blk = f->ready; memset(&f->ready, 0, sizeof f->ready); f->has_ready = false; got = true; }
+    SDL_UnlockMutex(f->mu);
+    if (!got) return false;
+    ResultView *v = NULL;
+    for (int i = 0; i < r->ntabs; i++) if (r->tabs[i]->exec_id == f->tab) v = r->tabs[i];
+    if (v) {
+        int before = v->rs.nrows, ap = rs_append(&v->rs, &blk);
+        if (ap < blk.nrows) app_status(a, "The result holds the most rows a tab can show: the rest is not loaded (export the full result instead)");
+        else { char nr[32]; fmt_int(nr, sizeof nr, v->rs.nrows); app_status(a, "Fetching every remaining row\xE2\x80\xA6 %s rows so far", nr); }
+        if (v->rs.nrows > before && SDL_GetTicks() - f->last_refresh > 1000) { grid_refresh(&v->g); v->rowy_dirty = true; f->last_refresh = SDL_GetTicks(); }
+    }
+    rs_free(&blk);
+    return true;
+}
+/* quitting: the worker stops after its current batch; its cursor is closed */
+static void fetch_stop(Results *r) {
+    FetchJob *f = r->fj; if (!f) return;
+    __atomic_store_n(&f->cancel, 1, __ATOMIC_SEQ_CST);
+    db_cancel(f->db);   /* interrupts the batch in progress (on its own thread) */
+    /* a worker blocked in the driver on a network that died returns only when TCP gives up,
+     * minutes later: after a few seconds it is left behind with the session and its rows */
+    Uint64 t0 = SDL_GetTicks();
+    while (!__atomic_load_n(&f->done, __ATOMIC_SEQ_CST) && SDL_GetTicks() - t0 < 8000) SDL_Delay(50);
+    if (!__atomic_load_n(&f->done, __ATOMIC_SEQ_CST)) { __atomic_store_n(&f->db->abandoned, 1, __ATOMIC_SEQ_CST); SDL_DetachThread(f->th); r->fj = NULL; return; }
+    SDL_WaitThread(f->th, NULL);
+    __atomic_store_n(&f->db->busy, 0, __ATOMIC_SEQ_CST);
+    if (f->has_ready) rs_free(&f->ready);
+    SDL_DestroyMutex(f->mu);
+    rs_free(&f->tmp); free(f); r->fj = NULL;
+}
+/* a connection about to close: its fetch stops first (the worker must not use a closed session) */
+static void fetch_on_close(Connection *c) { if (g_results && g_results->fj && c && g_results->fj->db == c->db) fetch_stop(g_results); }
+static int fetch_worker(void *ud) {
+    FetchJob *f = ud;
+    do {
+        if (!rs_fetch_more(&f->tmp, f->n)) break;
+        if (f->all && f->tmp.nrows >= FETCH_BLOCK) fetch_handover(f);
+    } while (f->all && f->tmp.cursor && !__atomic_load_n(&f->cancel, __ATOMIC_SEQ_CST) && f->delivered + f->tmp.nrows < RS_ROW_CAP - f->n);
+    __atomic_store_n(&f->done, 1, __ATOMIC_SEQ_CST);
+    return 0;
+}
+static bool fetch_start(Results *r, App *a, int n, bool all) {
     ResultView *v = cur(r);
+    if (r->fj) { app_status(a, "Rows are still being fetched"); return true; }
     if (!live(v) || !v->rs.cursor || v->fetching) return false;   /* no double fetch (US-030) */
     if (v->ed_init && v->rs.nrows > v->ed.new_from) { app_status(a, "Apply or discard the pending inserts before fetching more rows"); return false; }
-    v->fetching = true;
+    Db *db = v->rs.db;
+    if (!db || __atomic_load_n(&db->busy, __ATOMIC_SEQ_CST)) { app_status(a, "The connection is busy with a running statement: fetch more when it ends"); return true; }
+    FetchJob *f = calloc(1, sizeof *f); if (!f) return false;
+    f->mu = SDL_CreateMutex(); if (!f->mu) { free(f); return false; }
+    rs_like(&f->tmp, &v->rs);
+    f->tmp.db = db; f->tmp.cursor = v->rs.cursor; f->tmp.truncated = true;
+    v->rs.cursor = NULL;
+    if (db->drv->rehome) db->drv->rehome(db, &f->tmp);   /* the driver's cursor now fills the scratch set */
+    f->tab = v->exec_id; f->n = n > 0 ? n : 500; f->all = all; f->db = db;
+    __atomic_store_n(&db->busy, 1, __ATOMIC_SEQ_CST);
+    f->th = SDL_CreateThread(fetch_worker, "lume-fetch", f);
+    if (!f->th) {   /* give the cursor back */
+        __atomic_store_n(&db->busy, 0, __ATOMIC_SEQ_CST);
+        v->rs.cursor = f->tmp.cursor; f->tmp.cursor = NULL; if (db->drv->rehome) db->drv->rehome(db, &v->rs);
+        SDL_DestroyMutex(f->mu); rs_free(&f->tmp); free(f); return false;
+    }
+    v->fetching = true; r->fj = f;
+    app_status(a, all ? "Fetching every remaining row\xE2\x80\xA6" : "Fetching %d more rows\xE2\x80\xA6", f->n);
+    app_wake_in(a, 50);
+    return true;
+}
+/* per frame: lands a finished fetch in its tab (or closes its cursor when the tab is gone) */
+static void fetch_pump(Results *r, App *a) {
+    FetchJob *f = r->fj;
+    if (!f) return;
+    bool landed = false;   /* blocks of a Fetch all land as they come, several per frame within a small time budget */
+    for (Uint64 t0 = SDL_GetTicks(); fetch_take_block(r, a, f); landed = true) if (SDL_GetTicks() - t0 > 8) break;
+    if (!__atomic_load_n(&f->done, __ATOMIC_SEQ_CST)) { app_wake_in(a, landed ? 10 : 100); return; }
+    SDL_WaitThread(f->th, NULL);
+    fetch_take_block(r, a, f);   /* a last block handed over just before the end */
+    SDL_DestroyMutex(f->mu); f->mu = NULL;
+    r->fj = NULL;
+    __atomic_store_n(&f->db->busy, 0, __ATOMIC_SEQ_CST);
+    ResultView *v = NULL;
+    for (int i = 0; i < r->ntabs; i++) if (r->tabs[i]->exec_id == f->tab) v = r->tabs[i];
+    if (!v) { rs_free(&f->tmp); free(f); return; }   /* the tab was closed: its cursor closes now */
     int before = v->rs.nrows;
-    bool got = rs_fetch_more(&v->rs, n);
+    int appended = rs_append(&v->rs, &f->tmp);   /* the arena moves over once; no per-cell copy on the UI thread */
+    if (appended < f->tmp.nrows && f->tmp.nrows) app_status(a, "The result holds the most rows a tab can show: the rest was not loaded (export the full result instead)");
+    v->rs.cursor = f->tmp.cursor; f->tmp.cursor = NULL;
+    if (v->rs.cursor && f->db->drv->rehome) f->db->drv->rehome(f->db, &v->rs);
+    v->rs.complete = f->tmp.complete; v->rs.truncated = v->rs.cursor != NULL; v->rs.fetch_ms += f->tmp.fetch_ms;
+    if (!f->tmp.ok) { v->rs.cursor_lost = !f->tmp.complete; app_status(a, "Fetching more rows failed: %s", f->tmp.error[0] ? f->tmp.error : "the cursor was closed"); }
+    else { char nr[32]; fmt_int(nr, sizeof nr, v->rs.nrows); app_status(a, v->rs.cursor ? "%s rows loaded, more available" : "%s rows: everything is loaded", nr); }
     if (v->ed_init) v->ed.new_from = v->rs.nrows;   /* fetched rows are stored rows, not inserts */
     if (v->rs.nrows > before) { grid_refresh(&v->g); v->rowy_dirty = true; }
     if (!v->rs.cursor) rs_trim(&v->rs);
     v->fetching = false;
+    rs_free(&f->tmp); free(f);
     enforce_budget(r, a);
-    return got;
 }
+
+/* Fetches up to n more rows from the current tab cursor, on a worker. Refused while a fetch runs
+ * or while pending inserts exist (they sit after the stored rows). True when a fetch started. */
+bool results_fetch_more(Results *r, App *a, int n) { return fetch_start(r, a, n, false); }
+bool results_fetch_all(Results *r, App *a) { return fetch_start(r, a, FETCH_BLOCK, true); }
+bool results_fetching(Results *r) { return r->fj != NULL; }
 
 /* True while an overlay of Results (or of the Output tab) owns the keyboard. */
 bool results_modal_open(Results *r) { return r->vv_open || r->fp_open || r->cp_open || r->ex_open || r->rn_open || r->ce_open || r->rv_review || r->chart_open || r->cf_open || r->menu.open || (r->output_active && g_app && output_modal_open(g_app->output)); }
@@ -1132,6 +1272,22 @@ static void chart_panel(Results *r, ResultView *v, App *a, bool input) {
  * "Open Link", never opened automatically. */
 static bool cell_is_link(const char *v) {
     return v && (strncasecmp(v, "http://", 7) == 0 || strncasecmp(v, "https://", 8) == 0) && strlen(v) < 2048 && !strpbrk(v, " \n\r\t\"'<>");
+}
+
+/* Following a foreign key (Go to referenced row): the referenced table's tab, set up when the
+ * query lands (it runs on the execution worker) */
+typedef struct FkNav { Results *r; char to_table[256], where[1400], text[400]; } FkNav;
+static void edit_capability(ResultView *v, App *a);
+static void fk_landed(App *a, int tab, const char *err, void *ud) {
+    FkNav *fn = ud; Results *r = fn->r;
+    ResultView *nv = NULL;
+    for (int i = 0; tab && i < r->ntabs; i++) if (r->tabs[i]->exec_id == tab) nv = r->tabs[i];
+    if (nv && nv->rs.ok) {
+        snprintf(nv->table, sizeof nv->table, "%s", fn->to_table); snprintf(nv->title, sizeof nv->title, "%s \xC2\xB7 %s", fn->to_table, fn->text);
+        snprintf(nv->srv_where, sizeof nv->srv_where, "%s", fn->where); snprintf(nv->srv_where_text, sizeof nv->srv_where_text, "%s", fn->text);
+        nv->mode = RUN_PREVIEW; edit_capability(nv, a);
+    } else app_status(a, "Cannot open %s: %s", fn->to_table, nv && nv->rs.error[0] ? nv->rs.error : err ? err : "the referenced table is not accessible");
+    free(fn);
 }
 
 /* Loads the foreign keys of the previewed table once, through the driver (when it supports
@@ -1558,13 +1714,7 @@ static void server_rerun(Results *r, App *a) {
     }
     v->db->drv->select_sql(v->qtable, v->srv_where[0] ? v->srv_where : NULL, order[0] ? order : NULL, a->fetch_size, sql, sizeof sql);
     r->cur = r->rerun_tab;
-    app_run_sql_mode(a, v->db, sql, -1, v->title, RUN_REPLACE, v->qtable);
-    ResultView *nv = cur(r);
-    if (nv && nv->rs.ok) {
-        char ms[32];
-        fmt_duration(ms, sizeof ms, nv->rs.exec_ms);
-        app_status(a, "Re-executed on the server in %s: %d row%s loaded%s", ms, nv->rs.nrows, nv->rs.nrows == 1 ? "" : "s", nv->rs.cursor ? ", more available" : "");
-    }
+    app_run_sql_mode(a, v->db, sql, -1, v->title, RUN_REPLACE, v->qtable);   /* on the execution worker: the tab is replaced when it lands */
 }
 
 /* Queues a server re-run of the current tab for the next frame (results_pre_update). */
@@ -2539,15 +2689,14 @@ static void menu_run(Results *r, App *a, int id) {
             v->db->drv->quote_ident(fk->to_table, q, sizeof q);
             v->db->drv->select_sql(q, where, NULL, a->fetch_size, sql, sizeof sql);
             Db *db = v->db;
-            /* the new tab may evict the oldest one, which can be this tab (and fk points into it):
-             * keep what is needed afterwards */
-            char to_table[256]; snprintf(to_table, sizeof to_table, "%s", fk->to_table);
-            int src_exec = v->exec_id;
-            app_run_sql_mode(a, db, sql, -1, to_table, RUN_NEW_TAB, q);
+            /* runs on the execution worker: the new tab is set up when it lands (fk_landed) */
+            FkNav *fn = calloc(1, sizeof *fn);
+            if (!fn) break;
+            snprintf(fn->to_table, sizeof fn->to_table, "%s", fk->to_table); snprintf(fn->where, sizeof fn->where, "%s", where); snprintf(fn->text, sizeof fn->text, "%s", text);
+            fn->r = r;
+            OutRunOpts op = { .mode = RUN_NEW_TAB, .title = fn->to_table, .qtable = q, .keep_tabs = true, .no_history = true, .landed = fk_landed, .ud = fn };
+            if (!output_run_opts(a->output, a, db, sql, -1, 0, -1, &op)) free(fn);
             v = NULL; fk = NULL;
-            ResultView *nv = cur(r);
-            if (nv && nv->exec_id != src_exec && nv->rs.ok) { snprintf(nv->table, sizeof nv->table, "%s", to_table); snprintf(nv->title, sizeof nv->title, "%s \xC2\xB7 %s", to_table, text); snprintf(nv->srv_where, sizeof nv->srv_where, "%s", where); snprintf(nv->srv_where_text, sizeof nv->srv_where_text, "%s", text); nv->mode = RUN_PREVIEW; edit_capability(nv, a); }
-            else if (nv && nv->exec_id != src_exec) app_status(a, "Cannot open %s: %s", to_table, nv->rs.error[0] ? nv->rs.error : "the referenced table is not accessible");
         } else if (id >= CM_COMPARE_BASE && id < CM_COMPARE_BASE + RES_MAX_TABS) {
             int t = id - CM_COMPARE_BASE;
             if (t < 0 || t >= r->ntabs || !live(r->tabs[t])) break;
@@ -3177,6 +3326,7 @@ static void draw_head_cell(Results *r, ResultView *v, App *a, const CellCtx *cx,
  * input before any panel does; main.c calls this right after the menu bar. */
 void results_pre_update(Results *r, App *a) {
     g_app = a;
+    fetch_pump(r, a);
     if (r->rerun_pending) { r->rerun_pending = false; server_rerun(r, a); }
     ResultView *v = cur(r);
     if (live(v)) {
@@ -3339,8 +3489,8 @@ static void results_update_body(Results *r, App *a, Rect b) {
             Rect ba = rect_make(bm.x - px(a, 6) - px(a, 76), bm.y, px(a, 76), bm.h);
             char lbl[32];
             snprintf(lbl, sizeof lbl, "Fetch %d more", a->fetch_size);
-            if (ui_button(a, ba, "Fetch all", BTN_NORMAL, true)) { while (results_fetch_more(r, a, 10000)) {} char nr[32]; fmt_int(nr, sizeof nr, v->rs.nrows); app_status(a, "Fetched everything: %s rows", nr); }
-            if (ui_button(a, bm, lbl, BTN_NORMAL, true)) results_fetch_more(r, a, a->fetch_size);
+            if (ui_button(a, ba, "Fetch all", BTN_NORMAL, !r->fj)) results_fetch_all(r, a);
+            if (ui_button(a, bm, r->fj ? "Fetching\xE2\x80\xA6" : lbl, BTN_NORMAL, !r->fj)) results_fetch_more(r, a, a->fetch_size);
         }
         if (v->search_open) {
             Rect sf = rect_make(x, tb.y + px(a, 4), px(a, 240), tb.h - px(a, 8));
@@ -4133,6 +4283,7 @@ void results_badge(Results *r, int *tabs, int *unsaved_rows, bool *error) {
 bool results_output_active(Results *r) { return r->output_active; }
 /* exec_id of the current tab, 0 when none. */
 int results_current_exec_id(Results *r) { ResultView *v = cur(r); return v ? v->exec_id : 0; }
+void results_target_replace(Results *r, int exec_id) { r->replace_target = exec_id; }
 /* See results.h: the SQL and session behind the current tab (Report Studio, LI-031). */
 const char *results_current_sql(Results *r, struct Db **db) { ResultView *v = cur(r); if (db) *db = v ? v->db : NULL; return v && v->sql && v->sql_len > 0 ? v->sql : NULL; }
 /* Selects the tab with this exec_id (and asks the shell to show Results when docked); true

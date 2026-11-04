@@ -57,6 +57,7 @@ struct ObjDoc {
     bool read_only; char ro_reason[200];
     ObjJob *job; int job_kind, remote_for, pending;
     double retry_at;
+    bool remote_pending; int remote_retries;   /* a pre-review / compare read refused while the session was busy: retried shortly (a few times) */
     /* dirty / draft */
     uint32_t seen_rev; bool dirty; double changed_at; uint32_t draft_rev; bool draft_saved;
     char author[64];   /* who edited the text (from the draft, else this OS user) */
@@ -692,14 +693,19 @@ static void do_pending(App *a, ObjDoc *d, int p) {
 
 static void poll_doc(App *a, ObjDoc *d) {
     if (!d->job) {
-        if (d->retry_at > 0 && now_s() >= d->retry_at) { d->retry_at = 0; if (d->state == ST_LOADING) start_load(a, d); }
+        if (d->retry_at > 0 && now_s() >= d->retry_at) {
+            d->retry_at = 0;
+            if (d->state == ST_LOADING) start_load(a, d);
+            else if (d->remote_pending) { d->remote_pending = false; start_remote(a, d, d->remote_for); }
+        }
         return;
     }
     if (!objsrc_poll(d->job)) { a->animating = true; return; }
     ObjJob *j = d->job; d->job = NULL; int kind = d->job_kind; d->job_kind = JK_NONE;
     if (j->state == OJS_FAILED && strstr(j->err, "busy") && (kind == JK_LOAD || kind == JK_REMOTE)) {
         if (kind == JK_LOAD) d->retry_at = now_s() + 0.5;
-        else app_status(a, "%s", j->err);
+        else if (d->remote_retries++ < 20) { d->remote_pending = true; d->retry_at = now_s() + 0.5; snprintf(d->msg, sizeof d->msg, "The session is busy: the definition is re-read when it frees up\xE2\x80\xA6"); }   /* up to ~10 s */
+        else { d->remote_retries = 0; snprintf(d->msg, sizeof d->msg, "The session stayed busy: try again when the running statement ends"); app_status(a, "%s", d->msg); }
         objsrc_free(j); return;
     }
     switch (kind) {
@@ -711,7 +717,7 @@ static void poll_doc(App *a, ObjDoc *d) {
         break;
     case JK_REMOTE:
         if (j->state != OJS_DONE) { snprintf(d->msg, sizeof d->msg, "Could not re-read the definition: %s", j->err); app_status(a, "%s", d->msg); break; }
-        objsnap_free(&d->remote); d->remote = j->snap; memset(&j->snap, 0, sizeof j->snap); d->have_remote = true;
+        objsnap_free(&d->remote); d->remote = j->snap; memset(&j->snap, 0, sizeof j->snap); d->have_remote = true; d->remote_retries = 0;
         if (d->remote_for == RF_REVIEW) {
             bool view = (d->key.kind == OBJK_VIEW || d->key.kind == OBJK_MATVIEW) && d->eng->describe_sql && d->eng->caps(d->key.kind, 0).server_validate;
             if (view && d->dialect == DIALECT_PG && d->remote.fingerprint == d->base.fingerprint) start_describe(a, d, RF_REVIEW);
@@ -2228,7 +2234,7 @@ bool objed_menu_pos(App *a, const char *label, float *x, float *y) {
 /* harness (objawait): the active object tab finished loading, or said why it could not */
 bool objed_idle(App *a) {
     ObjDoc *d = active_doc(a);
-    return !d || (!d->job && (d->loaded || strstr(state_text(d), "failed") || strstr(state_text(d), "Failed")));
+    return !d || (!d->job && !d->remote_pending && (d->loaded || strstr(state_text(d), "failed") || strstr(state_text(d), "Failed")));
 }
 void objed_dump(App *a) {
     ObjDoc *d = active_doc(a);

@@ -27,8 +27,10 @@ The **SQL formatter** rules, used by Format in the object editor and when the as
 
 ## Connections
 
-- **Reaching the database server**: 10 s (default), 30 s, 1 min or 2 min. PostgreSQL, MySQL / MariaDB and SQL Server; Oracle uses its client's own setting (`sqlnet.ora`). Applies to the next connect.
+- **Reaching the database server**: 10 s (default), 30 s, 1 min or 2 min. PostgreSQL, MySQL / MariaDB, SQL Server and Oracle (as an EZConnect `connect_timeout`, with Instant Client 19 or newer; a TNS alias keeps its own `sqlnet.ora` setting). Applies to the next connect.
 - **Opening an SSH tunnel**: 20 s (default), 1 min or 2 min.
+
+- **Completion > List every object I can see, in a second session** (on by default): see [Every object you can see](sql/editor.md#every-object-you-can-see). Off, completion proposes your own schema's tables only, and no second session is opened.
 
 Connections themselves are edited from the Explorer (**Edit connection**).
 

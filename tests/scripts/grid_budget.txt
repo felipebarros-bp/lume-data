@@ -10,7 +10,8 @@ type WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c LIMIT 800000) 
 key cmd+Return
 wait 1500
 button "Fetch all"
-wait 500
+fetchawait 60000
+wait 300
 wheel 700 700 -200
 wait 100
 stat grid-scrolled-800k

@@ -55,4 +55,6 @@ void editor_set_strip(Editor *e, bool draw);
 void editor_draw_overlay(Editor *e, App *a);
 /* Opens the completion popup on demand (⌃Space). */
 void editor_complete(Editor *e, App *a);
+void editor_dump_completion(const Editor *e);
+void editor_metadata_arrived(Editor *e, App *a);   /* objcat: columns arrived; a popup that waited for them is recomputed */   /* harness: completestate (the popup's proposals) */
 void editor_scroll_state(const Editor *e, float *sx, float *widest, float *view_w);   /* harness: horizontal scroll, widest line, text width (px) */

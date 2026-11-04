@@ -49,6 +49,8 @@ struct Db {
      * string and includes the password, so it must never be logged or displayed. */
     char *location;     /* file path or ":memory:" */
     volatile int busy;  /* an executor thread owns the connection: the UI must not call the driver */
+    volatile int abandoned;  /* a worker stuck in the driver (the network died under it) keeps the connection: db_close leaves it to the worker instead of calling the driver under it */
+    volatile int cancels;    /* db_cancel calls in flight on their own threads (db_close waits for them) */
     bool want_last_result;   /* SQL Server: keep the LAST result set of a statement (STATISTICS XML puts the plan after the rows); set by the plan capture only */
 };
 
@@ -117,7 +119,18 @@ extern const DbDriver db_sqlite_driver;
  * or "memory"). Returns NULL with err filled on failure. Close with db_close. */
 Db *db_open(const DbDriver *drv, const char *location, char *err, size_t errlen);
 /* Closes the driver connection and frees the Db. NULL is accepted. */
+/* Closes the session and frees db. A server driver's close is a round trip (a cursor to drain, a
+ * logoff), and when the network died under the session (a VPN dropped) nothing answers and
+ * nothing resets the socket: the call returns only when TCP gives up, minutes later. So the close
+ * runs on its own thread and the caller waits at most 5 s; past that the thread is left to finish
+ * (and free db) on its own, and the caller goes on. Any driver, present or future, gets this.
+ * The caller must make sure no statement is running on the Db (or Db.abandoned is set). */
 void db_close(Db *db);
+/* Asks the driver to stop the statement in flight, on its own thread: a cancel may itself be a
+ * round trip or a second connection (PQcancel, KILL QUERY, ALTER SYSTEM CANCEL SQL, a TDS
+ * attention waiting for its acknowledgement), and on a dead network any of them blocks. The
+ * caller never waits. No-op for drivers without cancel. */
+void db_cancel(Db *db);
 /* Seconds a driver waits to reach its server (Settings > Query Execution > Timeouts, default 10).
  * PostgreSQL, MySQL and SQL Server honour it; Oracle uses its client's own setting. */
 extern int db_connect_timeout_s;

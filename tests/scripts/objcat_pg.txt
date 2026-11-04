@@ -1,0 +1,34 @@
+# Completion with the catalog on PostgreSQL: schemas, SCHEMA. lists, another schema's columns in
+# the background; the Explorer's Sequences group from the catalog
+wait 500
+dnode "pg DEV"
+awaitconn "pg DEV" 60000
+objcatawait 300000
+objcatstate
+click 700 300
+key cmd+a
+type select * from syn_m
+wait 400
+completestate
+shot build/ui/objcat_pg_schema.bmp
+type id.
+wait 400
+completestate
+key Escape
+key cmd+a
+type select * from syn_mid.t00001 a where a.
+wait 100
+completestate
+wait 4000
+completestate
+shot build/ui/objcat_pg_columns.bmp
+key Escape
+node "public/Objects"
+wait 4000
+explorerdump rows
+node "Sequences"
+wait 100
+node "Sequences"
+wait 300
+shot build/ui/objcat_pg_sequences.bmp
+quit

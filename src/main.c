@@ -47,6 +47,7 @@
 #include "demo_shop.h"
 #include "gitview.h"
 #include "nsx.h"
+#include "objcat.h"
 #include "about.h"
 #include "settings.h"
 #include "brand.h"
@@ -123,31 +124,20 @@ void app_wake_in(App *a, Uint32 ms) {
     if (a->wake_at == 0 || t < a->wake_at) a->wake_at = t;
 }
 
-/* Run one statement synchronously on db (NULL = the active connection) and show it in the
- * results according to `mode` (RUN_*). Refuses while the connection is busy with an async run.
- * Statements without rows refresh the Explorer (DDL may have changed the schema). */
-void app_run_sql_mode(App *a, Db *db, const char *sql, int len, const char *title, int mode, const char *qtable) {
+/* Run SQL on db (NULL = the active connection) and show it in the results according to `mode`
+ * (RUN_*): table previews, reloads after Apply, Re-run, FK navigation. It runs on the execution
+ * worker like an editor run, so a slow fetch (LOB columns over a slow link) never freezes the
+ * window; ⌘. cancels it. The query tab's other results stay, and it is not added to Query
+ * History. Refused while the connection is busy. */
+bool app_run_sql_mode(App *a, Db *db, const char *sql, int len, const char *title, int mode, const char *qtable) {
     if (!db) db = a->db;
-    if (!db) { app_status(a, "No connection. Open a database first."); return; }
-    if (explorer_reading(a, db)) { app_status(a, "The Explorer is still listing tables on this connection: wait for it, or click Cancel under the schema"); return; }
-    if (__atomic_load_n(&db->busy, __ATOMIC_SEQ_CST)) { app_status(a, "The connection is busy with a running statement (\xE2\x8C\x98. cancels it)"); return; }
-    ResultSet rs;
-    db->drv->exec(db, sql, len, a->fetch_size, &rs);
-    bool ok = rs.ok, has_rows = rs.has_rows;
-    results_set(a->results, a, &rs, title, sql, len, mode, qtable);
-    /* metrics live in the results header; the status bar only carries state */
-    if (!ok) {
-        LOG_E("statement failed on %s (%s): %s%s%s", db->drv->name, title ? title : "-", rs.error[0] ? rs.error : "no message",
-              rs.err_state[0] ? "  sqlstate " : "", rs.err_state);
-        app_status(a, "Statement failed");
-    }
-    else if (!has_rows) app_status(a, "Statement executed");
-    else a->status[0] = 0;
-    if (ok && !has_rows) explorer_refresh(a->explorer, a);   /* DDL may have changed the schema */
-    if (a->panels) { if (ok || has_rows) panels_reveal_results(a->panels, a); else panels_reveal(a->panels, a, "lume.data.output"); }   /* the run's outcome is always in view */
+    if (!db) { app_status(a, "No connection. Open a database first."); return false; }
+    OutRunOpts op = { .mode = mode, .title = title, .qtable = qtable, .keep_tabs = true, .no_history = mode != RUN_EDITOR,
+                      .replace_exec = mode == RUN_REPLACE ? results_current_exec_id(a->results) : 0 };   /* replace the tab acted on, even if another is shown when it lands */
+    return output_run_opts(a->output, a, db, sql, len, 0, -1, &op) > 0;   /* refusals (busy, Explorer listing) are explained in the status bar */
 }
 
-/* Run SQL synchronously against the active connection into the editor's result tab. */
+/* Run SQL against the active connection into the editor's result tab. */
 void app_run_sql(App *a, const char *sql, int len, const char *title) { app_run_sql_mode(a, NULL, sql, len, title, RUN_EDITOR, NULL); }
 
 /* editor runs (OUT-007 / OUT-018): split into statements, executed on the worker thread,
@@ -209,8 +199,21 @@ static void set_title(App *a) {
     SDL_SetWindowTitle(a->window, t);
 }
 
-/* Completer callback: load a table's columns lazily through its connection. */
-static bool load_cols_cb(void *ctx, DbTable *t) { return conn_load_columns((Connection *)ctx, t); }
+static App *g_app;   /* for the completer callbacks below */
+/* Completer callback: a table's columns. Through the catalog session in the background when there
+ * is one (false now, the editor asks again when they arrive); otherwise read directly, only while
+ * the session is idle (SQLite, or the second session turned off). */
+static int load_cols_cb(void *ctx, DbTable *t) {
+    Connection *c = ctx;
+    int st = g_app ? objcat_columns_into(g_app, c, t) : OCS_UNAVAILABLE;
+    if (st == OCS_LOADED) return 1;
+    if (st == OCS_LOADING) return 0;
+    if (st == OCS_FAILED) return -1;
+    if (!c->db || __atomic_load_n(&c->db->busy, __ATOMIC_SEQ_CST)) return -1;   /* the session is running something: not now */
+    return conn_load_columns(c, t) ? 1 : -1;
+}
+/* Completer callback: another schema's object (or a synonym) as a table, columns in the background */
+static DbTable *cat_table_cb(void *ctx, const char *schema, const char *name, int *state) { return g_app ? objcat_table(g_app, (Connection *)ctx, schema, name, state) : NULL; }
 /* Completer callback: a table's foreign keys (JOIN ... ON), read once through the connection */
 static bool load_fks_cb(void *ctx, const char *table, DbFk **out, int *n) {
     Connection *c = ctx; char err[200];
@@ -223,6 +226,9 @@ void app_refresh_schema(App *a) {
     Connection *c = a->active;
     if (c && c->db) { complete_set_schema(a->completer, c->tables, c->ntables, c->id, load_cols_cb, c); complete_set_fk_loader(a->completer, load_fks_cb); }
     else complete_set_schema(a->completer, NULL, 0, NULL, NULL, NULL);
+    /* every object the user may see (other schemas, synonyms, routines...), from objcat */
+    g_app = a;
+    complete_set_catalog(a->completer, c && c->db ? objcat_for(a, c) : NULL, c ? c->schema : NULL, cat_table_cb, c);
 }
 
 /* Make c (if connected) the connection the editor runs against; updates completer, title and
@@ -739,6 +745,7 @@ static void app_prefs_load(App *a) {
         else if (!strcmp(line, "report_timeout_s") && v >= 5 && v <= 3600) a->report_timeout_s = v;
         else if (!strcmp(line, "git_timeout_min") && v >= 1 && v <= 120) a->git_timeout_min = v;
         else if (!strcmp(line, "git_clone_min") && v >= 1 && v <= 1440) a->git_clone_min = v;
+        else if (!strcmp(line, "catalog_session")) a->catalog_session = v != 0;
         else if (!strcmp(line, "report_locale") && (!strcmp(eq, "pt-BR") || !strcmp(eq, "en-US"))) snprintf(a->report_locale, sizeof a->report_locale, "%s", eq);
     }
     fclose(f);
@@ -752,8 +759,8 @@ static void app_apply_timeouts(const App *a) {
     gitview_set_timeouts(a->git_timeout_min * 60 * 1000, a->git_clone_min * 60 * 1000);
 }
 static unsigned prefs_sig(const App *a) {
-    char b[320]; snprintf(b, sizeof b, "%d|%d|%d|%.2f|%d|%d|%d|%d|%s|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d", a->fetch_size, a->continue_on_error, a->results_budget_mb, a->zoom, a->fmt_group, a->fmt_decimals, a->fmt_date, a->fmt_tz, a->report_locale, a->telemetry, a->crash_reports, a->update_check,
-                             a->query_timeout_s, a->connect_timeout_s, a->ssh_timeout_s, a->explorer_timeout_s, a->explorer_list_min, a->report_timeout_s, a->git_timeout_min, a->git_clone_min);
+    char b[320]; snprintf(b, sizeof b, "%d|%d|%d|%.2f|%d|%d|%d|%d|%s|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d", a->fetch_size, a->continue_on_error, a->results_budget_mb, a->zoom, a->fmt_group, a->fmt_decimals, a->fmt_date, a->fmt_tz, a->report_locale, a->telemetry, a->crash_reports, a->update_check,
+                             a->query_timeout_s, a->connect_timeout_s, a->ssh_timeout_s, a->explorer_timeout_s, a->explorer_list_min, a->report_timeout_s, a->git_timeout_min, a->git_clone_min, a->catalog_session);
     unsigned h = 2166136261u; for (const char *q = b; *q; q++) { h ^= (unsigned char)*q; h *= 16777619u; } return h;
 }
 static unsigned g_prefs_sig; static bool g_prefs_loaded;
@@ -766,6 +773,7 @@ void app_prefs_save(App *a) {
     fprintf(f, "telemetry=%d\ncrash_reports=%d\nupdate_check=%d\n", a->telemetry ? 1 : 0, a->crash_reports, a->update_check ? 1 : 0);
     fprintf(f, "query_timeout_s=%d\nconnect_timeout_s=%d\nssh_timeout_s=%d\nexplorer_timeout_s=%d\nexplorer_list_min=%d\nreport_timeout_s=%d\ngit_timeout_min=%d\ngit_clone_min=%d\n",
             a->query_timeout_s, a->connect_timeout_s, a->ssh_timeout_s, a->explorer_timeout_s, a->explorer_list_min, a->report_timeout_s, a->git_timeout_min, a->git_clone_min);
+    fprintf(f, "catalog_session=%d\n", a->catalog_session ? 1 : 0);
     fclose(f); rename(tmp, p);
     g_prefs_sig = prefs_sig(a);
     app_apply_timeouts(a);
@@ -864,7 +872,7 @@ static void do_action(App *a, int act) {
     case ACT_FETCH_1000: a->fetch_size = 1000; app_status(a, "Fetch size: 1,000 rows"); break;
     case ACT_FETCH_5000: a->fetch_size = 5000; app_status(a, "Fetch size: 5,000 rows"); break;
     case ACT_FETCH_MORE: if (!results_fetch_more(a->results, a, a->fetch_size)) app_status(a, "No more rows to fetch"); break;
-    case ACT_FETCH_ALL: { int n = 0; while (results_fetch_more(a->results, a, 10000)) n++; if (!n) app_status(a, "No more rows to fetch"); break; }
+    case ACT_FETCH_ALL: if (!results_fetch_all(a->results, a)) app_status(a, "No more rows to fetch"); break;
     case ACT_TOGGLE_SIDEBAR: a->sidebar_visible = !a->sidebar_visible; break;
     case ACT_TOGGLE_RESULTS: a->results_visible = !a->results_visible; break;
     case ACT_ZOOM_IN: set_zoom(a, a->zoom + 0.1f); break;
@@ -1014,6 +1022,7 @@ static void frame(App *a) {
     app_poll_connections(a);   /* background connects that finished */
     int action = menu_update(a->menu, a, bar);
     output_pump(a->output, a);
+    objcat_pump(a);
     /* a toolbar dialog / dropdown / keyboard focus holds the keys: no global shortcut fires under it */
     if (action == ACT_NONE && !toolbar_modal_open(a->toolbar)) action = global_shortcut(a);
     if (action != ACT_NONE) do_action(a, action);
@@ -1138,6 +1147,7 @@ int main(int argc, char **argv) {
     a->results_budget_mb = 256;
     a->query_timeout_s = 0; a->connect_timeout_s = 10; a->ssh_timeout_s = 20; a->explorer_timeout_s = 5;   /* timeouts (Settings) */
     a->explorer_list_min = 10; a->report_timeout_s = 30; a->git_timeout_min = 2; a->git_clone_min = 30;
+    a->catalog_session = true;
     a->fmt_decimals = -1;
     a->sidebar_w = 250;
     a->results_h = 260;
@@ -1156,6 +1166,7 @@ int main(int argc, char **argv) {
     brand_set_window_icon(a);   /* the Lume Data symbol in the Dock / title bar */
     about_init(a);
     settings_init(a);
+    objcat_init(a);
 
     /* system cursors and the user events used by the native file dialogs */
     a->cursors[CURSOR_ARROW] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);

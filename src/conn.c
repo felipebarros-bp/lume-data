@@ -461,16 +461,18 @@ bool conn_connect(Connection *c) {
 }
 
 /* modules whose workers may hold a connection's Db (object editor, Explorer catalog reads) */
-static void (*close_hooks[4])(Connection *c);
+#define CLOSE_HOOKS_MAX 16
+static void (*close_hooks[CLOSE_HOOKS_MAX])(Connection *c);
 void conn_add_close_hook(void (*hook)(Connection *c)) {
-    for (int i = 0; i < 4; i++) if (close_hooks[i] == hook) return;
-    for (int i = 0; i < 4; i++) if (!close_hooks[i]) { close_hooks[i] = hook; return; }
+    for (int i = 0; i < CLOSE_HOOKS_MAX; i++) if (close_hooks[i] == hook) return;
+    for (int i = 0; i < CLOSE_HOOKS_MAX; i++) if (!close_hooks[i]) { close_hooks[i] = hook; return; }
+    SDL_Log("conn_add_close_hook: more than %d hooks; one was dropped (a worker may outlive its connection)", CLOSE_HOOKS_MAX);
 }
-void conn_remove_close_hook(void (*hook)(Connection *c)) { for (int i = 0; i < 4; i++) if (close_hooks[i] == hook) close_hooks[i] = NULL; }
+void conn_remove_close_hook(void (*hook)(Connection *c)) { for (int i = 0; i < CLOSE_HOOKS_MAX; i++) if (close_hooks[i] == hook) close_hooks[i] = NULL; }
 
 /* See conn.h. */
 void conn_disconnect(Connection *c) {
-    for (int i = 0; i < 4 && c->db; i++) if (close_hooks[i]) close_hooks[i](c);   /* workers holding this Db stop before it is closed */
+    for (int i = 0; i < CLOSE_HOOKS_MAX && c->db; i++) if (close_hooks[i]) close_hooks[i](c);   /* workers holding this Db stop before it is closed */
     db_tables_free(c->tables, c->ntables);
     c->tables = NULL; c->ntables = 0;
     db_close(c->db);

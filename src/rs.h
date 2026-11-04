@@ -55,6 +55,11 @@ void rs_add_column(ResultSet *rs, const char *name, const char *type, int kind);
 int rs_add_row(ResultSet *rs);                    /* row index, or -1 when RS_ROW_CAP was hit */
 /* Stores a copy of text (len bytes, or strlen when len < 0) in the arena for one cell. */
 void rs_set(ResultSet *rs, int row, int col, const char *text, int len);   /* text NULL = SQL NULL */
+/* Appends src's rows to dst (same column count): the arena is copied once and the cell offsets
+ * rebased, no per-cell copy. Returns the rows appended (fewer than src->nrows past RS_ROW_CAP). */
+int rs_append(ResultSet *dst, const ResultSet *src);
+/* Room for `rows` more rows and `bytes` more arena up front (fewer reallocations while a block fills). */
+void rs_reserve(ResultSet *rs, int rows, size_t bytes);
 /* The cell's NUL-terminated text, owned by the set and valid until the arena next grows
  * (rs_set / fetch-more) or the set is freed. */
 const char *rs_cell(const ResultSet *rs, int row, int col);               /* NULL = SQL NULL */

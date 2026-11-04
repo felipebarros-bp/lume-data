@@ -12,6 +12,9 @@ Lume uses the database client library installed on your computer. Install it, or
 **The first Oracle connection takes several seconds.**
 The first connection after starting Lume can be slow while the Oracle client initialises; later ones are fast. The window keeps working meanwhile, and **Cancel Connect** stops it.
 
+**The network dropped (a VPN, Wi-Fi) while I was connected.**
+Closing the connection, reconnecting or quitting gives up on the dead session after a few seconds instead of waiting for the network to time out, on every database. A statement that was running is left behind with its session and reported as not finished. Reconnect once the network is back.
+
 **Run is disabled.**
 Hover it: the tooltip says why. Usually the tab has no connection (**Select connection** on the toolbar), the connection is not open, or a statement is still running on it (**Stop** it first).
 

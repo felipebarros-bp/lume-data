@@ -257,7 +257,7 @@ bool exec_cancelling(const ExecJob *j) { return exec_running(j) && __atomic_load
 void exec_cancel(ExecJob *j) {
     if (!j || !exec_running(j)) return;
     __atomic_store_n(&j->cancel_req, 1, __ATOMIC_SEQ_CST);
-    if (j->db->drv->cancel) j->db->drv->cancel(j->db);   /* reaches the statement in flight; its outcome tells whether it worked */
+    db_cancel(j->db);   /* on its own thread; reaches the statement in flight, whose outcome tells whether it worked */
 }
 
 /* See exec.h. */
@@ -301,7 +301,19 @@ int exec_overall(const ExecJob *j) {
 /* See exec.h. Blocks until the worker returns (a cancel is sent first). */
 void exec_free(ExecJob *j) {
     if (!j) return;
-    if (j->thread_ok) { exec_cancel(j); pthread_join(j->th, NULL); j->joined = true; }
+    if (j->thread_ok) {
+        exec_cancel(j);
+        /* a worker blocked in the driver on a network that died (a dropped VPN) returns only when
+         * TCP gives up, minutes later: after a few seconds it is left behind with its connection
+         * and the job's memory (the window must not freeze on quit or disconnect) */
+        double t0 = mono_s();
+        while (!__atomic_load_n(&j->done, __ATOMIC_SEQ_CST) && mono_s() - t0 < 8.0) { struct timespec ts = { 0, 50000000 }; nanosleep(&ts, NULL); }
+        if (!__atomic_load_n(&j->done, __ATOMIC_SEQ_CST)) {
+            SDL_Log("a statement did not stop in 8 s (the network died under it?): its worker and session are left behind");
+            __atomic_store_n(&j->db->abandoned, 1, __ATOMIC_SEQ_CST); pthread_detach(j->th); return;
+        }
+        pthread_join(j->th, NULL); j->joined = true;
+    }
     for (int i = 0; i < j->n; i++) if (!j->stmts[i].taken) rs_free(&j->stmts[i].rs);
     free(j->stmts); free(j->text); free(j);
 }

@@ -38,6 +38,7 @@ Db *db_open(const DbDriver *drv, const char *location, char *err, size_t errlen)
     return db;
 }
 void db_close(Db *db) { if (!db) return; db->drv->close(db); free(db->location); free(db); }
+void db_cancel(Db *db) { if (db && db->drv->cancel) db->drv->cancel(db); }   /* straight to the driver: no thread here */
 #endif
 
 static int fails, oks;

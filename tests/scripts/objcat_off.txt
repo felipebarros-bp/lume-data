@@ -1,0 +1,12 @@
+# Settings > Connections > second session off: no catalog read, no catalog proposals
+wait 500
+dnode "ora DEV"
+awaitconn "ora DEV" 60000
+wait 1500
+objcatstate
+click 700 300
+key cmd+a
+type select * from SYN_F
+wait 400
+completestate
+quit

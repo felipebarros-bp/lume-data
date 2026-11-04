@@ -45,7 +45,7 @@ typedef struct { char *key; float count; double last; } Entry;
  * context of the last query so an accepted choice can be learnt as an n-gram. */
 struct Completer {
     DbTable *tables; int ntables;
-    bool (*load_cols)(void *ctx, DbTable *t); void *load_ctx;
+    int (*load_cols)(void *ctx, DbTable *t); void *load_ctx;   /* 1 filled, 0 asked in the background, -1 refused / failed */
     bool (*load_fks)(void *ctx, const char *table, DbFk **out, int *n);
     DbFk **fks; int *nfks; unsigned char *fks_state;   /* per table: 0 not read, 1 read */
     Entry *ent; int nent, cap;      /* open addressing, linear probe */
@@ -53,6 +53,11 @@ struct Completer {
     bool dirty;
     Uint64 dirty_since;
     char prev1[128], prev2[128];    /* normalised tokens before the last query, for learn_choice */
+    const ObjCat *cat; char home[128];   /* every visible object (borrowed) and the schema proposed unqualified */
+    CompleteTableFn table_fn; void *table_ctx;   /* catalog objects as tables, columns in the background */
+    DbTable **xt; int *xst; int nxt, capxt;   /* catalog tables met in statements: index ntables + k (pointers owned by objcat), their OCS_* state */
+    bool pending; char pending_name[200];   /* the last query waits for these columns */
+    int *tset; int tset_cap; DbTable *tset_tables; int tset_n;   /* names of `tables` (index + 1, open addressing): catalog entries already proposed */
 };
 
 /* 32-bit FNV-1a hash of a NUL-terminated string (hash table and usage file name). */
@@ -274,11 +279,46 @@ typedef struct {
     Alias aliases[MAX_SCOPE]; int naliases;
 } Scope;
 
+/* Table i of the statement's world: the schema cache, then catalog tables (index ntables + k). */
+static DbTable *TB(Completer *c, int i) { return i < c->ntables ? &c->tables[i] : c->xt[i - c->ntables]; }
+static bool is_relation(int kind) { return kind == OC_TABLE || kind == OC_VIEW || kind == OC_MVIEW || kind == OC_SYNONYM; }
+/* The catalog object named by the n bytes at s ("SCHEMA.NAME", or NAME in the current schema,
+ * then a PUBLIC synonym) as a table index, its columns asked for in the background; -1. */
+static int catalog_table(Completer *c, const char *s, int n) {
+    if (!c->cat || !c->table_fn || n <= 0) return -1;
+    const char *dot = NULL;
+    for (int i = n - 1; i >= 0; i--) if (s[i] == '.') { dot = s + i; break; }
+    char nm[160]; const OcSchema *sch[2] = { NULL, NULL };
+    if (dot) { snprintf(nm, sizeof nm, "%.*s", (int)(s + n - dot - 1), dot + 1); sch[0] = objcat_schema(c->cat, s, (int)(dot - s)); }
+    else { snprintf(nm, sizeof nm, "%.*s", n, s); sch[0] = objcat_schema(c->cat, c->home, (int)strlen(c->home)); sch[1] = objcat_schema(c->cat, "PUBLIC", 6); }
+    for (int q = 0; q < 2; q++) {
+        const OcSchema *h = sch[q]; if (!h) continue;
+        const OcObj *hit = NULL;
+        for (int i = h->first; i < h->first + h->n && !hit; i++) if (is_relation(c->cat->o[i].kind) && !strcmp(c->cat->o[i].name, nm)) hit = &c->cat->o[i];
+        for (int i = h->first; i < h->first + h->n && !hit; i++) if (is_relation(c->cat->o[i].kind) && !strcasecmp(c->cat->o[i].name, nm)) hit = &c->cat->o[i];
+        if (!hit) continue;
+        int st; DbTable *t = c->table_fn(c->table_ctx, hit->schema, hit->name, &st);
+        if (!t) return -1;
+        for (int k = 0; k < c->nxt; k++) if (c->xt[k] == t) { c->xst[k] = st; return c->ntables + k; }
+        if (c->nxt == c->capxt) {
+            int nc = c->capxt ? c->capxt * 2 : 16;
+            DbTable **nx = realloc(c->xt, sizeof *nx * (size_t)nc); if (!nx) return -1; c->xt = nx;
+            int *ns = realloc(c->xst, sizeof *ns * (size_t)nc); if (!ns) return -1; c->xst = ns;
+            c->capxt = nc;
+        }
+        c->xst[c->nxt] = st; c->xt[c->nxt++] = t;
+        return c->ntables + c->nxt - 1;
+    }
+    return -1;
+}
+
 /* Matches "name", "schema.name" against cached names that may or may not carry a schema. */
 /* Index in the schema cache of the table named by the n bytes at s, or -1. Exact name first, then
  * the last dotted part of s, or (for an unqualified s) a cached "schema.name" whose name matches. */
-static int find_table(Completer *c, const char *s, int n) {
+static int find_table_ex(Completer *c, const char *s, int n, bool ask_catalog) {
     for (int i = 0; i < c->ntables; i++) if (ieq(s, n, c->tables[i].name)) return i;
+    if (ask_catalog) { int ct = catalog_table(c, s, n); if (ct >= 0) return ct; }   /* another schema's object, a synonym: before guessing by the last part */
+    else for (int k = 0; k < c->nxt; k++) if (ieq(s, n, c->xt[k]->name)) return c->ntables + k;   /* only what this statement already met: no column request as a side effect */
     const char *last = s; int ln = n;
     for (const char *p; (p = memchr(last, '.', ln)); ) { ln -= (int)(p + 1 - last); last = p + 1; }
     if (last != s) {
@@ -291,11 +331,17 @@ static int find_table(Completer *c, const char *s, int n) {
     }
     return -1;
 }
+static int find_table(Completer *c, const char *s, int n) { return find_table_ex(c, s, n, true); }
 
 static Completer *g_c;   /* for ensure_cols from find_column (single-threaded) */
 /* Make sure t's columns are in the cache, asking the owner through load_cols if not. */
 static void ensure_cols(Completer *c, DbTable *t) {
-    if (!t->cols_loaded && c && c->load_cols) c->load_cols(c->load_ctx, t);
+    if (!c || t->cols_loaded) return;
+    bool own = c->tables && t >= c->tables && t < c->tables + c->ntables;
+    bool loading = false;
+    if (own) { if (c->load_cols) loading = c->load_cols(c->load_ctx, t) == 0 && !t->cols_loaded; }   /* 0: asked in the background; a refusal or failure is not waited for */
+    else for (int k = 0; k < c->nxt; k++) if (c->xt[k] == t) loading = c->xst[k] == OCS_LOADING;   /* catalog tables: asked for by catalog_table */
+    if (loading && !t->cols_loaded && !c->pending) { c->pending = true; snprintf(c->pending_name, sizeof c->pending_name, "%s", t->name); }
 }
 
 /* Index of the column named by the n bytes at s in table t (columns loaded on demand), or -1. */
@@ -367,9 +413,17 @@ static void analyse(Completer *c, const char *s, Tok *tk, int ntok, Scope *sc, i
     }
 }
 
+/* true when the position right after token i expects a table name (a comma in a FROM list) */
+static bool table_ctx_at(Completer *c, const char *s, Tok *tk, int i) { Scope tmp; bool t = false; analyse(c, s, tk, i + 1, &tmp, i, &t); return t; }
+
 /* Table index for a qualifier before '.': an alias of this statement, else a table name; -1. */
 static int resolve_qualifier(Completer *c, Scope *sc, const char *s, int n) {
     for (int i = 0; i < sc->naliases; i++) if (ieq(s, n, sc->aliases[i].alias)) return sc->aliases[i].table;
+    /* no alias: a table of this statement named whole or by its last part ("from HUMASTER.X where X.") */
+    for (int i = 0; i < sc->ntables; i++) {
+        const char *nm = TB(c, sc->tables[i])->name, *d = strrchr(nm, '.');
+        if (ieq(s, n, nm) || (d && ieq(s, n, d + 1))) return sc->tables[i];
+    }
     return find_table(c, s, n);
 }
 
@@ -386,14 +440,14 @@ static void norm_token(Completer *c, Scope *sc, const char *s, Tok *tk, int i, c
         if (i >= 2 && tk[i - 1].type == TK_DOT && tk[i - 2].type == TK_IDENT)
             table = resolve_qualifier(c, sc, s + tk[i - 2].start, tk[i - 2].end - tk[i - 2].start);
         if (table >= 0) {
-            int col = find_column(&c->tables[table], s + t->start, len);
-            if (col >= 0) { snprintf(out, n, "c:%s.%s", c->tables[table].name, c->tables[table].cols[col].name); return; }
+            int col = find_column(TB(c, table), s + t->start, len);
+            if (col >= 0) { snprintf(out, n, "c:%s.%s", TB(c, table)->name, TB(c, table)->cols[col].name); return; }
         }
-        int tb = find_table(c, s + t->start, len);
-        if (tb >= 0) { snprintf(out, n, "t:%s", c->tables[tb].name); return; }
+        int tb = find_table_ex(c, s + t->start, len, false);   /* a key for usage: an identifier that happens to name an object must not start a column read */
+        if (tb >= 0) { snprintf(out, n, "t:%s", TB(c, tb)->name); return; }
         for (int j = 0; j < sc->ntables; j++) {
-            int col = find_column(&c->tables[sc->tables[j]], s + t->start, len);
-            if (col >= 0) { snprintf(out, n, "c:%s.%s", c->tables[sc->tables[j]].name, c->tables[sc->tables[j]].cols[col].name); return; }
+            int col = find_column(TB(c, sc->tables[j]), s + t->start, len);
+            if (col >= 0) { snprintf(out, n, "c:%s.%s", TB(c, sc->tables[j])->name, TB(c, sc->tables[j])->cols[col].name); return; }
         }
         snprintf(out, n, "id");
     } else if (t->type == TK_STR) snprintf(out, n, "str");
@@ -412,18 +466,24 @@ void complete_destroy(Completer *c) {
     store_clear(c);
     for (int i = 0; c->fks && i < c->ntables; i++) if (c->fks[i]) db_fks_free(c->fks[i], c->nfks[i]);
     free(c->fks); free(c->nfks); free(c->fks_state);
+    free(c->tset); free(c->xt); free(c->xst);
     free(c);
+}
+bool complete_pending(const Completer *c) { return c->pending; }
+void complete_set_catalog(Completer *c, const ObjCat *cat, const char *schema, CompleteTableFn table_fn, void *ctx) {
+    c->cat = cat; c->table_fn = table_fn; c->table_ctx = ctx; c->nxt = 0;
+    snprintf(c->home, sizeof c->home, "%s", schema && schema[0] ? schema : cat ? cat->home : "");
 }
 
 /* Switch to another schema / connection: save and drop the old usage, borrow the new table array,
  * and load the usage file for `location` from LUME_PREF_DIR or SDL's pref path. */
 void complete_set_schema(Completer *c, DbTable *tables, int ntables, const char *location,
-                         bool (*load_cols)(void *ctx, DbTable *t), void *ctx) {
+                         int (*load_cols)(void *ctx, DbTable *t), void *ctx) {
     if (c->dirty) store_save(c);
     store_clear(c);
     for (int i = 0; c->fks && i < c->ntables; i++) if (c->fks[i]) db_fks_free(c->fks[i], c->nfks[i]);
     free(c->fks); free(c->nfks); free(c->fks_state); c->fks = NULL; c->nfks = NULL; c->fks_state = NULL;
-    c->tables = tables; c->ntables = ntables;
+    c->tables = tables; c->ntables = ntables; c->nxt = 0;   /* catalog tables are numbered after these */
     if (ntables > 0) { c->fks = calloc((size_t)ntables, sizeof *c->fks); c->nfks = calloc((size_t)ntables, sizeof *c->nfks); c->fks_state = calloc((size_t)ntables, 1); }
     c->load_cols = load_cols; c->load_ctx = ctx;
     g_c = c;
@@ -464,10 +524,10 @@ static void learn_one(Completer *c, const char *s, Tok *tk, int ntok) {
     analyse(c, s, tk, ntok, &sc, -1, NULL);
     char key[160], p1[128] = "", p2[128] = "";
     for (int i = 0; i < sc.ntables; i++) {
-        snprintf(key, sizeof key, "t:%s", c->tables[sc.tables[i]].name);
+        snprintf(key, sizeof key, "t:%s", TB(c, sc.tables[i])->name);
         bump(c, key);
         for (int j = i + 1; j < sc.ntables; j++) {
-            const char *a = c->tables[sc.tables[i]].name, *b = c->tables[sc.tables[j]].name;
+            const char *a = TB(c, sc.tables[i])->name, *b = TB(c, sc.tables[j])->name;
             if (strcmp(a, b) > 0) { const char *t = a; a = b; b = t; }
             snprintf(key, sizeof key, "j:%s+%s", a, b);
             bump(c, key);
@@ -537,6 +597,7 @@ typedef struct {
     const char *prefix; int plen;
     Scope *sc;
     char p1[128], p2[128];
+    int worst;   /* index of the weakest candidate once out[] is full, -1 = to recompute */
 } Gen;
 
 /* Usage of `key` following the previous one / two tokens; trigrams weigh twice. */
@@ -550,37 +611,102 @@ static float ngram_usage(Gen *g, const char *key) {
 
 /* Append a candidate when it matches the prefix (and there is room): copies text / detail / key,
  * scores the match and adds n-gram usage to `usage`. `key` NULL = not learnable. */
-static void add(Gen *g, const char *text, const char *detail, const char *key, int kind, float usage) {
-    if (g->n >= g->max) return;
-    int m = match_score(text, g->prefix, g->plen);
+/* The slot for a candidate scored (m, usage): a free one, else the weakest one when this is
+ * better (a large catalog must not lose its best matches to whatever came first), else NULL. */
+/* x ranks above y: match, then usage, then kind (a table before a synonym when nothing else differs) */
+static bool ranks_above(int mx, float ux, int kx, int my, float uy, int ky) { return mx != my ? mx > my : ux != uy ? ux > uy : kx < ky; }
+static void find_worst(Gen *g) {
+    if (g->worst >= 0 && g->worst < g->n) return;
+    int w = 0;
+    for (int i = 1; i < g->n; i++) {
+        const Cand *x = &g->out[w], *y = &g->out[i];
+        if (ranks_above(x->match, x->usage, x->kind, y->match, y->usage, y->kind)) w = i;
+        else if (x->match == y->match && x->usage == y->usage && x->kind == y->kind && strcasecmp(y->text, x->text) > 0) w = i;   /* a full tie: the one that would sort last */
+    }
+    g->worst = w;
+}
+/* would (m, usage, kind) get a place now */
+static bool admits(Gen *g, int m, float usage, int kind) {
+    if (g->n < g->max) return true;
+    find_worst(g);
+    const Cand *w = &g->out[g->worst];
+    return ranks_above(m, usage, kind, w->match, w->usage, w->kind);
+}
+static Cand *slot(Gen *g, int m, float usage, int kind) {
+    Cand *cd = NULL;
+    if (g->n < g->max) { g->worst = -1; cd = &g->out[g->n++]; }
+    else if (admits(g, m, usage, kind)) { cd = &g->out[g->worst]; g->worst = -1; }   /* replaced: recomputed next time */
+    if (cd) { cd->label[0] = 0; cd->info = false; }   /* the array is reused between queries */
+    return cd;
+}
+static void add_m(Gen *g, const char *text, const char *detail, const char *key, int kind, float usage, int m);
+static void add(Gen *g, const char *text, const char *detail, const char *key, int kind, float usage) { add_m(g, text, detail, key, kind, usage, match_score(text, g->prefix, g->plen)); }
+/* add with the match score already computed (a qualified column matched on its own name) */
+static void add_m(Gen *g, const char *text, const char *detail, const char *key, int kind, float usage, int m) {
     if (!m) return;
-    Cand *cd = &g->out[g->n++];
+    if (!admits(g, m, usage + 1e6f, kind)) return;   /* cheap pre-check before the n-gram lookups (n-grams only add usage) */
+    usage += key ? ngram_usage(g, key) : 0;
+    Cand *cd = slot(g, m, usage, kind); if (!cd) return;
     snprintf(cd->text, sizeof cd->text, "%s", text);
     snprintf(cd->detail, sizeof cd->detail, "%s", detail);
     snprintf(cd->key, sizeof cd->key, "%s", key ? key : "");
     cd->kind = kind;
     cd->match = m;
-    cd->usage = usage + (key ? ngram_usage(g, key) : 0);
+    cd->usage = usage;
 }
 
 /* Add every column of a table (type and PK flag in the detail). show_table is currently unused. */
-static void add_columns(Gen *g, int table, bool show_table) {
-    DbTable *t = &g->c->tables[table];
+static const char *qual_of(Scope *sc, Completer *c, int t);
+/* Add every column of a table (type and PK flag in the detail). qualify: several tables in the
+ * statement, so each column is written with its alias / table ("a.ID"), matched on its own name too. */
+static void add_columns(Gen *g, int table, bool qualify) {
+    DbTable *t = TB(g->c, table);
     ensure_cols(g->c, t);
-    char key[160], detail[96];
+    char key[300], detail[96], text[300];
+    const char *q = qualify ? qual_of(g->sc, g->c, table) : NULL;
     for (int i = 0; i < t->ncols; i++) {
         snprintf(key, sizeof key, "c:%s.%s", t->name, t->cols[i].name);
-        (void)show_table;
-        snprintf(detail, sizeof detail, "%s \xC2\xB7 %s%s", t->name, t->cols[i].type, t->cols[i].pk ? " \xC2\xB7 PK" : "");
-        add(g, t->cols[i].name, detail, key, CAND_COLUMN, usage_of(g->c, key));
+        if (q) snprintf(detail, sizeof detail, "%s \xC2\xB7 %s%s", q, t->cols[i].type, t->cols[i].pk ? " \xC2\xB7 PK" : "");   /* several tables: which one */
+        else snprintf(detail, sizeof detail, "%s%s", t->cols[i].type, t->cols[i].pk ? " \xC2\xB7 PK" : "");
+        if (!q) { add(g, t->cols[i].name, detail, key, CAND_COLUMN, usage_of(g->c, key)); continue; }
+        snprintf(text, sizeof text, "%s.%s", q, t->cols[i].name);
+        int m = match_score(t->cols[i].name, g->prefix, g->plen), m2 = match_score(text, g->prefix, g->plen);
+        add_m(g, text, detail, key, CAND_COLUMN, usage_of(g->c, key), m > m2 ? m : m2);
     }
+}
+/* INSERT INTO t: every writable column at once, first in the list. paren: "(" is typed already. */
+static void add_all_columns(Gen *g, int table, bool paren) {
+    DbTable *t = TB(g->c, table);
+    ensure_cols(g->c, t);
+    if (!t->cols_loaded || t->ncols == 0 || g->n >= g->max) return;
+    Cand *cd = &g->out[g->n++];
+    memset(cd, 0, sizeof *cd);
+    size_t w = 0; int k = 0, skipped = 0;
+    if (!paren) w += (size_t)snprintf(cd->text + w, sizeof cd->text - w, "(");
+    for (int i = 0; i < t->ncols; i++) {
+        if (t->cols[i].identity_always || t->cols[i].generated) { skipped++; continue; }   /* the database refuses a value there */
+        int need = snprintf(cd->text + w, sizeof cd->text - w, "%s%s", k ? ", " : "", t->cols[i].name);
+        if (need < 0 || w + (size_t)need + 16 > sizeof cd->text) { g->n--; return; }   /* a list that does not fit is not offered as "every column" */
+        w += (size_t)need; k++;
+    }
+    if (!k) { g->n--; return; }
+    snprintf(cd->text + w, sizeof cd->text - w, paren ? ")" : ") VALUES (");
+    snprintf(cd->label, sizeof cd->label, paren ? "all %d columns)" : "all %d columns, then VALUES (", k);
+    { size_t d = 0; int shown = 0;   /* a preview of the list, then what was left out */
+      for (int i = 0; i < t->ncols && shown < 4 && d < 60; i++) {
+          if (t->cols[i].identity_always || t->cols[i].generated) continue;
+          d += (size_t)snprintf(cd->detail + d, sizeof cd->detail - d, "%s%s", shown++ ? ", " : "", t->cols[i].name);
+      }
+      if (shown < k) d += (size_t)snprintf(cd->detail + d, sizeof cd->detail - d, ", \xE2\x80\xA6");
+      if (skipped) snprintf(cd->detail + d, sizeof cd->detail - d, " \xC2\xB7 %d generated / identity left out", skipped); }
+    cd->kind = CAND_COLUMN; cd->match = 100000; cd->usage = 1e9f;   /* always first */
 }
 
 /* Add every table and view; usage includes a bonus for tables often joined with those in scope. */
 /* How a table is named in this statement: its alias, else its name without the schema. */
 static const char *qual_of(Scope *sc, Completer *c, int t) {
     for (int i = 0; i < sc->naliases; i++) if (sc->aliases[i].table == t) return sc->aliases[i].alias;
-    const char *n = c->tables[t].name, *dot = strrchr(n, '.');
+    const char *n = TB(c, t)->name, *dot = strrchr(n, '.');
     return dot ? dot + 1 : n;
 }
 static bool same_table(const char *fk_target, const char *name) {
@@ -604,7 +730,7 @@ static void add_join_conditions(Gen *g, Scope *sc, int joined) {
             const char *qf = dir ? qa : qb, *qt = dir ? qb : qa;
             DbFk *f = c->fks ? c->fks[from] : NULL; int nf = c->nfks ? c->nfks[from] : 0;
             for (int i = 0; i < nf; i++) {
-                if (!same_table(f[i].to_table, c->tables[to].name)) continue;
+                if (!same_table(f[i].to_table, TB(c, to)->name)) continue;
                 bool first = true; for (int q = 0; q < i; q++) if (f[q].name && f[i].name && !strcmp(f[q].name, f[i].name) && same_table(f[q].to_table, f[i].to_table)) first = false;
                 if (!first) continue;
                 size_t w = 0; int pairs = 0;
@@ -622,8 +748,8 @@ static void add_join_conditions(Gen *g, Scope *sc, int joined) {
             }
         }
         /* same column name, a primary key on at least one side */
-        ensure_cols(c, &c->tables[joined]); ensure_cols(c, &c->tables[t]);
-        DbTable *B = &c->tables[joined], *A = &c->tables[t];
+        ensure_cols(c, TB(c, joined)); ensure_cols(c, TB(c, t));
+        DbTable *B = TB(c, joined), *A = TB(c, t);
         for (int i = 0; i < B->ncols; i++) for (int j = 0; j < A->ncols; j++) {
             if (strcasecmp(B->cols[i].name, A->cols[j].name) || !(B->cols[i].pk || A->cols[j].pk)) continue;
             if (B->cols[i].pk && A->cols[j].pk && !strcasecmp(B->cols[i].name, "id")) continue;   /* each table's own "id": not a relation */
@@ -644,7 +770,7 @@ static void add_tables(Gen *g) {
         float u = usage_of(g->c, key);
         /* tables used together with the ones already in the statement rank first */
         for (int j = 0; j < g->sc->ntables; j++) {
-            const char *a = t->name, *b = g->c->tables[g->sc->tables[j]].name;
+            const char *a = t->name, *b = TB(g->c, g->sc->tables[j])->name;
             if (g->sc->tables[j] == i) continue;
             if (strcmp(a, b) > 0) { const char *x = a; a = b; b = x; }
             char jk[200];
@@ -655,6 +781,125 @@ static void add_tables(Gen *g) {
     }
 }
 
+/* ---- every visible object (objcat) ---- */
+
+static uint32_t lc_hash(const char *s, int n) { uint32_t h = 2166136261u; for (int i = 0; i < n && s[i]; i++) { h ^= (unsigned char)tolower((unsigned char)s[i]); h *= 16777619u; } return h; }
+/* the names of `tables` in a hash set (rebuilt when the table array changes) */
+static void tset_build(Completer *c) {
+    if (c->tset && c->tset_tables == c->tables && c->tset_n == c->ntables) return;
+    free(c->tset); c->tset = NULL; c->tset_cap = 0; c->tset_tables = c->tables; c->tset_n = c->ntables;
+    if (c->ntables <= 0) return;
+    int cap = 16; while (cap < c->ntables * 2) cap *= 2;
+    c->tset = calloc((size_t)cap, sizeof *c->tset); if (!c->tset) return;
+    c->tset_cap = cap;
+    for (int i = 0; i < c->ntables; i++) {
+        uint32_t h = lc_hash(c->tables[i].name, 1 << 30) & (uint32_t)(cap - 1);
+        while (c->tset[h]) h = (h + 1) & (uint32_t)(cap - 1);
+        c->tset[h] = i + 1;
+    }
+}
+/* the n bytes at s name one of `tables` (case-insensitive, as written there) */
+static bool tset_has(Completer *c, const char *s, int n) {
+    if (!c->tset) return false;
+    uint32_t h = lc_hash(s, n) & (uint32_t)(c->tset_cap - 1);
+    for (; c->tset[h]; h = (h + 1) & (uint32_t)(c->tset_cap - 1)) if (ieq(s, n, c->tables[c->tset[h] - 1].name)) return true;
+    return false;
+}
+/* usage of "t:SCHEMA.NAME" without building the key (the catalog loop runs it per object) */
+static bool key_is(const char *k, const char *schema, const char *name) {
+    if (k[0] != 't' || k[1] != ':') return false;
+    k += 2; size_t sl = strlen(schema);
+    if (strncmp(k, schema, sl) || k[sl] != '.') return false;
+    return !strcmp(k + sl + 1, name);
+}
+static float obj_usage(Completer *c, const char *schema, const char *name, double now) {
+    if (!c->nent) return 0;
+    uint32_t h = 2166136261u;
+    for (const char *p = "t:"; *p; p++) { h ^= (unsigned char)*p; h *= 16777619u; }
+    for (const char *p = schema; *p; p++) { h ^= (unsigned char)*p; h *= 16777619u; }
+    h ^= (unsigned char)'.'; h *= 16777619u;
+    for (const char *p = name; *p; p++) { h ^= (unsigned char)*p; h *= 16777619u; }
+    for (uint32_t i = h & (uint32_t)(c->cap - 1);; i = (i + 1) & (uint32_t)(c->cap - 1)) {
+        if (!c->ent[i].key) return 0;
+        if (key_is(c->ent[i].key, schema, name)) return value_of(&c->ent[i], now);
+    }
+}
+/* tset_has for "SCHEMA.NAME" without building it */
+static bool tset_has_q(Completer *c, const char *schema, const char *name) {
+    if (!c->tset) return false;
+    uint32_t h = 2166136261u;
+    for (const char *p = schema; *p; p++) { h ^= (unsigned char)tolower((unsigned char)*p); h *= 16777619u; }
+    h ^= (unsigned char)'.'; h *= 16777619u;
+    for (const char *p = name; *p; p++) { h ^= (unsigned char)tolower((unsigned char)*p); h *= 16777619u; }
+    size_t sl = strlen(schema);
+    for (uint32_t i = h & (uint32_t)(c->tset_cap - 1); c->tset[i]; i = (i + 1) & (uint32_t)(c->tset_cap - 1)) {
+        const char *t = c->tables[c->tset[i] - 1].name;
+        if (!strncasecmp(t, schema, sl) && t[sl] == '.' && !strcasecmp(t + sl + 1, name)) return true;
+    }
+    return false;
+}
+static int cand_kind(int ok) { return ok == OC_TABLE ? CAND_TABLE : ok == OC_VIEW || ok == OC_MVIEW ? CAND_VIEW : CAND_OBJECT; }
+/* Objects of the catalog, or of one schema (`only`: inserted without the schema, it is typed
+ * already). Unqualified: the current schema's and PUBLIC synonyms; others as SCHEMA.NAME, matched
+ * on the name and on the whole. Objects the schema cache already proposes are skipped. */
+/* "25,728": a count with thousands separators (locale-free, like the grid's fmt_int) */
+static void thousands(char *o, size_t n, int v) {
+    char raw[24]; int l = snprintf(raw, sizeof raw, "%d", v), k = 0;
+    for (int i = 0; i < l && k + 1 < (int)n; i++) { if (i && (l - i) % 3 == 0 && raw[i - 1] != '-') o[k++] = ','; o[k++] = raw[i]; }
+    o[k] = 0;
+}
+static void add_catalog(Gen *g, const OcSchema *only, bool relations) {
+    Completer *c = g->c; const ObjCat *k = c->cat;
+    if (!k) return;
+    tset_build(c);
+    char key[260], detail[96];
+    if (!only) for (int i = 0; i < k->ns; i++) {
+        const OcSchema *s = &k->s[i];
+        if (!strcasecmp(s->name, "PUBLIC") || !s->name[0]) continue;
+        int m = match_score(s->name, g->prefix, g->plen); if (!m) continue;
+        snprintf(key, sizeof key, "s:%s", s->name);
+        float u = usage_of(c, key);
+        Cand *cd = slot(g, m, u, CAND_SCHEMA); if (!cd) continue;
+        snprintf(cd->text, sizeof cd->text, "%s", s->name);
+        char cnt[24]; thousands(cnt, sizeof cnt, s->n);
+        snprintf(cd->detail, sizeof cd->detail, "schema \xC2\xB7 %s object%s \xE2\x80\xBA", cnt, s->n == 1 ? "" : "s");   /* › : Enter lists them */
+        snprintf(cd->key, sizeof cd->key, "%s", key);
+        cd->kind = CAND_SCHEMA; cd->match = m; cd->usage = u;
+    }
+    int from = only ? only->first : 0, to = only ? only->first + only->n : k->n;
+    if (!only && g->plen == 0) {   /* nothing typed (Ctrl+Space): the schemas and this schema's objects, not the whole catalog */
+        const OcSchema *h = objcat_schema(k, c->home, (int)strlen(c->home));
+        if (!h) return;
+        from = h->first; to = h->first + h->n;
+    }
+    unsigned pmask = objcat_mask(g->prefix, g->plen);
+    double now = now_s();
+    for (int i = from; i < to; i++) {
+        const OcObj *o = &k->o[i];
+        if (relations && !is_relation(o->kind)) continue;   /* after FROM / JOIN: what can be queried */
+        if ((o->mask & pmask) != pmask) continue;   /* a letter typed is not in the name */
+        int m = match_score(o->name, g->prefix, g->plen);
+        if (!m) continue;
+        int ck = cand_kind(o->kind);
+        if (g->n >= g->max) { find_worst(g); if (m < g->out[g->worst].match) continue; }   /* full: a weaker match cannot get in, skip the rest */
+        float u = obj_usage(c, o->schema, o->name, now);
+        if (!admits(g, m, u, ck)) continue;   /* a full tie does not replace */
+        bool unq = only || !strcasecmp(o->schema, c->home) || !strcmp(o->schema, "PUBLIC") || !o->schema[0];
+        if (!only && c->tset) {   /* the schema cache proposes its own tables already (as NAME or SCHEMA.NAME) */
+            if (unq && tset_has(c, o->name, (int)strlen(o->name))) continue;
+            if (o->schema[0] && tset_has_q(c, o->schema, o->name)) continue;
+        }
+        Cand *cd = slot(g, m, u, ck); if (!cd) continue;
+        snprintf(key, sizeof key, "t:%s.%s", o->schema, o->name);
+        if (only || unq) snprintf(cd->text, sizeof cd->text, "%s", o->name); else snprintf(cd->text, sizeof cd->text, "%s.%s", o->schema, o->name);
+        if (o->kind == OC_SYNONYM && o->target) snprintf(detail, sizeof detail, "synonym \xE2\x86\x92 %s", o->target);
+        else snprintf(detail, sizeof detail, "%s", objcat_kind_name(o->kind));
+        snprintf(cd->detail, sizeof cd->detail, "%s", detail);
+        snprintf(cd->key, sizeof cd->key, "%s", key);
+        cd->kind = ck; cd->match = m; cd->usage = u;
+    }
+}
+
 /* Add keywords (lower-cased when `lower_kw`, to follow the user's style) and functions as "name(". */
 static void add_words(Gen *g, bool lower_kw) {
     char buf[64];
@@ -662,14 +907,17 @@ static void add_words(Gen *g, bool lower_kw) {
         int k = 0;
         for (; keywords[i][k]; k++) buf[k] = lower_kw ? (char)tolower((unsigned char)keywords[i][k]) : keywords[i][k];
         buf[k] = 0;
-        add(g, buf, "keyword", keywords[i], CAND_KEYWORD, usage_of(g->c, keywords[i]) * 0.01f);
+        /* a keyword is written in the case the user types: "same case" earns it nothing over a column */
+        int m = match_score(buf, g->prefix, g->plen); if (m > 400) m = 400;
+        add_m(g, buf, "keyword", keywords[i], CAND_KEYWORD, usage_of(g->c, keywords[i]) * 0.01f, m);
     }
     for (int i = 0; i < NFUNCTIONS; i++) {
         snprintf(buf, sizeof buf, "%s(", functions[i]);
         /* match on the bare name so "cou" finds count( */
-        int m = match_score(functions[i], g->prefix, g->plen);
+        int m = match_score(functions[i], g->prefix, g->plen); if (m > 400) m = 400;   /* like keywords */
         if (!m || g->n >= g->max) continue;
         Cand *cd = &g->out[g->n++];
+        cd->label[0] = 0; cd->info = false;
         snprintf(cd->text, sizeof cd->text, "%s", buf);
         snprintf(cd->detail, sizeof cd->detail, "function");
         cd->key[0] = 0;
@@ -705,6 +953,7 @@ static void add_extra(Gen *g) {
 int complete_query(Completer *c, const char *s, int len, int cursor, bool explicit, Cand *out, int max, int *prefix_len) {
     *prefix_len = 0;
     c->prev1[0] = c->prev2[0] = 0;
+    c->pending = false; c->pending_name[0] = 0;
     if (cursor < 0 || cursor > len) return 0;
 
     /* identifier prefix before the cursor */
@@ -736,7 +985,7 @@ int complete_query(Completer *c, const char *s, int len, int cursor, bool explic
         analyse(c, s, tk, ntok, &tmp, prev, &table_ctx);
     }
 
-    Gen g = { c, out, 0, max, s + ps, plen, &sc, "", "" };
+    Gen g = { c, out, 0, max, s + ps, plen, &sc, "", "", -1 };
     if (prev >= 0) norm_token(c, &sc, s, tk, prev, g.p1, sizeof g.p1);
     if (prev >= 1) norm_token(c, &sc, s, tk, prev - 1, g.p2, sizeof g.p2);
     memcpy(c->prev1, g.p1, sizeof c->prev1);
@@ -751,11 +1000,31 @@ int complete_query(Completer *c, const char *s, int len, int cursor, bool explic
     }
 
     /* pick the candidate set from the context before the prefix */
+    /* INSERT INTO t | / INSERT INTO t ( |: every column first */
+    if (plen == 0 && prev >= 1) {
+        int j = prev; bool paren = tk[j].type == TK_LPAREN; if (paren) j--;
+        int end = j;
+        if (j >= 0 && tk[j].type == TK_IDENT) {
+            while (j >= 2 && tk[j - 1].type == TK_DOT && tk[j - 2].type == TK_IDENT) j -= 2;
+            if (j >= 1 && kw_is(s, &tk[j - 1], "INTO") && (paren || prev == end)) {
+                int t = find_table(c, s + tk[j].start, tk[end].end - tk[j].start);
+                if (t >= 0) add_all_columns(&g, t, paren);
+            }
+        }
+    }
     if (prev >= 1 && tk[prev].type == TK_DOT && tk[prev - 1].type == TK_IDENT) {
-        int table = resolve_qualifier(c, &sc, s + tk[prev - 1].start, tk[prev - 1].end - tk[prev - 1].start);
+        int q0 = prev - 1;   /* the whole qualifier: "a.", "X.", "HUMASTER.X." */
+        while (q0 >= 2 && tk[q0 - 1].type == TK_DOT && tk[q0 - 2].type == TK_IDENT) q0 -= 2;
+        int table = resolve_qualifier(c, &sc, s + tk[q0].start, tk[prev - 1].end - tk[q0].start);
         if (table >= 0) add_columns(&g, table, false);
+        else if (q0 == prev - 1) {   /* "SCHEMA.": that schema's objects */
+            const OcSchema *sch = objcat_schema(c->cat, s + tk[prev - 1].start, tk[prev - 1].end - tk[prev - 1].start);
+            bool rel = q0 >= 1 && (expects_table(s, &tk[q0 - 1]) || (tk[q0 - 1].type == TK_COMMA && table_ctx_at(c, s, tk, q0 - 1)));
+            if (sch) add_catalog(&g, sch, rel);
+        }
     } else if (prev >= 0 && table_ctx) {
         add_tables(&g);
+        add_catalog(&g, NULL, true);
     } else if (prev >= 0 && kw_is(s, &tk[prev], "ON") && sc.ntables >= 2) {
         /* the table joined by this ON: the identifier after the closest JOIN before it */
         int joined = -1;
@@ -775,10 +1044,11 @@ int complete_query(Completer *c, const char *s, int len, int cursor, bool explic
         char key[160];
         for (int i = 0; i < sc.naliases; i++) {
             if ((int)strlen(sc.aliases[i].alias) == plen && strncasecmp(sc.aliases[i].alias, s + ps, plen) == 0) continue;
-            snprintf(key, sizeof key, "alias of %s", c->tables[sc.aliases[i].table].name);
+            snprintf(key, sizeof key, "alias of %s", TB(c, sc.aliases[i].table)->name);
             add(&g, sc.aliases[i].alias, key, NULL, CAND_ALIAS, 0);
         }
         add_tables(&g);
+        add_catalog(&g, NULL, false);
         add_words(&g, lower_kw);
     }
     free(tk);
@@ -787,6 +1057,14 @@ int complete_query(Completer *c, const char *s, int len, int cursor, bool explic
     /* rank */
     g_has_prefix = plen > 0;
     qsort(out, g.n, sizeof *out, cmp_cand);
+    if (c->pending && max > 0) {   /* columns on their way: a row says so (nothing is inserted from it) */
+        if (g.n == max) g.n--;
+        memmove(out + 1, out, sizeof *out * (size_t)g.n);
+        memset(&out[0], 0, sizeof out[0]);
+        snprintf(out[0].label, sizeof out[0].label, "Loading columns of %.110s\xE2\x80\xA6", c->pending_name);
+        out[0].info = true; out[0].kind = CAND_KEYWORD;
+        g.n++;
+    }
     /* a single proposal that already equals the prefix is noise */
     if (g.n == 1 && plen > 0 && (int)strlen(out[0].text) == plen && strncmp(out[0].text, g.prefix, plen) == 0) return 0;
     return g.n;

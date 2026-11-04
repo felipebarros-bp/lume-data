@@ -215,6 +215,9 @@ static void sec_connections(App *a, float x, float *py, float w) {
     NOTE("PostgreSQL, MySQL / MariaDB and SQL Server. Oracle uses its client's own setting (sqlnet.ora). Applies to the next connect.");
     { static const char *const o[] = { "20 s", "1 min", "2 min" }; static const int v[] = { 20, 60, 120 };
       int k = segv(a, x, &y, w, "Opening an SSH tunnel", o, v, 3, a->ssh_timeout_s, "settings:sshtimeout"); if (k >= 0) a->ssh_timeout_s = k; }
+    HEAD("Completion");
+    if (chk(a, x, &y, w, "List every object I can see, in a second session", a->catalog_session, "settings:objcat")) { a->catalog_session = !a->catalog_session; app_refresh_schema(a); }
+    NOTE("Completion then proposes the tables, views, synonyms, procedures, functions, packages, sequences and types of every schema your user may see. They are read in a second session, so the editor is never kept waiting; only the names are kept on disk, so the next connect proposes them at once. Off: your own schema's tables only.");
     NOTE("Connections themselves (host, user, SSH, environment, read-only) are edited from the Explorer: Edit connection.");
     *py = y;
 }

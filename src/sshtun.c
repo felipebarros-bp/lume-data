@@ -95,8 +95,13 @@ void sshtun_kill_all(void) {
     pid_t *p = reg_pids; int n = reg_n;
     for (int i = 0; p && i < n; i++) { kill(-p[i], SIGTERM); kill(p[i], SIGTERM); }
 }
+static void nap_ms(int ms);
 static void kill_all_at_exit(void) {
     sshtun_kill_all();
+    /* reap them (briefly): a tunnel a worker was still closing, or the second session's, must not
+     * outlive the process by even a moment (nothing else reaps a child after exit) */
+    pid_t *p = reg_pids; int n = reg_n;
+    for (int i = 0; p && i < n; i++) for (int t = 0; t < 20; t++) { if (waitpid(p[i], NULL, WNOHANG) != 0) break; nap_ms(25); }
     pthread_mutex_lock(&reg_mu); reg_n = 0; reg_save_locked(); pthread_mutex_unlock(&reg_mu);
 }
 

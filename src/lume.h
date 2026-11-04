@@ -144,6 +144,7 @@ typedef struct App {
     int report_timeout_s;       /* each report query */
     int git_timeout_min;        /* fetch / pull / push and other network git operations */
     int git_clone_min;          /* clone */
+    bool catalog_session;       /* completion lists every visible object, read in a second session (objcat.h) */
     Menu *menu;                 /* menu bar */
     Completer *completer;       /* SQL autocompletion (complete.h) */
     ConnStore *conns;           /* saved connections (conn.h) */
@@ -187,7 +188,7 @@ void app_run_sql(App *a, const char *sql, int len, const char *title);
  * current tab in place (server-side sort / filter). `qtable` is the quoted table identifier
  * for previews (server-side operations need it), else NULL. */
 enum { RUN_EDITOR, RUN_PREVIEW, RUN_NEW_TAB, RUN_REPLACE };
-void app_run_sql_mode(App *a, Db *db, const char *sql, int len, const char *title, int mode, const char *qtable);   /* db NULL = active; synchronous, internal use */
+bool app_run_sql_mode(App *a, Db *db, const char *sql, int len, const char *title, int mode, const char *qtable);   /* db NULL = active; true when the run started (asynchronous); false = refused, explained in the status bar */
 /* editor runs go through the executor thread: statements split, Output events, cancel (⌘.) */
 void app_run_async(App *a, const char *sql, int len, int mode, int sql_base);
 void app_editor_insert(App *a, const char *text);   /* inserts at the editor caret and focuses the editor */

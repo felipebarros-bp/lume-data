@@ -26,6 +26,7 @@
  * app_run_sql_mode for previews, app_edit_connection for the dialog).
  */
 #include "explorer.h"
+#include "objcat.h"
 #include <ctype.h>
 #include <stdarg.h>
 #include <strings.h>
@@ -67,6 +68,10 @@ typedef struct Node {
     bool objgroup;      /* the "Objects" group of a schema: filled from the object editor's list on expand */
     char *schema;       /* objgroup: the schema it lists ("" = the connection's current one) */
     ObjKey *okey;       /* NODE_OBJECT: the object's identity (owned) */
+    bool pkg;           /* NODE_OBJECT of a package: expands to its subprograms (from the catalog session) */
+    bool member;        /* NODE_OBJECT: a package's subprogram (opens the package) */
+    bool chip, member_fn;   /* NODE_OBJECT of a routine: drawn as an F / P chip (member_fn: a function, else a procedure) */
+    unsigned char ckind;   /* NODE_OBJECT from the catalog (no editor): OC_* + 1, 0 otherwise */
     int role, action;   /* NR_* of a group; ACT_* of an action row */
     int order;          /* NODE_CONN under folders: the connection's position in the store (sorting) */
     char *sname;        /* NODE_SCHEMA / action rows: the namespace */
@@ -426,6 +431,7 @@ static void ns_pump(App *a) {
 /* "Objects" groups the user expanded, by "connection id|schema": the tree is rebuilt often and
  * this state must survive it */
 static char obj_open[32][160]; static int nobj_open;
+static int g_waiting;   /* rows showing "Loading columns..." / "Loading members..." since the last rebuild */
 static bool objgroup_is_open(Connection *c, const char *schema) {
     char k[160]; snprintf(k, sizeof k, "%s|%s", c->id, schema);
     for (int i = 0; i < nobj_open; i++) if (!strcmp(obj_open[i], k)) return true;
@@ -436,8 +442,51 @@ static void objgroup_set_open(Connection *c, const char *schema, bool open) {
     for (int i = 0; i < nobj_open; i++) if (!strcmp(obj_open[i], k)) { if (!open) { obj_open[i][0] = 0; snprintf(obj_open[i], sizeof obj_open[i], "%s", obj_open[--nobj_open]); } return; }
     if (open && nobj_open < 32) snprintf(obj_open[nobj_open++], sizeof obj_open[0], "%s", k);
 }
-/* Fills an "Objects" group from the object editor's cached list (one subgroup per kind). Views
- * are not repeated: they are already in the tree, and their menu opens the definition. */
+/* Fills a package node with its subprograms, read by the catalog session in the background
+ * ("Loading members..." until objcat_pump calls explorer_columns_arrived). Each member opens the
+ * package's specification on double-click. */
+static void fill_members(Node *n) {
+    node_clear_kids(n);
+    if (!n->okey || !E_APP || !n->conn) return;
+    const OcMembers *ms = objcat_members(E_APP, n->conn, n->okey->schema, n->okey->name);
+    const char *msg = NULL;
+    if (!ms || ms->state == OCS_UNAVAILABLE) msg = "Completion is off: see Settings > Connections";
+    else if (ms->state == OCS_LOADING) { msg = "Loading members\xE2\x80\xA6"; g_waiting++; }
+    else if (ms->state == OCS_FAILED) msg = "Could not load the members";
+    else if (ms->n == 0) msg = "No procedures or functions";
+    if (msg) { node_new(NODE_GROUP, msg, NULL, n)->leaf = true; return; }
+    for (int i = 0; i < ms->n; i++) {
+        char label[400]; snprintf(label, sizeof label, "%s(%s)", ms->m[i].name, ms->m[i].args ? ms->m[i].args : "");
+        Node *m = node_new(NODE_OBJECT, label, NULL, n);   /* the kind is the chip on the left: the row's width goes to the name and its parameters */
+        m->leaf = true; m->member = true; m->chip = true; m->member_fn = ms->m[i].function;
+        m->okey = malloc(sizeof *m->okey); *m->okey = *n->okey;
+    }
+}
+/* The catalog's objects of a kind in grp's schema, as a subgroup of leaf rows (sequences and
+ * synonyms are not edited: names only, a synonym with its target). */
+static int add_catalog_kind(Node *grp, const ObjCat *cat, int kind, const char *title) {
+    if (!cat) return 0;
+    const char *sname = grp->schema && grp->schema[0] ? grp->schema : cat->home;
+    const OcSchema *s = sname[0] ? objcat_schema(cat, sname, (int)strlen(sname)) : NULL;
+    if (!s) return 0;
+    int count = 0;
+    for (int i = s->first; i < s->first + s->n; i++) count += cat->o[i].kind == kind;
+    if (!count) return 0;
+    char buf[16]; snprintf(buf, sizeof buf, "%d", count);
+    Node *sub = node_new(NODE_GROUP, title, buf, grp);
+    sub->expanded = count <= 200;
+    for (int i = s->first; i < s->first + s->n; i++) {
+        if (cat->o[i].kind != kind) continue;
+        char detail[300] = "";
+        if (cat->o[i].target) snprintf(detail, sizeof detail, "\xE2\x86\x92 %s", cat->o[i].target);
+        Node *o = node_new(NODE_OBJECT, cat->o[i].name, detail[0] ? detail : NULL, sub);
+        o->leaf = true; o->ckind = (unsigned char)(kind + 1);
+    }
+    return count;
+}
+/* Fills an "Objects" group from the object editor's cached list (one subgroup per kind), then
+ * the catalog's sequences and synonyms of the schema. Views are not repeated: they are already
+ * in the tree, and their menu opens the definition. */
 static void build_objects(Node *grp) {
     Connection *c = grp->conn;
     node_clear_kids(grp);
@@ -472,10 +521,24 @@ static void build_objects(Node *grp) {
             Node *n = node_new(NODE_OBJECT, label, detail[0] ? detail : NULL, sub);
             n->leaf = true;
             n->okey = malloc(sizeof *n->okey); *n->okey = it->key;
+            if (k == OBJK_FUNCTION || k == OBJK_PROCEDURE) { n->chip = true; n->member_fn = k == OBJK_FUNCTION; }   /* the same F / P chips as a package's members and the popup */
+            if (k == OBJK_PKG_SPEC && objcat_members_sql(c->driver, "", "", NULL, 0)) {   /* a package opens to its subprograms */
+                n->leaf = false; n->pkg = true;
+                n->expanded = xs_get(n, false);
+                if (n->expanded) fill_members(n);
+            }
             shown++;
         }
     }
-    if (!shown) node_new(NODE_GROUP, "No routines, packages or triggers", NULL, grp)->leaf = true;
+    const ObjCat *cat = E_APP ? objcat_for(E_APP, c) : NULL;
+    shown += add_catalog_kind(grp, cat, OC_SEQUENCE, "Sequences");
+    shown += add_catalog_kind(grp, cat, OC_SYNONYM, "Synonyms");
+    if (!shown) {
+        bool pk = objcat_members_sql(c->driver, "", "", NULL, 0), syn = !strcmp(c->driver, "oracle") || !strcmp(c->driver, "sqlserver");
+        bool seq = strcmp(c->driver, "mysql") && strcmp(c->driver, "mariadb") && strcmp(c->driver, "sqlite");
+        char txt[120]; snprintf(txt, sizeof txt, "No routines%s%s%s", pk ? ", packages" : "", seq ? (syn ? ", sequences" : " or sequences") : "", syn ? " or synonyms" : "");
+        node_new(NODE_GROUP, txt, NULL, grp)->leaf = true;
+    }
 }
 static Node *add_objgroup(Node *parent, Connection *c, const char *schema) {
     const ObjEngine *eng = obj_engine_for_driver(c->driver);
@@ -487,10 +550,17 @@ static Node *add_objgroup(Node *parent, Connection *c, const char *schema) {
     return g;
 }
 
-/* Fills a table node with its column nodes, loading them from the database the first time
- * (blocking). A failure leaves a single message row; a busy session is retried on next expand. */
+/* Fills a table node with its column nodes. The first time they come from the catalog session in
+ * the background ("Loading columns..." until objcat_pump calls explorer_columns_arrived); without
+ * one (SQLite, the second session off) they are read directly while the session is idle. A
+ * failure leaves a single message row; a busy session is retried on next expand. */
 static void load_columns(Node *n) {
     if (n->loaded || !n->table) return;
+    if (!n->table->cols_loaded && E_APP && n->conn) {
+        int st = objcat_columns_into(E_APP, n->conn, n->table);
+        if (st == OCS_LOADING) { node_clear_kids(n); node_new(NODE_COLUMN, "Loading columns\xE2\x80\xA6", NULL, n)->leaf = true; g_waiting++; return; }   /* not marked loaded: filled on the rebuild when they arrive */
+        if (st == OCS_FAILED) { n->loaded = true; node_clear_kids(n); node_new(NODE_COLUMN, "Could not load columns", NULL, n)->leaf = true; return; }
+    }
     if (n->conn && n->conn->db && n->conn->db->busy && !n->table->cols_loaded) {
         node_clear_kids(n);
         node_new(NODE_COLUMN, "The session is busy: expand again to load the columns", NULL, n)->leaf = true;
@@ -759,8 +829,10 @@ static uint64_t ns_signature(App *a) {
 
 /* See explorer.h. Keeps the expanded / collapsed state of each root when the connection
  * list did not change order, and re-finds the selected row in the new tree. */
+void explorer_columns_arrived(Explorer *e, App *a) { if (g_waiting) explorer_rebuild(e, a); }   /* rows waiting for their columns / members fill in; the editor's own requests do not rebuild the tree */
 void explorer_rebuild(Explorer *e, App *a) {
     E_APP = a;
+    g_waiting = 0;   /* counted again by the rows built below */
     static bool loaded;
     if (!loaded && a->conns) { loaded = true; nsx_set_dir(a->conns->dir); nsx_load(); conn_add_close_hook(ns_on_close); }
     for (int i = 0; a->conns && i < a->conns->n; i++) ns_sync(a, a->conns->items[i]);
@@ -875,6 +947,7 @@ static void toggle(Node *n) {
     }
     if (n->role == NR_OTHERS && n->expanded && n->conn) { NsState *s = nsx_find(n->conn->id); if (s) nsx_expand_others(s); }
     if (n->objgroup) { objgroup_set_open(n->conn, n->schema, n->expanded); if (n->expanded) build_objects(n); }   /* lazy (OBJ-004) */
+    if (n->pkg) { xs_set(n, n->expanded); if (n->expanded) fill_members(n); }
 }
 
 /* Identity of the object a node stands for: an object node, or a view of the table list. */
@@ -1795,7 +1868,22 @@ rows_done:
             else draw_icon_table(r, x + is / 2, cy, is, icon, color_hex(T_ACCENT_DIM), bg);
             break;
         case NODE_OBJECT:
-            draw_icon_view(r, x + is / 2, cy, is, color_hex(n->detail && !strncmp(n->detail, "INVALID", 7) ? T_RED : T_ACCENT), bg);
+            if (n->pkg) {   /* a package: a box with a lid, it opens to its subprograms */
+                Rect b = rect_make(x + px(a, 1), cy - is * 0.36f, is - px(a, 2), is * 0.72f);
+                draw_rrect(r, b, px(a, 2), color_hex(T_ACCENT));
+                draw_rrect(r, rect_inset(b, px(a, 1.5f), px(a, 1.5f)), px(a, 1.5f), bg);
+                draw_rect(r, rect_make(b.x, b.y + b.h * 0.35f, b.w, px(a, 1.5f)), color_hex(T_ACCENT));
+            } else if (n->ckind == OC_SEQUENCE + 1) {   /* a sequence: a number sign (a counter) */
+                draw_text_fit(a->font_ui, r, "#", -1, rect_make(x, cy - is / 2, is, is), color_hex(T_TEXT_MUTED), ALIGN_CENTER);
+            } else if (n->ckind == OC_SYNONYM + 1) {   /* a synonym: an arrow to its target */
+                draw_rect(r, rect_make(x + px(a, 2), cy - px(a, 0.75f), is - px(a, 8), px(a, 1.5f)), color_hex(T_ACCENT));
+                draw_chevron(r, x + is - px(a, 6), cy, px(a, 6), px(a, 1.5f), false, color_hex(T_ACCENT));
+            } else if (n->chip) {   /* a routine: a chip with its kind, like the completion popup's badges */
+                Color c = color_hex(n->member_fn ? 0xE0A85B : 0x5B8DEF);
+                Rect chip = rect_make(x, cy - is / 2, is, is);
+                draw_rrect(r, chip, px(a, 3), color_alpha(c, 40));
+                draw_text_fit(a->font_small, r, n->member_fn ? "F" : "P", -1, chip, c, ALIGN_CENTER);
+            } else draw_icon_view(r, x + is / 2, cy, is, color_hex(n->detail && !strncmp(n->detail, "INVALID", 7) ? T_RED : T_ACCENT), bg);
             break;
         case NODE_COLUMN:
             if (n->pk) draw_icon_key(r, x + is / 2 - px(a, 2), cy - px(a, 2), is * 0.9f, color_hex(T_YELLOW));
@@ -1841,10 +1929,18 @@ rows_done:
             detail_w += dot + px(a, 8);
         } else if (n->detail) {
             detail_w = font_width(a->font_small, n->detail, -1) + px(a, 12);
+            /* the name comes first: the detail gets what is left after the indent and the name, never
+             * more than the name needs to stay whole (a floor keeps a stub of it, cut with "...") */
+            float avail = rr.x + rr.w - x - px(a, 10);
+            float name_w = font_width(n->kind == NODE_GROUP || n->kind == NODE_ACTION ? a->font_small : a->font_ui, n->label, -1) + px(a, 8);
+            float room = avail - name_w;
+            bool vital = n->kind == NODE_OBJECT && (!strncmp(n->detail, "INVALID", 7) || strstr(n->detail, "draft"));   /* a status the user must see, even cut */
+            if (room < px(a, 40)) detail_w = vital ? px(a, 40) : 0;   /* the name does not even fit alone: the secondary detail gives way */
+            else if (detail_w > room) detail_w = room;
             Rect dr = rect_make(rr.x + rr.w - detail_w - px(a, 6), rr.y, detail_w, rr.h);
             /* INVALID in words and colour (not colour only); a draft marker */
             bool bad = n->kind == NODE_OBJECT && !strncmp(n->detail, "INVALID", 7);
-            draw_text_fit(a->font_small, r, n->detail, -1, dr, color_hex(bad ? T_RED : T_TEXT_DIM), ALIGN_RIGHT);
+            if (detail_w > 0) draw_text_fit(a->font_small, r, n->detail, -1, dr, color_hex(bad ? T_RED : T_TEXT_DIM), ALIGN_RIGHT);
         }
         Rect lr = rect_make(x, rr.y, rr.x + rr.w - x - detail_w - px(a, 10), rr.h);
         if (e->rn_open && n->kind == NODE_FOLDER && n->sname && !strcmp(n->sname, e->rn_path)) {   /* inline rename */
@@ -1884,10 +1980,28 @@ void explorer_dump_rows(Explorer *e) {
 }
 
 /* Test harness: centre (window units) of the first visible node whose label is `label`. */
-bool explorer_node_pos(Explorer *e, App *a, const char *label, float *x, float *y) {
+bool explorer_node_pos(Explorer *e, App *a, const char *label, float *x, float *y) { return explorer_node_pos_ex(e, a, label, false, x, y); }
+/* a node's ancestors, nearest first, carry the labels of a "a/b/label" path (the last part is the node's own) */
+static bool node_path_matches(const Node *n, const char *path) {
+    const char *end = path + strlen(path);
+    const Node *p = n;
+    for (;;) {
+        const char *slash = NULL;
+        for (const char *q = path; q < end; q++) if (*q == '/') slash = q;   /* the last part */
+        const char *part = slash ? slash + 1 : path; size_t pl = (size_t)(end - part);
+        if (!p || !p->label || strlen(p->label) != pl || strncmp(p->label, part, pl)) return false;
+        if (!slash) return true;
+        end = slash; p = p->parent;
+        /* an intermediate ancestor that is not named in the path is allowed: skip up to the named one */
+        const char *s2 = NULL; for (const char *q = path; q < end; q++) if (*q == '/') s2 = q;
+        const char *want = s2 ? s2 + 1 : path; size_t wl = (size_t)(end - want);
+        while (p && !(p->label && strlen(p->label) == wl && !strncmp(p->label, want, wl))) p = p->parent;
+    }
+}
+bool explorer_node_pos_ex(Explorer *e, App *a, const char *label, bool chevron, float *x, float *y) {
     float row_h = px(a, M_ROW);
     for (int i = 0; i < e->nvis; i++) {
-        if (!e->vis[i]->label || strcmp(e->vis[i]->label, label)) continue;
+        if (!e->vis[i]->label || !node_path_matches(e->vis[i], label)) continue;
         float cy = e->rows_rect.y + i * row_h - e->scroll + row_h / 2;
         if (cy < e->rows_rect.y || cy > e->rows_rect.y + e->rows_rect.h) {
             /* off screen: scroll it into view like a user would, then report where it is now */
@@ -1896,7 +2010,7 @@ bool explorer_node_pos(Explorer *e, App *a, const char *label, float *x, float *
             e->scroll_t = e->scroll;   /* no smooth-scroll animation back to the old place */
             cy = e->rows_rect.y + i * row_h - e->scroll + row_h / 2;
         }
-        *x = (e->rows_rect.x + px(a, 10 + 14 * e->vis[i]->depth) + px(a, 60)) / a->density;
+        *x = (e->rows_rect.x + px(a, 10 + 14 * e->vis[i]->depth) + px(a, chevron ? 8 : 60)) / a->density;
         *y = cy / a->density;
         return true;
     }

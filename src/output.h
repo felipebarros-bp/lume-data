@@ -79,6 +79,14 @@ typedef struct OutRunOpts {
     const char *note;          /* recorded first in the Output (what ran, where), or NULL */
     const char *display;       /* shown in the Output / history instead of the SQL (no parameter values), or NULL */
     const char *export_path;   /* write the first result to this file, or NULL */
+    const char *qtable;        /* the first result previews this table (editable with its key), or NULL */
+    bool keep_tabs;            /* not an editor run: the query tab's other results stay */
+    bool no_history;           /* a preview / reload: not added to Query History */
+    int replace_exec;          /* RUN_REPLACE: the result tab (exec_id) to replace, 0 = the current one when it lands */
+    /* called once when the execution ends: the exec_id of the result tab it opened (0 none: failed
+     * or no rows) and its error; ud is the caller's, freed by the callback */
+    void (*landed)(App *a, int tab_exec_id, const char *err, void *ud);
+    void *ud;
 } OutRunOpts;
 int output_run_opts(Output *o, App *a, Db *db, const char *sql, int len, uint32_t editor_rev, int sql_base, const OutRunOpts *op);   /* execution id, 0 when it did not start */
 /* Per-frame: logs finished statements of the running job and finalises it when done. */

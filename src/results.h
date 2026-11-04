@@ -48,6 +48,8 @@ void results_draw_overlay(Results *rs, App *a);     /* menus, popovers, viewer, 
 
 /* Fetches up to n more rows from the current tab cursor; true when rows arrived. */
 bool results_fetch_more(Results *rs, App *a, int n);
+bool results_fetch_all(Results *rs, App *a);           /* every remaining row, on a worker */
+bool results_fetching(Results *rs);
 /* Releases cursors on db and marks its tabs stale; call before the connection closes. */
 void results_release_db(Results *rs, Db *db);       /* before a connection closes */
 /* Copies the current selection to the clipboard as TSV, without headers. */
@@ -114,6 +116,8 @@ bool results_current_info(Results *rs, char *err, size_t en, char *sql, size_t s
 /* Draws the Inspector panel (record view of the selected row) inside bounds, with its input. */
 void results_draw_inspector(Results *rs, App *a, Rect bounds);
 /* exec_id of the current result tab. */
+/* The next RUN_REPLACE result lands in the tab with this exec_id (0: the current tab). */
+void results_target_replace(Results *r, int exec_id);
 int results_current_exec_id(Results *rs);           /* id of the current result tab, 0 none */
 /* the SQL that produced the current tab and its session (NULL for derived tabs); owned by the tab */
 const char *results_current_sql(Results *rs, struct Db **db);

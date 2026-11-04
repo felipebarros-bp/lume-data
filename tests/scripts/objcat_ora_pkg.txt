@@ -1,0 +1,16 @@
+# Explorer: a package opens to its subprograms, read by the catalog session (Oracle)
+wait 500
+dnode "ora DEV"
+awaitconn "ora DEV" 60000
+objcatawait 300000
+node "SYSTEM/Objects"
+wait 4000
+explorerdump rows
+xnode "LUME_PKG"
+wait 150
+explorerdump rows
+wait 5000
+explorerdump rows
+shot build/ui/objcat_pkg_members.bmp
+objcatstate
+quit

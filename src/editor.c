@@ -62,6 +62,7 @@ struct Editor {
      * row under the pointer or -1 */
     Cand cands[COMPLETE_MAX]; int ncands, csel, cscroll, cprefix;
     bool copen;
+    bool cpending, cexplicit; uint32_t crev; int ccur;   /* the popup waits for columns: recomputed when they arrive if text and caret are unchanged */
     Rect popup_rect;
     float popup_x, popup_y;
     int chover;
@@ -775,8 +776,19 @@ static void complete_refresh(Editor *e, App *a, bool explicit) {
     int nc = complete_query(a->completer, text + so, eo - so, cur - so, explicit, e->cands, COMPLETE_MAX, &e->cprefix);
     free(text);
     e->ncands = nc;
-    e->csel = 0; e->cscroll = 0; e->chover = -1;
+    e->csel = nc > 1 && e->cands[0].info ? 1 : 0;   /* a Loading row is never the default choice */
+    e->cscroll = 0; e->chover = -1;
     e->copen = nc > 0;
+    e->cpending = complete_pending(a->completer); e->cexplicit = explicit; e->crev = editor_revision(e); e->ccur = cur;
+}
+/* Columns asked for in the background arrived: the popup that waited for them is recomputed,
+ * only for the text and caret it was opened for (never a stale list). */
+void editor_metadata_arrived(Editor *e, App *a) {
+    if (!e || !e->cpending) return;
+    e->cpending = false;
+    if (!e->copen) return;   /* closed meanwhile (Esc, a click elsewhere): it does not come back uninvited */
+    if (editor_revision(e) != e->crev || cursor_offset(e) != e->ccur || has_sel(e)) return;
+    complete_refresh(e, a, e->cexplicit);
 }
 
 /* Replace the typed prefix with the selected proposal (one undo step), teach the completer the
@@ -784,6 +796,7 @@ static void complete_refresh(Editor *e, App *a, bool explicit) {
 static void complete_accept(Editor *e, App *a) {
     if (!e->copen || e->csel < 0 || e->csel >= e->ncands) return;
     Cand *cd = &e->cands[e->csel];
+    if (cd->info) return;   /* a state row inserts nothing and the popup stays, waiting for the columns */
     edit_begin(e, EK_OTHER);
     if (e->cprefix > 0) delete_range(e, e->cx - e->cprefix, e->cy, e->cx, e->cy);
     ins_raw(e, cd->text, -1);
@@ -794,16 +807,22 @@ static void complete_accept(Editor *e, App *a) {
 
 /* Open the completion popup on demand (Ctrl+Space). */
 void editor_complete(Editor *e, App *a) { complete_refresh(e, a, true); }
+void editor_dump_completion(const Editor *e) {
+    printf("completestate open=%d n=%d", e->copen, e->copen ? e->ncands : 0);
+    for (int i = 0; e->copen && i < e->ncands && i < 12; i++) printf(" [%s|%s]", e->cands[i].label[0] ? e->cands[i].label : e->cands[i].text, e->cands[i].detail);
+    printf("\n"); fflush(stdout);
+}
 
 /* Popup navigation while it is open: Up / Down / PageUp / PageDown move, Return / Tab accept,
  * Esc closes. Returns true when the key was used (Cmd+Return is left for "run"). */
 static bool complete_keys(Editor *e, App *a, KeyPress *kp) {
     int page = 8;
     switch (kp->key) {
-    case SDLK_UP: e->csel = e->csel > 0 ? e->csel - 1 : e->ncands - 1; return true;
-    case SDLK_DOWN: e->csel = (e->csel + 1) % e->ncands; return true;
-    case SDLK_PAGEUP: e->csel = e->csel - page < 0 ? 0 : e->csel - page; return true;
-    case SDLK_PAGEDOWN: e->csel = e->csel + page >= e->ncands ? e->ncands - 1 : e->csel + page; return true;
+    /* a state row ("Loading columns of…") is skipped over: it is not a choice */
+    case SDLK_UP: { int s = e->csel > 0 ? e->csel - 1 : e->ncands - 1; if (e->cands[s].info && e->ncands > 1) s = s > 0 ? s - 1 : e->ncands - 1; if (!e->cands[s].info) e->csel = s; return true; }
+    case SDLK_DOWN: { int s = (e->csel + 1) % e->ncands; if (e->cands[s].info && e->ncands > 1) s = (s + 1) % e->ncands; if (!e->cands[s].info) e->csel = s; return true; }
+    case SDLK_PAGEUP: { int s = e->csel - page < 0 ? 0 : e->csel - page; if (e->cands[s].info && s + 1 < e->ncands) s++; e->csel = s; return true; }
+    case SDLK_PAGEDOWN: { int s = e->csel + page >= e->ncands ? e->ncands - 1 : e->csel + page; if (e->cands[s].info && s > 0) s--; e->csel = s; return true; }
     case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_TAB:
         if (kp->mods & KM_PRIMARY) return false;
         complete_accept(e, a); return true;
@@ -1198,12 +1217,14 @@ static void editor_update_body(Editor *e, App *a, Rect body, bool focused) {
 }
 
 /* One badge system for every kind: 14pt chip, tinted fill, one letter. */
-/* Draws the small kind badge (C column, A alias, T table, V view, F function, K keyword)
- * centred on (cx, cy). */
+/* Draws the small kind badge (C column, A alias, S schema, T table, V view, O other object,
+ * F function, K keyword) centred on (cx, cy). One entry per CAND_* kind, in enum order. */
 static void draw_kind_badge(App *a, float cx, float cy, int kind) {
     SDL_Renderer *r = a->renderer;
-    static const char *const letters[] = { "C", "A", "T", "V", "F", "K" };
-    static const uint32_t tints[] = { 0x9AA3B0, 0x5BC0DE, 0x5B8DEF, 0x3DBE8B, 0xE0A85B, 0xA78BFA };
+    static const char *const letters[] = { "C", "A", "S", "T", "V", "O", "F", "K" };
+    static const uint32_t tints[] = { 0x9AA3B0, 0x5BC0DE, 0xD9A441, 0x5B8DEF, 0x3DBE8B, 0xC08BD9, 0xE0A85B, 0xA78BFA };
+    _Static_assert(sizeof letters / sizeof letters[0] == CAND_KEYWORD + 1 && sizeof tints / sizeof tints[0] == CAND_KEYWORD + 1, "one badge per candidate kind");
+    if (kind < 0 || kind > CAND_KEYWORD) return;
     float s = px(a, 7);
     Color c = color_hex(tints[kind]);
     draw_rrect(r, rect_make(cx - s, cy - s, s * 2, s * 2), px(a, 3), color_alpha(c, 56));
@@ -1238,7 +1259,7 @@ void editor_draw_overlay(Editor *e, App *a) {
     /* size: widest proposal + widest detail, clamped to 220..460 points; position it on screen */
     float tw = 0, dw = 0;
     for (int i = 0; i < e->ncands; i++) {
-        float w = font_width(a->font_mono, e->cands[i].text, -1);
+        float w = font_width(a->font_mono, e->cands[i].label[0] ? e->cands[i].label : e->cands[i].text, -1);
         if (w > tw) tw = w;
         w = font_width(a->font_small, e->cands[i].detail, -1);
         if (w > dw) dw = w;
@@ -1267,15 +1288,16 @@ void editor_draw_overlay(Editor *e, App *a) {
             draw_rrect(r, row, px(a, 3), color_hex(T_SELECTED));
             draw_rect(r, rect_make(row.x, row.y + px(a, 3), px(a, 2), row.h - px(a, 6)), color_hex(T_ACCENT));
         } else if (i == e->chover) draw_rrect(r, row, px(a, 3), color_hex(T_HOVER));
-        draw_kind_badge(a, row.x + px(a, 16), row.y + row.h / 2, cd->kind);
+        if (!cd->info) draw_kind_badge(a, row.x + px(a, 16), row.y + row.h / 2, cd->kind);   /* a state row ("Loading columns of…") is not an object: no badge */
         Rect tr = rect_make(row.x + px(a, 30), row.y, row.w - px(a, 30), row.h);
         float dwi = font_width(a->font_small, cd->detail, -1);
         if (dwi > dw) dwi = dw;
         clip_push(r, rect_make(tr.x, tr.y, tr.w - dwi - px(a, 14), tr.h));
-        draw_match(a, cd->text, prefix, e->cprefix, tr.x, tr.y + (row.h - font_height(a->font_mono)) / 2,
-                   color_hex(sel ? 0xFFFFFF : T_TEXT), color_hex(sel ? 0xA8C4FF : T_ACCENT));
+        if (cd->label[0]) draw_text(a->font_mono, r, cd->label, tr.x, tr.y + (row.h - font_height(a->font_mono)) / 2, color_hex(cd->info ? T_TEXT_DIM : sel ? 0xFFFFFF : T_TEXT));
+        else draw_match(a, cd->text, prefix, e->cprefix, tr.x, tr.y + (row.h - font_height(a->font_mono)) / 2,
+                        color_hex(sel ? 0xFFFFFF : T_TEXT), color_hex(sel ? 0xA8C4FF : T_ACCENT));
         clip_pop(r);
-        draw_text_fit(a->font_small, r, cd->detail, -1, rect_make(tr.x + tr.w - px(a, 8) - dwi, tr.y, dwi, tr.h), color_hex(sel ? T_TEXT_MUTED : T_TEXT_DIM), ALIGN_RIGHT);
+        draw_text_fit(a->font_small, r, cd->detail, -1, rect_make(tr.x + tr.w - px(a, 8) - dwi, tr.y, dwi, tr.h), color_hex(sel ? 0xB4BCC8 : T_TEXT_DIM), ALIGN_RIGHT);   /* 0xB4BCC8: 4.5:1 on the selected row */
     }
     clip_pop(r);
     if (e->ncands > visible) {

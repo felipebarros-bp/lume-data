@@ -7,15 +7,17 @@ objawait 30000
 wait 300
 objstate
 button "obj:more"
-wait 150
+wait 400
 menu "Open Body"
-wait 1500
+objawait 30000
+wait 100
 objstate
 key cmd+a
 type "CREATE OR REPLACE PACKAGE BODY lume_uipkg AS\nFUNCTION f(x NUMBER) RETURN NUMBER IS\nBEGIN\n  RETURN x * undefined_thing;\nEND;\nEND lume_uipkg;"
 wait 400
 button "obj:apply"
-wait 2000
+objawait 30000
+wait 100
 button "review:apply"
 wait 3000
 objstate
@@ -24,7 +26,8 @@ key cmd+a
 type "CREATE OR REPLACE PACKAGE BODY lume_uipkg AS\nFUNCTION f(x NUMBER) RETURN NUMBER IS\nBEGIN\n  RETURN x * 3;\nEND;\nEND lume_uipkg;"
 wait 400
 button "obj:apply"
-wait 2000
+objawait 30000
+wait 100
 button "review:apply"
 wait 3000
 objstate

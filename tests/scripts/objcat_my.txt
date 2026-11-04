@@ -1,0 +1,21 @@
+# Completion with the catalog on MySQL / MariaDB: the database as a schema, SCHEMA. lists, columns
+wait 500
+dnode "my DEV"
+awaitconn "my DEV" 60000
+objcatawait 300000
+objcatstate
+click 700 300
+key cmd+a
+type select * from sho
+wait 400
+completestate
+type p.
+wait 400
+completestate
+shot build/ui/objcat_my_schema_dot.bmp
+key Escape
+key cmd+a
+type select * from shop.pl_customers a where a.
+wait 2000
+completestate
+quit

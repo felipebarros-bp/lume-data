@@ -48,12 +48,14 @@ enum { OCI_ATTR_DATA_TYPE = 2, OCI_ATTR_NAME = 4, OCI_ATTR_ROW_COUNT = 9, OCI_AT
 enum { OCI_STMT_SELECT = 1, OCI_NTV_SYNTAX = 1, OCI_DEFAULT = 0, OCI_THREADED = 1, OCI_COMMIT_ON_SUCCESS = 0x20, OCI_FETCH_NEXT = 2 };
 enum { SQLT_STR = 5, SQLT_CLOB = 112, SQLT_BLOB = 113, SQLT_BFILE = 114 };
 #define OCI_UTF8_CHARSET 873
+#define OCI_ATTR_CALL_TIMEOUT 531   /* per round trip, milliseconds (client 18c+; older clients ignore it) */
 /* CELL_MAX: bytes fetched per non-LOB cell; longer values are truncated by OCI. */
 #define CELL_MAX 4000
 
 /* OCI entry points resolved by oci_load; `lib` is the dlopen handle (never closed). */
 static struct {
     void *lib;
+    int major;   /* client version (OCIClientVersion), 0 when it does not report one */
     sword (*EnvNlsCreate)(OCIEnv **, ub4, void *, void *, void *, void *, size_t, void **, ub2, ub2);
     sword (*HandleAlloc)(const void *, void **, ub4, size_t, void **);
     sword (*HandleFree)(void *, ub4);
@@ -109,6 +111,9 @@ static bool oci_load(char *err, size_t errlen) {
     LOAD(StmtExecute, "OCIStmtExecute"); LOAD(AttrGet, "OCIAttrGet"); LOAD(AttrSet, "OCIAttrSet"); LOAD(ParamGet, "OCIParamGet");
     LOAD(DefineByPos, "OCIDefineByPos"); LOAD(StmtFetch2, "OCIStmtFetch2"); LOAD(ErrorGet, "OCIErrorGet"); LOAD(Break, "OCIBreak"); LOAD(DescriptorFree, "OCIDescriptorFree");
 #undef LOAD
+    void (*cv)(int *, int *, int *, int *, int *) = (void (*)(int *, int *, int *, int *, int *))DLSYM(oci.lib, "OCIClientVersion");
+    int a = 0, b = 0, c = 0, d = 0, e = 0;
+    if (cv) { cv(&a, &b, &c, &d, &e); oci.major = a; }
     return true;
 }
 
@@ -130,7 +135,8 @@ static void ora_close(Db *db);
 
 /* open: parses the three-line location, creates a threaded UTF-8 environment, logs on and
  * looks up the session's "sid,serial#" for the cancel fallback. Blocks until connected. */
-static bool ora_open(Db *db, const char *location, char *err, size_t errlen) {
+/* open with a limit on establishing the connection (connect_s seconds), see ora_open */
+static bool ora_open_within(Db *db, const char *location, char *err, size_t errlen, int connect_s) {
     if (!oci_load(err, errlen)) return false;
     /* location: "user\npassword\n//host:port/service" */
     char user[256] = "", pass[256] = "", dsn[512] = "";
@@ -141,6 +147,14 @@ static bool ora_open(Db *db, const char *location, char *err, size_t errlen) {
     if (!nl) { snprintf(err, errlen, "Bad Oracle location"); return false; }
     snprintf(pass, sizeof pass, "%.*s", (int)(nl - p), p);
     snprintf(dsn, sizeof dsn, "%s", nl + 1);
+    /* EZConnect Plus (client 19c+; an older client would refuse the '?'): a limit on the TCP
+     * connect and on the whole handshake, so a host that accepts and never answers (a dropped VPN,
+     * a frozen server) fails after connect_s instead of blocking for minutes. A TNS alias or a
+     * descriptor is left alone. */
+    if (oci.major >= 19 && !strncmp(dsn, "//", 2) && !strchr(dsn, '?') && connect_s > 0) {
+        size_t l = strlen(dsn);
+        snprintf(dsn + l, sizeof dsn - l, "?connect_timeout=%d&transport_connect_timeout=%d&retry_count=0", connect_s, connect_s);
+    }
 
     OraConn *c = calloc(1, sizeof *c);
     /* OCI_THREADED: the executor thread runs statements while the UI thread may call OCIBreak */
@@ -166,13 +180,25 @@ static bool ora_open(Db *db, const char *location, char *err, size_t errlen) {
       rs_free(&r); }
     return true;
 }
+/* open: "user\npassword\n//host:port/service"; the connect limit is the Settings one. */
+static bool ora_open(Db *db, const char *location, char *err, size_t errlen) {
+    return ora_open_within(db, location, err, errlen, db_connect_timeout_s > 0 ? db_connect_timeout_s : 10);
+}
 
 /* close: logs off and frees every handle. Freeing the environment last also releases any
- * handle allocated from it. */
+ * handle allocated from it. The logoff is a round trip: when the network died under the session
+ * (a VPN dropped) nothing answers and nothing resets the socket, so without a limit it blocks
+ * until TCP gives up, minutes later, with the window frozen. A call timeout makes it give up
+ * after a few seconds (ORA-03156); the handles are freed either way. */
 static void ora_close(Db *db) {
     OraConn *c = db->handle;
     if (!c) return;
-    if (c->svc) oci.Logoff(c->svc, c->err);
+    if (c->svc) {
+        ub4 ms = 3000;
+        oci.AttrSet(c->svc, OCI_HTYPE_SVCCTX, &ms, 0, OCI_ATTR_CALL_TIMEOUT, c->err);
+        sword rc = oci.Logoff(c->svc, c->err);
+        if (rc != OCI_SUCCESS) { char e[256]; ora_error(c->err, e, sizeof e); SDL_Log("Oracle logoff: rc %d: %s", rc, e); }
+    }
     if (c->err) oci.HandleFree(c->err, OCI_HTYPE_ERROR);
     if (c->errb) oci.HandleFree(c->errb, OCI_HTYPE_ERROR);
     if (c->env) oci.HandleFree(c->env, OCI_HTYPE_ENV);
@@ -487,7 +513,8 @@ static void ora_cancel(Db *db) {
     if (c->sid[0] && db->location) {
         Db tmp = { .drv = db->drv, .location = db->location };
         char e[256];
-        if (ora_open(&tmp, db->location, e, sizeof e)) {
+        /* a short limit: a cancel on a network that died (a dropped VPN) must not block the caller */
+        if (ora_open_within(&tmp, db->location, e, sizeof e, 5)) {
             char sql[160]; snprintf(sql, sizeof sql, "ALTER SYSTEM CANCEL SQL '%s'", c->sid);
             ResultSet r; ora_exec(&tmp, sql, -1, 0, &r);
             if (!r.ok) SDL_Log("cancel fallback: %s", r.error);
@@ -509,9 +536,7 @@ static void ora_select(const char *q, const char *where, const char *order, int 
 static bool ora_probe(char *v, size_t n) {
     char err[256];
     if (!oci_load(err, sizeof err)) { snprintf(v, n, "client library not found"); return false; }
-    void (*cv)(int *, int *, int *, int *, int *) = (void (*)(int *, int *, int *, int *, int *))DLSYM(oci.lib, "OCIClientVersion");
-    int a = 0, b = 0, c = 0, d = 0, e = 0;
-    if (cv) { cv(&a, &b, &c, &d, &e); snprintf(v, n, "Oracle client %d.%d", a, b); }
+    if (oci.major) snprintf(v, n, "Oracle client %d", oci.major);
     else snprintf(v, n, "Oracle client (version not reported)");
     return true;
 }

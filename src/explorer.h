@@ -18,6 +18,7 @@ Explorer *explorer_create(void);
 void explorer_destroy(Explorer *e);
 /* Rebuilds the tree from a->conns (call after connect/disconnect/add/edit/delete). */
 void explorer_rebuild(Explorer *e, App *a);
+void explorer_columns_arrived(Explorer *e, App *a);   /* objcat: columns asked for in the background arrived */
 /* Reloads the active connection's tables, then rebuilds. */
 void explorer_refresh(Explorer *e, App *a);
 bool explorer_reading(App *a, Db *db);
@@ -32,6 +33,7 @@ Connection *explorer_selected_conn(Explorer *e);     /* connection of the select
 /* Centre, in window units (not pixels), of the first visible row labelled `label`; false
  * when there is none or it is scrolled out of view. */
 bool explorer_node_pos(Explorer *e, App *a, const char *label, float *x, float *y);   /* test harness */
+bool explorer_node_pos_ex(Explorer *e, App *a, const char *label, bool chevron, float *x, float *y);   /* "parent/label" paths; chevron: its chevron instead of its label */
 /* Test harness: nsx "<connection>" <op> [arg] drives the Schemas / Others tree (DBX-126). */
 void explorer_nsx_cmd(Explorer *e, App *a, const char *arg);
 bool explorer_nsx_ready(App *a, const char *arg);   /* harness: nsx "<connection>" await [ms] */

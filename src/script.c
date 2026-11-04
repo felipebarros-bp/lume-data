@@ -34,6 +34,7 @@
 #include "planview.h"
 #include "rptview.h"
 #include "settings.h"
+#include "objcat.h"
 #include "gitview.h"
 #include "about.h"
 #include "macos_app.h"
@@ -169,11 +170,13 @@ void script_tick(App *a) {
     }
     /* button / rbutton "Label prefix": a recorded widget (ui_record); node / dnode / rnode "Label": an
      * Explorer node; dragcells R0 C0 R1 C1: drag-select grid cells. Stable across layout changes. */
-    else if (!strcmp(cmd, "button") || !strcmp(cmd, "rbutton") || !strcmp(cmd, "dbutton") || !strcmp(cmd, "node") || !strcmp(cmd, "dnode") || !strcmp(cmd, "rnode")) {
+    else if (!strcmp(cmd, "button") || !strcmp(cmd, "rbutton") || !strcmp(cmd, "dbutton") || !strcmp(cmd, "node") || !strcmp(cmd, "dnode") || !strcmp(cmd, "rnode") || !strcmp(cmd, "xnode")) {
+        /* node / dnode / rnode "label": the first visible row with that label, "parent/label" one under
+         * a row labelled parent; xnode "label": its chevron (opens a table, a package) */
         const char *lbl = arg; size_t hl = strlen(lbl); char tmp[160];
         if (hl >= 2 && lbl[0] == '"') { snprintf(tmp, sizeof tmp, "%.*s", (int)(hl - 2), lbl + 1); lbl = tmp; }
         bool ok;
-        if (strstr(cmd, "node")) ok = explorer_node_pos(a->explorer, a, lbl, &x, &y);
+        if (strstr(cmd, "node")) ok = explorer_node_pos_ex(a->explorer, a, lbl, cmd[0] == 'x', &x, &y);
         else { Rect rc; ok = ui_target(lbl, &rc); x = (rc.x + rc.w / 2) / a->density; y = (rc.y + rc.h / 2) / a->density; }
         if (!ok) { SDL_Log("script: target not found: %s %s", cmd, arg); printf("script: target not found: %s %s\n", cmd, arg); }
         else {
@@ -281,6 +284,18 @@ void script_tick(App *a) {
         if (dialog_testing(a->dialog) && now < ddeadline) { cur--; next_at = now + 50; }
         else { if (dialog_testing(a->dialog)) { printf("script: target not found: dialogawait timed out\n"); fflush(stdout); } ddeadline = 0; }
     }
+    else if (!strcmp(cmd, "objcatawait")) {   /* repeat until the active connection's object catalog read ended (or the deadline) */
+        static Uint64 odeadline; int ms = atoi(arg);
+        if (!odeadline) odeadline = now + (Uint64)(ms > 0 ? ms : 60000);
+        if (!objcat_settled(a) && now < odeadline) { cur--; next_at = now + 100; }
+        else { if (!objcat_settled(a)) { printf("script: target not found: objcatawait timed out\n"); fflush(stdout); } odeadline = 0; }
+    }
+    else if (!strcmp(cmd, "fetchawait")) {   /* repeat until no Fetch more / Fetch all is running (or the deadline) */
+        static Uint64 fdeadline; int ms = atoi(arg);
+        if (!fdeadline) fdeadline = now + (Uint64)(ms > 0 ? ms : 60000);
+        if (results_fetching(a->results) && now < fdeadline) { cur--; next_at = now + 50; }
+        else { if (results_fetching(a->results)) { printf("script: target not found: fetchawait timed out\n"); fflush(stdout); } fdeadline = 0; }
+    }
     else if (!strcmp(cmd, "dgmawait")) {   /* repeat until the active diagram's catalog is read and laid out (or the deadline) */
         static Uint64 gdeadline; int ms = atoi(arg);
         if (!gdeadline) gdeadline = now + (Uint64)(ms > 0 ? ms : 30000);
@@ -340,6 +355,8 @@ void script_tick(App *a) {
     else if (!strcmp(cmd, "rpt")) rptview_cmd(a, arg);        /* Report Studio */
     else if (!strcmp(cmd, "rptstate")) rptview_dump(a);
     else if (!strcmp(cmd, "settingsstate")) settings_dump();
+    else if (!strcmp(cmd, "completestate")) { if (a->editor) editor_dump_completion(a->editor); }
+    else if (!strcmp(cmd, "objcatstate")) objcat_dump(a);
     else if (!strcmp(cmd, "resstate")) { if (a->results) results_dump(a->results); }
     else if (!strcmp(cmd, "tdstate")) tdes_dump(a);
     else if (!strcmp(cmd, "objstate")) objed_dump(a);   /* the active object tab: state, problems, plan */
